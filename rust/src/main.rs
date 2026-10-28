@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::env;
-use std::fs;
-use std::io::{self, BufRead, BufReader};
+use std::fs::{self, OpenOptions};
+use std::io::{self, BufRead, BufReader, Cursor, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
@@ -54,6 +54,7 @@ impl Kind {
 #[derive(Debug)]
 struct FileRecord {
     relative: String,
+    path: PathBuf,
     size: u64,
     kind: Kind,
     extension: String,
@@ -133,10 +134,12 @@ fn walk(root: &Path, current: &Path, include_hidden: bool, records: &mut Vec<Fil
                 .and_then(|s| s.to_str())
                 .map(|s| format!(".{}", s.to_ascii_lowercase()))
                 .unwrap_or_else(|| "[no extension]".to_owned());
+            let kind = classify(&path);
             records.push(FileRecord {
                 relative,
+                path,
                 size: metadata.len(),
-                kind: classify(&path),
+                kind,
                 extension,
             });
         }
@@ -574,7 +577,7 @@ fn parse_size(value: &str) -> Result<u64, String> {
 
 fn print_help() {
     println!(
-        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE]\n  mediaforge dupes [PATH] [--json] [--min-size SIZE]\n  mediaforge probe <FILE> [--compact]\n  mediaforge project [PATH] [--json]\n  mediaforge --version\n  mediaforge --help"
+        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE]\n  mediaforge dupes [PATH] [--json] [--min-size SIZE]\n  mediaforge probe <FILE> [--compact]\n  mediaforge project [PATH] [--json]\n  mediaforge organize [PATH] [--by type|extension] [--apply]\n  mediaforge undo [PATH]\n  mediaforge --version\n  mediaforge --help"
     );
 }
 
@@ -916,6 +919,387 @@ fn run_project(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+const ORGANIZE_MANIFEST: &str = ".mediaforge-undo";
+const ORGANIZE_MAGIC: &[u8; 8] = b"MFORG001";
+
+#[derive(Clone, Debug)]
+struct PlannedMove {
+    from: String,
+    to: String,
+}
+
+fn validate_relative_path(value: &str) -> Result<PathBuf, String> {
+    let path = Path::new(value);
+    if value.is_empty()
+        || path.is_absolute()
+        || path
+            .components()
+            .any(|component| !matches!(component, std::path::Component::Normal(_)))
+    {
+        return Err(format!("unsafe path in organize manifest: {value:?}"));
+    }
+    Ok(path.to_path_buf())
+}
+
+fn reject_symlink_components(root: &Path, relative: &Path) -> Result<(), String> {
+    let mut current = root.to_path_buf();
+    for component in relative.components() {
+        let std::path::Component::Normal(part) = component else {
+            return Err(format!("unsafe relative path: {}", relative.display()));
+        };
+        current.push(part);
+        match fs::symlink_metadata(&current) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err(format!(
+                    "refusing to use symlink path: {}",
+                    current.display()
+                ));
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(format!("cannot inspect {}: {error}", current.display())),
+        }
+    }
+    Ok(())
+}
+
+fn write_organize_manifest(root: &Path, moves: &[PlannedMove]) -> Result<(), String> {
+    let manifest = root.join(ORGANIZE_MANIFEST);
+    if fs::symlink_metadata(&manifest).is_ok() {
+        return Err(format!(
+            "an organize undo manifest already exists at {}; run 'mediaforge undo {}' first",
+            manifest.display(),
+            root.display()
+        ));
+    }
+    let temp = root.join(format!("{ORGANIZE_MANIFEST}.tmp-{}", std::process::id()));
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temp)
+        .map_err(|error| format!("cannot create temporary undo manifest: {error}"))?;
+    let write_result = (|| -> io::Result<()> {
+        file.write_all(ORGANIZE_MAGIC)?;
+        let count = u32::try_from(moves.len())
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "too many planned moves"))?;
+        file.write_all(&count.to_le_bytes())?;
+        for movement in moves {
+            let from = movement.from.as_bytes();
+            let to = movement.to.as_bytes();
+            let from_len = u32::try_from(from.len()).map_err(|_| {
+                io::Error::new(io::ErrorKind::InvalidInput, "source path is too long")
+            })?;
+            let to_len = u32::try_from(to.len()).map_err(|_| {
+                io::Error::new(io::ErrorKind::InvalidInput, "destination path is too long")
+            })?;
+            file.write_all(&from_len.to_le_bytes())?;
+            file.write_all(from)?;
+            file.write_all(&to_len.to_le_bytes())?;
+            file.write_all(to)?;
+        }
+        file.sync_all()
+    })();
+    drop(file);
+    if let Err(error) = write_result {
+        let _ = fs::remove_file(&temp);
+        return Err(format!("could not write undo manifest: {error}"));
+    }
+    if let Err(error) = fs::hard_link(&temp, &manifest) {
+        let _ = fs::remove_file(&temp);
+        return Err(format!("could not safely create undo manifest: {error}"));
+    }
+    fs::remove_file(&temp).map_err(|error| {
+        format!("undo manifest was created, but temporary file cleanup failed: {error}")
+    })?;
+    Ok(())
+}
+
+fn read_organize_manifest(root: &Path) -> Result<Vec<PlannedMove>, String> {
+    let path = root.join(ORGANIZE_MANIFEST);
+    let metadata = fs::symlink_metadata(&path)
+        .map_err(|error| format!("no organize undo manifest found: {error}"))?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err("undo manifest is not a regular file".to_owned());
+    }
+    let bytes = fs::read(&path).map_err(|error| format!("cannot read undo manifest: {error}"))?;
+    let mut cursor = Cursor::new(bytes.as_slice());
+    let mut magic = [0; 8];
+    cursor
+        .read_exact(&mut magic)
+        .map_err(|error| format!("invalid undo manifest header: {error}"))?;
+    if &magic != ORGANIZE_MAGIC {
+        return Err("unrecognized undo manifest format".to_owned());
+    }
+    let count = read_manifest_u32(&mut cursor)? as usize;
+    if count > 1_000_000 {
+        return Err("undo manifest contains too many entries".to_owned());
+    }
+    let mut moves = Vec::with_capacity(count);
+    let mut sources = HashSet::new();
+    let mut destinations = HashSet::new();
+    for _ in 0..count {
+        let from = read_manifest_string(&mut cursor)?;
+        let to = read_manifest_string(&mut cursor)?;
+        validate_relative_path(&from)?;
+        validate_relative_path(&to)?;
+        if !sources.insert(from.clone()) || !destinations.insert(to.clone()) {
+            return Err("undo manifest contains repeated paths".to_owned());
+        }
+        moves.push(PlannedMove { from, to });
+    }
+    if cursor.position() != bytes.len() as u64 {
+        return Err("undo manifest contains trailing data".to_owned());
+    }
+    Ok(moves)
+}
+
+fn read_manifest_u32(cursor: &mut Cursor<&[u8]>) -> Result<u32, String> {
+    let mut bytes = [0; 4];
+    cursor
+        .read_exact(&mut bytes)
+        .map_err(|error| format!("truncated undo manifest: {error}"))?;
+    Ok(u32::from_le_bytes(bytes))
+}
+
+fn read_manifest_string(cursor: &mut Cursor<&[u8]>) -> Result<String, String> {
+    let len = read_manifest_u32(cursor)? as usize;
+    if len == 0 || len > 1024 * 1024 {
+        return Err("invalid path length in undo manifest".to_owned());
+    }
+    let mut bytes = vec![0; len];
+    cursor
+        .read_exact(&mut bytes)
+        .map_err(|error| format!("truncated undo manifest path: {error}"))?;
+    String::from_utf8(bytes).map_err(|error| format!("undo manifest path is not UTF-8: {error}"))
+}
+
+fn run_organize(args: &[String]) -> Result<(), String> {
+    let mut path = None;
+    let mut by = "type";
+    let mut apply = false;
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--by" => {
+                by = iter
+                    .next()
+                    .ok_or_else(|| "--by requires 'type' or 'extension'".to_owned())?;
+                if by != "type" && by != "extension" {
+                    return Err("--by must be 'type' or 'extension'".to_owned());
+                }
+            }
+            "--apply" => apply = true,
+            "--help" | "-h" => {
+                println!(
+                    "Usage: mediaforge organize [PATH] [--by type|extension] [--apply]\n\nPreview an asset organization plan. Files are only moved with --apply; a manifest is written so the move can be undone."
+                );
+                return Ok(());
+            }
+            value if value.starts_with('-') => return Err(format!("unknown option: {value}")),
+            value => {
+                if path.is_some() {
+                    return Err("only one organize path may be provided".into());
+                }
+                path = Some(PathBuf::from(value));
+            }
+        }
+    }
+    let path = path.unwrap_or_else(|| PathBuf::from("."));
+    let root = fs::canonicalize(&path)
+        .map_err(|error| format!("cannot access {}: {error}", path.display()))?;
+    if !root.is_dir() {
+        return Err(format!("expected a directory: {}", root.display()));
+    }
+    if apply && fs::symlink_metadata(root.join(ORGANIZE_MANIFEST)).is_ok() {
+        return Err(format!(
+            "an undo manifest already exists; undo the previous move first: {}",
+            root.display()
+        ));
+    }
+
+    let ignored = ignored_by_git(&root);
+    let mut records = Vec::new();
+    walk(&root, &root, false, &mut records);
+    records.retain(|record| !is_ignored(&record.relative, &ignored));
+    let mut moves = Vec::<PlannedMove>::new();
+    let mut skipped = 0usize;
+    let mut destinations = HashSet::<PathBuf>::new();
+    for record in records {
+        let relative = match record.path.strip_prefix(&root) {
+            Ok(relative) => relative,
+            Err(_) => {
+                skipped += 1;
+                continue;
+            }
+        };
+        let Some(relative_text) = relative.to_str() else {
+            skipped += 1;
+            continue;
+        };
+        let category = if by == "type" {
+            record.kind.as_str().to_owned()
+        } else if record.extension == "[no extension]" {
+            "no-extension".to_owned()
+        } else {
+            record.extension.trim_start_matches('.').to_owned()
+        };
+        let mut components = relative.components();
+        if components.next().and_then(|part| part.as_os_str().to_str()) == Some(category.as_str()) {
+            continue;
+        }
+        let from = validate_relative_path(relative_text)?;
+        let to = PathBuf::from(&category).join(relative);
+        let to_text = to
+            .to_str()
+            .ok_or_else(|| format!("destination path is not UTF-8: {}", to.display()))?
+            .replace('\\', "/");
+        if !destinations.insert(to.clone()) || fs::symlink_metadata(root.join(&to)).is_ok() {
+            skipped += 1;
+            continue;
+        }
+        if reject_symlink_components(&root, &from).is_err()
+            || reject_symlink_components(&root, &to).is_err()
+        {
+            skipped += 1;
+            continue;
+        }
+        moves.push(PlannedMove {
+            from: relative_text.replace('\\', "/"),
+            to: to_text,
+        });
+    }
+
+    println!(
+        "Organize preview by {by}: {} file(s) to move; {skipped} skipped",
+        moves.len()
+    );
+    for movement in moves.iter().take(30) {
+        println!("  {} -> {}", movement.from, movement.to);
+    }
+    if moves.len() > 30 {
+        println!("  ... and {} more", moves.len() - 30);
+    }
+    if !apply {
+        if !moves.is_empty() {
+            println!(
+                "\nPreview only. Re-run with --apply to move files; then use 'mediaforge undo {}' to restore them.",
+                root.display()
+            );
+        }
+        return Ok(());
+    }
+    if moves.is_empty() {
+        println!("No files need moving.");
+        return Ok(());
+    }
+
+    for movement in &moves {
+        let from = validate_relative_path(&movement.from)?;
+        let to = validate_relative_path(&movement.to)?;
+        reject_symlink_components(&root, &from)?;
+        reject_symlink_components(&root, &to)?;
+        if !root.join(&from).is_file() || fs::symlink_metadata(root.join(&to)).is_ok() {
+            return Err(format!(
+                "file plan changed since preview; refusing to apply: {}",
+                movement.from
+            ));
+        }
+    }
+    write_organize_manifest(&root, &moves)?;
+    let mut moved = 0usize;
+    for movement in &moves {
+        let from = root.join(validate_relative_path(&movement.from)?);
+        let to = root.join(validate_relative_path(&movement.to)?);
+        let parent = to
+            .parent()
+            .ok_or_else(|| "destination has no parent directory".to_owned())?;
+        if let Err(error) = fs::create_dir_all(parent).and_then(|()| fs::rename(&from, &to)) {
+            return Err(format!(
+                "moved {moved} file(s) before failure: {error}; recovery manifest remains at {}",
+                root.join(ORGANIZE_MANIFEST).display()
+            ));
+        }
+        moved += 1;
+    }
+    println!(
+        "Moved {moved} file(s). Undo manifest: {}",
+        root.join(ORGANIZE_MANIFEST).display()
+    );
+    Ok(())
+}
+
+fn run_undo(args: &[String]) -> Result<(), String> {
+    let mut path = None;
+    for arg in args {
+        match arg.as_str() {
+            "--help" | "-h" => {
+                println!(
+                    "Usage: mediaforge undo [PATH]\n\nRestore files moved by the most recent 'mediaforge organize --apply' in PATH."
+                );
+                return Ok(());
+            }
+            value if value.starts_with('-') => return Err(format!("unknown option: {value}")),
+            value => {
+                if path.is_some() {
+                    return Err("only one undo path may be provided".into());
+                }
+                path = Some(PathBuf::from(value));
+            }
+        }
+    }
+    let path = path.unwrap_or_else(|| PathBuf::from("."));
+    let root = fs::canonicalize(&path)
+        .map_err(|error| format!("cannot access {}: {error}", path.display()))?;
+    if !root.is_dir() {
+        return Err(format!("expected a directory: {}", root.display()));
+    }
+    let moves = read_organize_manifest(&root)?;
+    let mut restored = 0usize;
+    let mut conflicts = 0usize;
+    for movement in moves.iter().rev() {
+        let from = root.join(validate_relative_path(&movement.from)?);
+        let to = root.join(validate_relative_path(&movement.to)?);
+        reject_symlink_components(&root, &PathBuf::from(&movement.from))?;
+        reject_symlink_components(&root, &PathBuf::from(&movement.to))?;
+        let from_exists = fs::symlink_metadata(&from).is_ok();
+        let to_exists = fs::symlink_metadata(&to).is_ok();
+        if !from_exists && to_exists {
+            let parent = from
+                .parent()
+                .ok_or_else(|| "source has no parent directory".to_owned())?;
+            if let Err(error) = fs::create_dir_all(parent).and_then(|()| fs::rename(&to, &from)) {
+                eprintln!("mediaforge: could not restore {}: {error}", movement.from);
+                conflicts += 1;
+            } else {
+                restored += 1;
+            }
+        } else if from_exists && to_exists {
+            eprintln!(
+                "mediaforge: conflict; both source and organized file exist: {}",
+                movement.from
+            );
+            conflicts += 1;
+        } else if !from_exists && !to_exists {
+            eprintln!(
+                "mediaforge: missing both source and organized file: {}",
+                movement.from
+            );
+            conflicts += 1;
+        }
+    }
+    if conflicts == 0 {
+        fs::remove_file(root.join(ORGANIZE_MANIFEST)).map_err(|error| {
+            format!("restored files, but could not remove undo manifest: {error}")
+        })?;
+        println!("Restored {restored} file(s); undo manifest removed.");
+    } else {
+        println!(
+            "Restored {restored} file(s); {conflicts} conflict(s) remain. Manifest retained for recovery."
+        );
+    }
+    Ok(())
+}
+
 fn run() -> Result<(), String> {
     let args: Vec<String> = env::args().skip(1).collect();
     match args.first().map(String::as_str) {
@@ -931,6 +1315,8 @@ fn run() -> Result<(), String> {
         Some("dupes") => run_dupes(&args[1..]),
         Some("probe") => run_probe(&args[1..]),
         Some("project") => run_project(&args[1..]),
+        Some("organize") => run_organize(&args[1..]),
+        Some("undo") => run_undo(&args[1..]),
         Some(command) => Err(format!(
             "unknown command: {command}\nRun 'mediaforge --help' for usage."
         )),

@@ -55,6 +55,7 @@ mediaforge scan . --include-hidden
 mediaforge scan ./Media --type video --min-size 500M
 mediaforge dupes ./Game/Content --min-size 1M
 mediaforge project ./Game
+mediaforge organize ./Media --by type
 ```
 
 Hidden folders and common generated/dependency directories (`.git`, `node_modules`, virtual environments) are skipped by default. Symlinks are not followed. The duplicate section only groups equal file sizes; it does not claim the files have identical content. JSON output includes byte counts and relative paths for scripts and other tools.
@@ -77,6 +78,17 @@ mediaforge project ./Game --json
 
 The read-only inspector recognizes Unity, Unreal Engine, and Godot project markers. It reports missing expected folders and measures known build/cache folders (`Library`, `Intermediate`, `DerivedDataCache`, `.godot`, and related folders) without deleting them. Some folders, such as Unreal's `Saved`, can also contain backups or logs. It also lists Blender, DaVinci Resolve, Premiere Pro, After Effects, and Final Cut Pro XML project files found below the chosen folder.
 
+## Organize files with preview and undo
+
+```sh
+mediaforge organize ./Media --by type
+mediaforge organize ./Media --by extension
+mediaforge organize ./Media --by type --apply
+mediaforge undo ./Media
+```
+
+Organization is a preview unless `--apply` is supplied. Moves preserve paths below the new type/extension folder, skip destination collisions, and refuse symlink paths. Before moving anything, MediaForge writes a `.mediaforge-undo` recovery manifest. `undo` restores files only when the original location is clear; it retains the manifest if a conflict needs manual handling. It never deletes source files.
+
 ## Cross-platform roadmap
 
 - [x] Python reference CLI for Windows, macOS, and Linux
@@ -85,7 +97,7 @@ The read-only inspector recognizes Unity, Unreal Engine, and Godot project marke
 - [x] Optional ffprobe metadata inspection
 - [x] Filter scan results by asset type and minimum file size
 - [x] Content-verified duplicate detection on demand
-- [ ] Safe media organization plans with preview and undo
+- [x] Safe media organization plans with preview and undo
 - [x] Read-only project and generated-cache inspection for Unity, Unreal, and Godot
 - [ ] Optional AI assistance only for ambiguous labeling, never required for core commands
 
