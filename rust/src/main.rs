@@ -281,11 +281,12 @@ struct IgnoreRule {
     has_slash: bool,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 enum GlobToken {
     Literal(char),
     Any,
     Star { crosses_slash: bool },
+    AnyDirectories,
     Class { negated: bool, members: Vec<char> },
 }
 
@@ -322,10 +323,10 @@ fn parse_ignore_rule(line: &str) -> Option<IgnoreRule> {
     if pattern.is_empty() {
         return None;
     }
-    let pattern = parse_glob_pattern(pattern)?;
+    let pattern = parse_glob_pattern(pattern, anchored)?;
     let has_slash = pattern
         .iter()
-        .any(|token| matches!(token, GlobToken::Literal('/')));
+        .any(|token| matches!(token, GlobToken::Literal('/') | GlobToken::AnyDirectories));
     Some(IgnoreRule {
         pattern,
         negated,
@@ -353,29 +354,65 @@ fn has_odd_backslashes_before_last(value: &str) -> bool {
     backslashes % 2 == 1
 }
 
-fn parse_glob_pattern(pattern: &str) -> Option<Vec<GlobToken>> {
+fn parse_glob_pattern(pattern: &str, anchored: bool) -> Option<Vec<GlobToken>> {
     let mut tokens = Vec::new();
-    let mut chars = pattern.chars().peekable();
-    while let Some(character) = chars.next() {
+    let characters: Vec<_> = pattern.chars().collect();
+    let mut index = 0;
+    while index < characters.len() {
+        let character = characters[index];
         match character {
-            '\\' => tokens.push(GlobToken::Literal(chars.next()?)),
+            '\\' => {
+                index += 1;
+                tokens.push(GlobToken::Literal(*characters.get(index)?));
+            }
             '*' => {
-                let crosses_slash = chars.next_if_eq(&'*').is_some();
-                tokens.push(GlobToken::Star { crosses_slash });
+                let run_end = (index + 1..characters.len())
+                    .find(|next| characters[*next] != '*')
+                    .unwrap_or(characters.len());
+                let run_length = run_end - index;
+                let followed_by_slash = characters.get(run_end) == Some(&'/');
+                let preceded_by_slash = index == 0 || characters[index - 1] == '/';
+                if run_length == 2 && followed_by_slash && preceded_by_slash {
+                    tokens.push(GlobToken::AnyDirectories);
+                    index = run_end + 1;
+                    continue;
+                }
+                let trailing_double_star = run_length == 2
+                    && run_end == characters.len()
+                    && ((index > 0 && characters[index - 1] == '/') || (anchored && index == 0));
+                if trailing_double_star {
+                    tokens.push(GlobToken::Star {
+                        crosses_slash: true,
+                    });
+                } else {
+                    tokens.extend(std::iter::repeat_n(
+                        GlobToken::Star {
+                            crosses_slash: false,
+                        },
+                        run_length,
+                    ));
+                }
+                index = run_end;
+                continue;
             }
             '?' => tokens.push(GlobToken::Any),
             '[' => {
                 let mut class = Vec::new();
                 let mut closed = false;
-                while let Some(character) = chars.next() {
-                    match character {
-                        '\\' => class.push(chars.next()?),
+                index += 1;
+                while index < characters.len() {
+                    match characters[index] {
+                        '\\' => {
+                            index += 1;
+                            class.push(*characters.get(index)?);
+                        }
                         ']' if !class.is_empty() => {
                             closed = true;
                             break;
                         }
-                        _ => class.push(character),
+                        character => class.push(character),
                     }
+                    index += 1;
                 }
                 if closed {
                     tokens.push(GlobToken::Class {
@@ -389,6 +426,7 @@ fn parse_glob_pattern(pattern: &str) -> Option<Vec<GlobToken>> {
             }
             character => tokens.push(GlobToken::Literal(character)),
         }
+        index += 1;
     }
     Some(tokens)
 }
@@ -415,6 +453,13 @@ fn glob_matches(pattern: &[GlobToken], value: &str) -> bool {
                         || (v < value.len()
                             && (*crosses_slash || value[v] != '/')
                             && matches(pattern, value, p, v + 1, memo))
+                }
+                GlobToken::AnyDirectories => {
+                    matches(pattern, value, p + 1, v, memo)
+                        || (v < value.len() && matches(pattern, value, p, v + 1, memo))
+                        || (v < value.len()
+                            && value[v] == '/'
+                            && matches(pattern, value, p + 1, v + 1, memo))
                 }
                 GlobToken::Any => {
                     v < value.len()
