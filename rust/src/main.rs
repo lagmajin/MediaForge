@@ -8434,6 +8434,11 @@ fn run_unity_meta(args: &[String]) -> Result<(), String> {
     let rules = ignored_by_git(&root)?;
     let mut pending = vec![(assets.clone(), Arc::<[IgnoreRule]>::from(rules))];
     let mut checked = 1_usize;
+    let mut missing_meta_count = 0_usize;
+    let mut orphan_meta_count = 0_usize;
+    let mut missing_guid_count = 0_usize;
+    let mut invalid_guid_count = 0_usize;
+    let mut summary_duplicate_guid_count = 0_usize;
     let mut missing_meta = Vec::<String>::new();
     let mut orphan_meta = Vec::<String>::new();
     let mut missing_guid = Vec::<String>::new();
@@ -8441,7 +8446,10 @@ fn run_unity_meta(args: &[String]) -> Result<(), String> {
     let mut guid_paths = HashMap::<String, (String, Option<Vec<String>>)>::new();
     let assets_meta = unity_meta_sidecar(&assets);
     if !is_real_file(&assets_meta) {
-        missing_meta.push("Assets".to_owned());
+        missing_meta_count += 1;
+        if !summary {
+            missing_meta.push("Assets".to_owned());
+        }
     } else {
         checked = checked.saturating_add(1);
         let contents = fs::read_to_string(&assets_meta).map_err(|error| {
@@ -8452,10 +8460,30 @@ fn run_unity_meta(args: &[String]) -> Result<(), String> {
         })?;
         match unity_meta_guid(&contents) {
             Ok(Some(guid)) => {
-                guid_paths.insert(guid, ("Assets.meta".to_owned(), None));
+                guid_paths.insert(
+                    guid,
+                    (
+                        if summary {
+                            String::new()
+                        } else {
+                            "Assets.meta".to_owned()
+                        },
+                        None,
+                    ),
+                );
             }
-            Ok(None) => missing_guid.push("Assets.meta".to_owned()),
-            Err(()) => invalid_guid.push("Assets.meta".to_owned()),
+            Ok(None) => {
+                missing_guid_count += 1;
+                if !summary {
+                    missing_guid.push("Assets.meta".to_owned());
+                }
+            }
+            Err(()) => {
+                invalid_guid_count += 1;
+                if !summary {
+                    invalid_guid.push("Assets.meta".to_owned());
+                }
+            }
         }
     }
     while let Some((directory, active_rules)) = pending.pop() {
@@ -8505,7 +8533,10 @@ fn run_unity_meta(args: &[String]) -> Result<(), String> {
                 }
                 checked = checked.saturating_add(1);
                 if !unity_meta_sidecar_exists_in_directory(&entry_path, &sibling_types) {
-                    missing_meta.push(relative);
+                    missing_meta_count += 1;
+                    if !summary {
+                        missing_meta.push(relative);
+                    }
                 }
                 let child_rules = extend_ignore_rules(&root, &entry_path, &active_rules)?;
                 let child_rules = match child_rules {
@@ -8522,7 +8553,10 @@ fn run_unity_meta(args: &[String]) -> Result<(), String> {
                 if let Some(target) = unity_meta_target(&entry_path) {
                     checked = checked.saturating_add(1);
                     if !unity_meta_target_exists_in_directory(&target, &sibling_types) {
-                        orphan_meta.push(relative);
+                        orphan_meta_count += 1;
+                        if !summary {
+                            orphan_meta.push(relative);
+                        }
                     } else {
                         let contents = fs::read_to_string(&entry_path).map_err(|error| {
                             format!(
@@ -8533,23 +8567,43 @@ fn run_unity_meta(args: &[String]) -> Result<(), String> {
                         match unity_meta_guid(&contents) {
                             Ok(Some(guid)) => match guid_paths.entry(guid) {
                                 std::collections::hash_map::Entry::Vacant(entry) => {
-                                    entry.insert((relative, None));
+                                    entry.insert((
+                                        if summary { String::new() } else { relative },
+                                        None,
+                                    ));
                                 }
                                 std::collections::hash_map::Entry::Occupied(mut entry) => {
-                                    let (first, duplicates) = entry.get_mut();
-                                    let paths = duplicates
-                                        .get_or_insert_with(|| vec![std::mem::take(first)]);
-                                    paths.push(relative);
+                                    if summary {
+                                        summary_duplicate_guid_count += 1;
+                                    } else {
+                                        let (first, duplicates) = entry.get_mut();
+                                        let paths = duplicates
+                                            .get_or_insert_with(|| vec![std::mem::take(first)]);
+                                        paths.push(relative);
+                                    }
                                 }
                             },
-                            Ok(None) => missing_guid.push(relative),
-                            Err(()) => invalid_guid.push(relative),
+                            Ok(None) => {
+                                missing_guid_count += 1;
+                                if !summary {
+                                    missing_guid.push(relative);
+                                }
+                            }
+                            Err(()) => {
+                                invalid_guid_count += 1;
+                                if !summary {
+                                    invalid_guid.push(relative);
+                                }
+                            }
                         }
                     }
                 } else {
                     checked = checked.saturating_add(1);
                     if !unity_meta_sidecar_exists_in_directory(&entry_path, &sibling_types) {
-                        missing_meta.push(relative);
+                        missing_meta_count += 1;
+                        if !summary {
+                            missing_meta.push(relative);
+                        }
                     }
                 }
             }
@@ -8567,14 +8621,18 @@ fn run_unity_meta(args: &[String]) -> Result<(), String> {
     for (_, paths) in &mut duplicate_guids {
         paths.sort();
     }
-    let duplicate_guid_count = duplicate_guids
-        .iter()
-        .map(|(_, paths)| paths.len() - 1)
-        .sum::<usize>();
-    let issue_count = missing_meta.len()
-        + orphan_meta.len()
-        + missing_guid.len()
-        + invalid_guid.len()
+    let duplicate_guid_count = if summary {
+        summary_duplicate_guid_count
+    } else {
+        duplicate_guids
+            .iter()
+            .map(|(_, paths)| paths.len() - 1)
+            .sum::<usize>()
+    };
+    let issue_count = missing_meta_count
+        + orphan_meta_count
+        + missing_guid_count
+        + invalid_guid_count
         + duplicate_guid_count;
     if json {
         let stdout = io::stdout();
@@ -8586,10 +8644,10 @@ fn run_unity_meta(args: &[String]) -> Result<(), String> {
                 output,
                 ",\"checked\":{checked},\"details_included\":{},\"missing_meta_count\":{},\"orphan_meta_count\":{},\"missing_guid_count\":{},\"invalid_guid_count\":{},\"duplicate_guid_count\":{duplicate_guid_count},\"missing_meta\":[",
                 !summary,
-                missing_meta.len(),
-                orphan_meta.len(),
-                missing_guid.len(),
-                invalid_guid.len()
+                missing_meta_count,
+                orphan_meta_count,
+                missing_guid_count,
+                invalid_guid_count
             )?;
             for (index, path) in missing_meta
                 .iter()
@@ -8661,28 +8719,28 @@ fn run_unity_meta(args: &[String]) -> Result<(), String> {
     } else {
         println!("Unity metadata audit: {}", root.display());
         println!("Checked paths: {checked}");
-        println!("Missing .meta files: {}", missing_meta.len());
+        println!("Missing .meta files: {missing_meta_count}");
         for path in missing_meta
             .iter()
             .take(if summary { 0 } else { usize::MAX })
         {
             println!("  missing: {path}");
         }
-        println!("Orphan .meta files: {}", orphan_meta.len());
+        println!("Orphan .meta files: {orphan_meta_count}");
         for path in orphan_meta
             .iter()
             .take(if summary { 0 } else { usize::MAX })
         {
             println!("  orphan: {path}");
         }
-        println!("Missing GUIDs: {}", missing_guid.len());
+        println!("Missing GUIDs: {missing_guid_count}");
         for path in missing_guid
             .iter()
             .take(if summary { 0 } else { usize::MAX })
         {
             println!("  no guid: {path}");
         }
-        println!("Malformed GUIDs: {}", invalid_guid.len());
+        println!("Malformed GUIDs: {invalid_guid_count}");
         for path in invalid_guid
             .iter()
             .take(if summary { 0 } else { usize::MAX })
