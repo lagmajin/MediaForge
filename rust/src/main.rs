@@ -693,26 +693,16 @@ where
     while let Some((directory, active_ignored)) = pending.pop() {
         let entries = fs::read_dir(&directory)
             .map_err(|error| format!("cannot read directory {}: {error}", directory.display()))?;
-        let mut entries = entries
-            .map(|entry| {
-                entry.map_err(|error| {
-                    format!("cannot read entry in {}: {error}", directory.display())
-                })
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        if filters.sort_entries_per_directory {
-            sort_entries(&mut entries);
-        }
-        for entry in entries {
+        let mut process_entry = |entry: fs::DirEntry| -> Result<(), String> {
             let path = entry.path();
             if !include_hidden && is_dot_hidden(&path) {
-                continue;
+                return Ok(());
             }
             let file_type = entry
                 .file_type()
                 .map_err(|error| format!("cannot inspect {}: {error}", path.display()))?;
             if file_type.is_symlink() {
-                continue;
+                return Ok(());
             }
             let mut relative = if file_type.is_dir() {
                 Some(
@@ -744,7 +734,7 @@ where
                         values.iter().any(|value| lowercase_scratch.contains(value))
                     })
                 {
-                    continue;
+                    return Ok(());
                 }
                 let child_rules = extend_ignore_rules(root, &path, active_ignored.as_ref())?;
                 let child_ignored = match child_rules {
@@ -755,14 +745,14 @@ where
             } else if file_type.is_file() {
                 let kind = classify(&path);
                 if filters.kinds.is_some_and(|values| !values.contains(&kind)) {
-                    continue;
+                    return Ok(());
                 }
                 let extension_value = path.extension().and_then(|value| value.to_str());
                 if filters
                     .extensions
                     .is_some_and(|values| !matches_extension_filter(extension_value, values))
                 {
-                    continue;
+                    return Ok(());
                 }
                 let has_path_filter = filters
                     .exclude_path_contains_lower
@@ -785,20 +775,20 @@ where
                             values.iter().any(|value| lowercase_scratch.contains(value))
                         })
                     {
-                        continue;
+                        return Ok(());
                     }
                 }
                 let metadata = entry
                     .metadata()
                     .map_err(|error| format!("cannot inspect {}: {error}", path.display()))?;
                 if !include_hidden && metadata_has_hidden_attribute(&metadata) {
-                    continue;
+                    return Ok(());
                 }
                 let size = metadata.len();
                 if filters.min_size.is_some_and(|minimum| size < minimum)
                     || filters.max_size.is_some_and(|maximum| size > maximum)
                 {
-                    continue;
+                    return Ok(());
                 }
                 let relative = match relative.take() {
                     Some(relative) => relative,
@@ -832,6 +822,27 @@ where
                     extension,
                 };
                 on_record(record)?;
+            }
+            Ok(())
+        };
+        if filters.sort_entries_per_directory {
+            let mut entries = entries
+                .map(|entry| {
+                    entry.map_err(|error| {
+                        format!("cannot read entry in {}: {error}", directory.display())
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            sort_entries(&mut entries);
+            for entry in entries {
+                process_entry(entry)?;
+            }
+        } else {
+            for entry in entries {
+                let entry = entry.map_err(|error| {
+                    format!("cannot read entry in {}: {error}", directory.display())
+                })?;
+                process_entry(entry)?;
             }
         }
     }
