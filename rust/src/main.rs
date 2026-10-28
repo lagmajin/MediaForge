@@ -5701,7 +5701,7 @@ fn fraction_ceil_scaled(fraction: &str, multiplier: u128) -> u128 {
 
 fn print_help() {
     println!(
-        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge doctor [--json] [--strict]\n  mediaforge scan-config <init|validate|show> [FILE] [--json]\n  mediaforge scan [PATH] [--json|--csv] [--compact] [--summary] [--csv-info] [--show-filters] [--include-hidden] [--strict] [--no-same-size] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--modified-since UNIX_SECONDS] [--modified-until UNIX_SECONDS] [--modified-within DURATION] [--path-contains TEXT ...] [--exclude-path-contains TEXT ...] [--extension EXTENSIONS ...] [--largest N] [--sort path|size|modified] [--settings FILE]\n  mediaforge dupes [PATH] [--json] [--compact] [--summary] [--include-hidden] [--exclude-path-contains TEXT ...] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--top-groups N] [--jobs N]\n  mediaforge probe <FILE> [--compact] [--summary]\n  mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--type video|audio] [--min-size SIZE] [--max-size SIZE] [--jobs N] [--summary] [--compare] [--compare-summary] [--csv]\n  mediaforge storyboard <VIDEO> --output <IMAGE> [--interval SECONDS] [--columns N] [--rows N] [--width PIXELS]\n  mediaforge storyboard-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--format jpg|jpeg|png|webp] [--interval SECONDS] [--columns N] [--rows N] [--width PIXELS] [--include-hidden] [--jobs N] [--skip-existing] [--json] [--summary]\n  mediaforge scene-detect-dir <PATH> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--summary] [--fps RATE] [--extension EXTENSIONS] [--include-hidden] [--jobs N]\n  mediaforge scene-detect <VIDEO> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--summary] [--format jsonl|csv] [--fps RATE]\n  mediaforge proxy <VIDEO> --output <FILE.mp4> [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge proxy-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET] [--jobs N] [--skip-existing] [--json] [--summary]\n  mediaforge proxy-config init [FILE] [--profile fast|balanced|quality] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge extract-audio <VIDEO> --output <FILE> [--format mp3|wav|flac] [--bitrate RATE] [--stream N]\n  mediaforge extract-audio-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--format mp3|wav|flac] [--bitrate RATE] [--stream N] [--jobs N] [--skip-existing] [--json] [--summary]\n  mediaforge snapshot [PATH] (--output FILE [--overwrite] | --diff FILE [--update]) [--json|--csv] [--compact] [--summary] [--include-hidden] [--include-generated] [--hash] [--jobs N] [--fail-on-change]\n  mediaforge project [PATH] [--json] [--compact] [--no-cache-sizes] [--no-editor-files]\n  mediaforge unity-meta [PROJECT_PATH] [--json] [--compact] [--summary] [--sidecars-only] [--include-hidden]\n  mediaforge gitignore [PATH] [--apply] [--json] [--compact]\n  mediaforge organize [PATH] [--by type|extension|size] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--compact] [--summary] [--apply]\n  mediaforge rename [PATH] [--replace OLD NEW] [--prefix TEXT] [--suffix TEXT] [--extension-case keep|lower|upper] [--extension EXTENSIONS] [--include-hidden] [--json] [--compact] [--summary] [--apply]
+        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge doctor [--json] [--strict]\n  mediaforge scan-config <init|validate|show> [FILE] [--json]\n  mediaforge scan [PATH] [--json|--csv] [--compact] [--summary] [--csv-info] [--show-filters] [--include-hidden] [--strict] [--no-same-size] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--modified-since UNIX_SECONDS] [--modified-until UNIX_SECONDS] [--modified-within DURATION] [--path-contains TEXT ...] [--exclude-path-contains TEXT ...] [--extension EXTENSIONS ...] [--largest N] [--sort path|size|modified] [--settings FILE]\n  mediaforge dupes [PATH] [--json] [--compact] [--summary] [--include-hidden] [--exclude-path-contains TEXT ...] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--top-groups N] [--jobs N]\n  mediaforge probe <FILE> [--compact] [--summary]\n  mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--type video|audio] [--min-size SIZE] [--max-size SIZE] [--jobs N] [--summary] [--compare] [--compare-summary] [--csv]\n  mediaforge storyboard <VIDEO> --output <IMAGE> [--interval SECONDS] [--columns N] [--rows N] [--width PIXELS]\n  mediaforge storyboard-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--format jpg|jpeg|png|webp] [--interval SECONDS] [--columns N] [--rows N] [--width PIXELS] [--include-hidden] [--jobs N] [--skip-existing] [--json] [--summary]\n  mediaforge scene-detect-dir <PATH> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--summary] [--format jsonl|csv] [--fps RATE] [--extension EXTENSIONS] [--include-hidden] [--jobs N]\n  mediaforge scene-detect <VIDEO> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--summary] [--format jsonl|csv] [--fps RATE]\n  mediaforge proxy <VIDEO> --output <FILE.mp4> [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge proxy-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET] [--jobs N] [--skip-existing] [--json] [--summary]\n  mediaforge proxy-config init [FILE] [--profile fast|balanced|quality] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge extract-audio <VIDEO> --output <FILE> [--format mp3|wav|flac] [--bitrate RATE] [--stream N]\n  mediaforge extract-audio-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--format mp3|wav|flac] [--bitrate RATE] [--stream N] [--jobs N] [--skip-existing] [--json] [--summary]\n  mediaforge snapshot [PATH] (--output FILE [--overwrite] | --diff FILE [--update]) [--json|--csv] [--compact] [--summary] [--include-hidden] [--include-generated] [--hash] [--jobs N] [--fail-on-change]\n  mediaforge project [PATH] [--json] [--compact] [--no-cache-sizes] [--no-editor-files]\n  mediaforge unity-meta [PROJECT_PATH] [--json] [--compact] [--summary] [--sidecars-only] [--include-hidden]\n  mediaforge gitignore [PATH] [--apply] [--json] [--compact]\n  mediaforge organize [PATH] [--by type|extension|size] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--compact] [--summary] [--apply]\n  mediaforge rename [PATH] [--replace OLD NEW] [--prefix TEXT] [--suffix TEXT] [--extension-case keep|lower|upper] [--extension EXTENSIONS] [--include-hidden] [--json] [--compact] [--summary] [--apply]
   mediaforge sequence [PATH] [--prefix NAME] [--start N] [--padding N] [--extension EXTENSIONS] [--include-hidden] [--natural] [--json] [--compact] [--summary] [--apply]\n  mediaforge undo [PATH] [--json] [--compact]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--exclude-path-contains TEXT ...] [--include-hidden] [--include-generated] [--dry-run] [--json] [--compact] [--list]\n  mediaforge --version\n  mediaforge --help"
     );
 }
@@ -7542,6 +7542,108 @@ fn write_scene_segment_csv(
     )
 }
 
+const SCENE_DIR_CSV_HEADER: &[u8] = b"record_type,path,cut_index,timecode,time_seconds,frame,score,segment_index,start_timecode,start_seconds,start_frame,end_timecode,end_seconds,end_frame,duration_seconds,fps,nominal_fps,cuts,files,successful,failed,threshold,min_gap_seconds,error\n";
+
+fn write_scene_csv_row(output: &mut impl Write, fields: &[String]) -> io::Result<()> {
+    for (index, field) in fields.iter().enumerate() {
+        if index > 0 {
+            output.write_all(b",")?;
+        }
+        write_csv_field(output, field)?;
+    }
+    output.write_all(b"\n")
+}
+
+fn write_scene_detection_csv(
+    output: &mut impl Write,
+    path: &str,
+    detection: &SceneDetection,
+    threshold: f64,
+    min_gap: f64,
+    segments: bool,
+    summary_only: bool,
+) -> io::Result<()> {
+    if !summary_only {
+        if segments {
+            if let Some(duration) = detection.duration {
+                let mut start = 0.0;
+                let mut segment_index = 0;
+                for cut in &detection.cuts {
+                    if cut.seconds > start && cut.seconds < duration {
+                        segment_index += 1;
+                        let mut row = vec![String::new(); 24];
+                        row[0] = "segment".to_owned();
+                        row[1] = path.to_owned();
+                        row[7] = segment_index.to_string();
+                        row[8] = scene_timecode(start);
+                        row[9] = format!("{start:.6}");
+                        row[10] = ((start * detection.fps).round() as u64).to_string();
+                        row[11] = scene_timecode(cut.seconds);
+                        row[12] = format!("{:.6}", cut.seconds);
+                        row[13] = ((cut.seconds * detection.fps).round() as u64).to_string();
+                        row[14] = format!("{:.6}", cut.seconds - start);
+                        row[15] = format!("{:.6}", detection.fps);
+                        row[16] = detection.nominal_fps.to_string();
+                        write_scene_csv_row(output, &row)?;
+                        start = cut.seconds;
+                    }
+                }
+                if start < duration {
+                    segment_index += 1;
+                    let mut row = vec![String::new(); 24];
+                    row[0] = "segment".to_owned();
+                    row[1] = path.to_owned();
+                    row[7] = segment_index.to_string();
+                    row[8] = scene_timecode(start);
+                    row[9] = format!("{start:.6}");
+                    row[10] = ((start * detection.fps).round() as u64).to_string();
+                    row[11] = scene_timecode(duration);
+                    row[12] = format!("{duration:.6}");
+                    row[13] = ((duration * detection.fps).round() as u64).to_string();
+                    row[14] = format!("{:.6}", duration - start);
+                    row[15] = format!("{:.6}", detection.fps);
+                    row[16] = detection.nominal_fps.to_string();
+                    write_scene_csv_row(output, &row)?;
+                }
+            }
+        } else {
+            for (index, cut) in detection.cuts.iter().enumerate() {
+                let mut row = vec![String::new(); 24];
+                row[0] = "scene".to_owned();
+                row[1] = path.to_owned();
+                row[2] = (index + 1).to_string();
+                row[3] = scene_timecode(cut.seconds);
+                row[4] = format!("{:.6}", cut.seconds);
+                row[5] = ((cut.seconds * detection.fps).round() as u64).to_string();
+                row[6] = format!("{:.6}", cut.score);
+                row[15] = format!("{:.6}", detection.fps);
+                row[16] = detection.nominal_fps.to_string();
+                write_scene_csv_row(output, &row)?;
+            }
+        }
+    }
+    let mut summary = vec![String::new(); 24];
+    summary[0] = "summary".to_owned();
+    summary[1] = path.to_owned();
+    summary[14] = detection
+        .duration
+        .map_or_else(String::new, |duration| format!("{duration:.6}"));
+    summary[15] = format!("{:.6}", detection.fps);
+    summary[16] = detection.nominal_fps.to_string();
+    summary[17] = detection.cut_count.to_string();
+    summary[21] = format!("{threshold:.6}");
+    summary[22] = format!("{min_gap:.6}");
+    write_scene_csv_row(output, &summary)
+}
+
+fn write_scene_csv_error(output: &mut impl Write, path: &str, error: &str) -> io::Result<()> {
+    let mut row = vec![String::new(); 24];
+    row[0] = "error".to_owned();
+    row[1] = path.to_owned();
+    row[23] = format!("mediaforge: {error}");
+    write_scene_csv_row(output, &row)
+}
+
 fn run_scene_detect(args: &[String]) -> Result<(), String> {
     let mut input = None;
     let mut threshold = 0.4_f64;
@@ -7694,6 +7796,7 @@ fn run_scene_detect_dir(args: &[String]) -> Result<(), String> {
     let mut include_hidden = false;
     let mut extensions = None;
     let mut fps = None;
+    let mut output_format = "jsonl";
     let mut jobs = std::thread::available_parallelism()
         .map(usize::from)
         .unwrap_or(1)
@@ -7729,6 +7832,14 @@ fn run_scene_detect_dir(args: &[String]) -> Result<(), String> {
                     .ok_or_else(|| "--fps requires a rate such as 30 or 30000/1001".to_owned())?;
                 fps = Some(parse_requested_fps(value)?);
             }
+            "--format" => {
+                output_format = iter
+                    .next()
+                    .ok_or_else(|| "--format requires jsonl or csv".to_owned())?;
+                if output_format != "jsonl" && output_format != "csv" {
+                    return Err("--format must be 'jsonl' or 'csv'".to_owned());
+                }
+            }
             "--extension" => {
                 let value = iter.next().ok_or_else(|| {
                     "--extension requires a comma-separated extension list".to_owned()
@@ -7751,7 +7862,7 @@ fn run_scene_detect_dir(args: &[String]) -> Result<(), String> {
             "--include-hidden" => include_hidden = true,
             "--help" | "-h" => {
                 println!(
-                    "Usage: mediaforge scene-detect-dir <PATH> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--summary] [--fps RATE] [--extension EXTENSIONS] [--include-hidden] [--jobs N]\n\nFind likely scene cuts in every video under a directory. Streams progress records and each video's JSON Lines results as processing finishes, followed by a batch summary. --segments emits contiguous intervals instead of individual cuts. --summary counts scene cuts but omits progress and per-cut/per-segment records, using bounded cut memory for long videos. --jobs controls concurrent FFmpeg processes (1–16; default 4)."
+                    "Usage: mediaforge scene-detect-dir <PATH> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--summary] [--format jsonl|csv] [--fps RATE] [--extension EXTENSIONS] [--include-hidden] [--jobs N]\n\nFind likely scene cuts in every video under a directory. JSON Lines is the default and streams progress and per-video records, followed by a batch summary. --format csv writes one table containing scene/segment rows, per-video summaries, and errors. --segments emits contiguous intervals instead of individual cuts. --summary writes only one summary row per video in CSV, or counts scene cuts without per-cut records in JSONL, using bounded cut memory for long videos. --jobs controls concurrent FFmpeg processes (1–16; default 4)."
                 );
                 return Ok(());
             }
@@ -7790,6 +7901,14 @@ fn run_scene_detect_dir(args: &[String]) -> Result<(), String> {
         &filters,
         &mut records,
     )?;
+
+    if output_format == "csv" {
+        let stdout = io::stdout();
+        stdout
+            .lock()
+            .write_all(SCENE_DIR_CSV_HEADER)
+            .map_err(|error| format!("could not write scene detection CSV header: {error}"))?;
+    }
 
     let next = std::sync::atomic::AtomicUsize::new(0);
     let completed = std::sync::atomic::AtomicUsize::new(0);
@@ -7830,29 +7949,48 @@ fn run_scene_detect_dir(args: &[String]) -> Result<(), String> {
                         let stdout = io::stdout();
                         let mut stdout = io::BufWriter::with_capacity(64 * 1024, stdout.lock());
                         let write_result = (|| -> io::Result<()> {
-                            if !summary_only {
-                                writeln!(
-                                    stdout,
-                                    "{{\"type\":\"progress\",\"current\":{current},\"total\":{},\"path\":{}}}",
-                                    records.len(),
-                                    json_string(&record.relative)
-                                )?;
+                            if output_format == "csv" {
+                                match result {
+                                    Ok(detection) => write_scene_detection_csv(
+                                        &mut stdout,
+                                        &record.relative,
+                                        &detection,
+                                        threshold,
+                                        min_gap,
+                                        segments,
+                                        summary_only,
+                                    )?,
+                                    Err(error) => write_scene_csv_error(
+                                        &mut stdout,
+                                        &record.relative,
+                                        &error,
+                                    )?,
+                                }
+                            } else {
+                                if !summary_only {
+                                    writeln!(
+                                        stdout,
+                                        "{{\"type\":\"progress\",\"current\":{current},\"total\":{},\"path\":{}}}",
+                                        records.len(),
+                                        json_string(&record.relative)
+                                    )?;
+                                }
+                                match result {
+                                    Ok(detection) => write_scene_detection_json(
+                                        &mut stdout,
+                                        &detection,
+                                        threshold,
+                                        min_gap,
+                                        summary_only,
+                                    ),
+                                    Err(error) => writeln!(
+                                        stdout,
+                                        "{{\"type\":\"error\",\"path\":{},\"error\":{}}}",
+                                        json_string(&source_path.to_string_lossy()),
+                                        json_string(&format!("mediaforge: {error}"))
+                                    ),
+                                }?;
                             }
-                            match result {
-                                Ok(detection) => write_scene_detection_json(
-                                    &mut stdout,
-                                    &detection,
-                                    threshold,
-                                    min_gap,
-                                    summary_only,
-                                ),
-                                Err(error) => writeln!(
-                                    stdout,
-                                    "{{\"type\":\"error\",\"path\":{},\"error\":{}}}",
-                                    json_string(&source_path.to_string_lossy()),
-                                    json_string(&format!("mediaforge: {error}"))
-                                ),
-                            }?;
                             stdout.flush()
                         })();
                         write_result.err().map(|error| error.to_string())
@@ -7882,15 +8020,27 @@ fn run_scene_detect_dir(args: &[String]) -> Result<(), String> {
     let failed = failed.load(std::sync::atomic::Ordering::Relaxed);
     let stdout = io::stdout();
     let mut stdout = stdout.lock();
-    writeln!(
-        stdout,
-        "{{\"type\":\"batch_summary\",\"files\":{},\"successful\":{},\"failed\":{},\"threshold\":{threshold:.6},\"min_gap_seconds\":{min_gap:.6},\"segments\":{segments},\"fps_override\":{}}}",
-        records.len(),
-        records.len() - failed,
-        failed,
-        fps.map_or("null".to_owned(), |value| format!("{value:.6}"))
-    )
-    .map_err(|error| format!("could not write scene detection summary: {error}"))?;
+    if output_format == "csv" {
+        let mut summary = vec![String::new(); 24];
+        summary[0] = "batch_summary".to_owned();
+        summary[18] = records.len().to_string();
+        summary[19] = (records.len() - failed).to_string();
+        summary[20] = failed.to_string();
+        summary[21] = format!("{threshold:.6}");
+        summary[22] = format!("{min_gap:.6}");
+        write_scene_csv_row(&mut stdout, &summary)
+            .map_err(|error| format!("could not write scene detection CSV summary: {error}"))?;
+    } else {
+        writeln!(
+            stdout,
+            "{{\"type\":\"batch_summary\",\"files\":{},\"successful\":{},\"failed\":{},\"threshold\":{threshold:.6},\"min_gap_seconds\":{min_gap:.6},\"segments\":{segments},\"fps_override\":{}}}",
+            records.len(),
+            records.len() - failed,
+            failed,
+            fps.map_or("null".to_owned(), |value| format!("{value:.6}"))
+        )
+        .map_err(|error| format!("could not write scene detection summary: {error}"))?;
+    }
     if failed > 0 {
         return Err(format!("scene detection failed for {failed} file(s)"));
     }
