@@ -35,6 +35,7 @@ Install FFmpeg separately to use `probe`; the core scanner does not need it:
 ```sh
 mediaforge probe ./Media/shot.mp4
 mediaforge probe ./Media/shot.mp4 --compact
+mediaforge probe ./Media/shot.mp4 --summary
 mediaforge probe-dir ./Media --extension mov,mxf --jobs 4
 mediaforge probe-dir ./Media --summary --jobs 4
 mediaforge storyboard ./Media/shot.mp4 --output ./Media/shot-sheet.jpg
@@ -49,7 +50,7 @@ mediaforge extract-audio ./Media/shot.mp4 --output ./Audio/shot.mp3
 mediaforge extract-audio ./Media/shot.mp4 -o ./Audio/shot.wav --format wav --stream 1
 ```
 
-`probe` invokes `ffprobe` directly (without a shell) and returns its JSON containing container and stream metadata such as duration, codec, dimensions, frame rate, and audio channels. `probe-dir` scans video/audio assets and probes them concurrently, emitting one JSON Lines record per file in stable path order. It can filter by extension; `--jobs` controls concurrency from 1 to 32. A failed file is reported as an error record while other files continue. Add `--summary` for compact comparison fields: file size, duration, bitrate, codecs, dimensions, pixel and aspect formats, frame rates, and audio layout. `ffprobe` must be available on `PATH`.
+`probe` invokes `ffprobe` directly (without a shell) and returns its JSON containing container and stream metadata such as duration, codec, dimensions, frame rate, and audio channels. Use `--summary` to return only the compact comparison fields: file size, duration, bitrate, codecs, dimensions, pixel and aspect formats, frame rates, and audio layout. `--compact` removes JSON whitespace. `probe-dir` scans video/audio assets and probes them concurrently, emitting one JSON Lines record per file in stable path order. It can filter by extension; `--jobs` controls concurrency from 1 to 32. A failed file is reported as an error record while other files continue. `probe-dir --summary` uses the same compact fields. `ffprobe` must be available on `PATH`.
 
 `storyboard` creates a contact sheet using `ffmpeg` (also required on `PATH`). It samples at the requested interval (10 seconds by default), with a 5×5 grid of 320-pixel-wide thumbnails by default. JPG, PNG, and WebP outputs are supported. It refuses to overwrite existing files and only publishes the image after FFmpeg finishes successfully.
 
