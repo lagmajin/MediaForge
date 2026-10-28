@@ -39,6 +39,7 @@ mediaforge probe ./Media/shot.mp4 --summary
 mediaforge probe-dir ./Media --extension mov,mxf --jobs 4
 mediaforge probe-dir ./Media --summary --jobs 4
 mediaforge probe-dir ./Media --type video --summary --jobs 4
+mediaforge probe-dir ./Media --type video --min-size 1G --summary --jobs 4
 mediaforge storyboard ./Media/shot.mp4 --output ./Media/shot-sheet.jpg
 mediaforge storyboard ./Media/shot.mp4 -o ./Media/shot-sheet.png --interval 5 --columns 6 --rows 4 --width 240
 mediaforge proxy ./Media/shot.mp4 --output ./Proxies/shot-proxy.mp4
@@ -52,7 +53,7 @@ mediaforge extract-audio ./Media/shot.mp4 -o ./Audio/shot.wav --format wav --str
 mediaforge extract-audio-dir ./Media --output-dir ./Audio --extension mov,mxf --format mp3 --bitrate 192k --jobs 4 --skip-existing --json
 ```
 
-`probe` invokes `ffprobe` directly (without a shell) and returns its JSON containing container and stream metadata such as duration, codec, dimensions, frame rate, and audio channels. Use `--summary` to return only the compact comparison fields: file size, duration, bitrate, codecs, dimensions, pixel and aspect formats, frame rates, and audio layout. `--compact` removes JSON whitespace. `probe-dir` scans video/audio assets and probes them concurrently, emitting one JSON Lines record per file in stable path order. It can filter by extension or `--type video|audio`; the type filter also selects only matching streams in each report, which makes reports smaller when only picture or sound specs matter. `--jobs` controls concurrency from 1 to 32. A failed file is reported as an error record while other files continue. `probe-dir --summary` uses the same compact fields. `ffprobe` must be available on `PATH`.
+`probe` invokes `ffprobe` directly (without a shell) and returns its JSON containing container and stream metadata such as duration, codec, dimensions, frame rate, and audio channels. Use `--summary` to return only the compact comparison fields: file size, duration, bitrate, codecs, dimensions, pixel and aspect formats, frame rates, and audio layout. `--compact` removes JSON whitespace. `probe-dir` scans video/audio assets and probes them concurrently, emitting one JSON Lines record per file in stable path order. It can filter by extension, `--type video|audio`, or `--min-size`/`--max-size` before launching `ffprobe`; size bounds accept bytes or binary K/M/G/T units. The type filter also selects only matching streams in each report, which makes reports smaller when only picture or sound specs matter. `--jobs` controls concurrency from 1 to 32. A failed file is reported as an error record while other files continue. `probe-dir --summary` uses the same compact fields. `ffprobe` must be available on `PATH`.
 
 `storyboard` creates a contact sheet using `ffmpeg` (also required on `PATH`). It samples at the requested interval (10 seconds by default), with a 5×5 grid of 320-pixel-wide thumbnails by default. JPG, PNG, and WebP outputs are supported. It refuses to overwrite existing files and only publishes the image after FFmpeg finishes successfully.
 

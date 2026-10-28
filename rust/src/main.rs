@@ -1379,7 +1379,7 @@ fn fraction_ceil_scaled(fraction: &str, multiplier: u128) -> u128 {
 
 fn print_help() {
     println!(
-        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json|--csv] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS] [--largest N]\n  mediaforge dupes [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--top-groups N]\n  mediaforge probe <FILE> [--compact] [--summary]\n  mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--type video|audio] [--jobs N] [--summary]\n  mediaforge storyboard <VIDEO> --output <IMAGE> [--interval SECONDS] [--columns N] [--rows N] [--width PIXELS]\n  mediaforge proxy <VIDEO> --output <FILE.mp4> [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge proxy-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET] [--jobs N] [--skip-existing] [--json]\n  mediaforge proxy-config init [FILE] [--profile fast|balanced|quality] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge extract-audio <VIDEO> --output <FILE> [--format mp3|wav|flac] [--bitrate RATE] [--stream N]\n  mediaforge extract-audio-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--format mp3|wav|flac] [--bitrate RATE] [--stream N] [--jobs N] [--skip-existing] [--json]\n  mediaforge project [PATH] [--json]\n  mediaforge gitignore [PATH] [--apply]\n  mediaforge organize [PATH] [--by type|extension] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--apply]\n  mediaforge sequence [PATH] [--prefix NAME] [--start N] [--padding N] [--extension EXTENSIONS] [--include-hidden] [--natural] [--json] [--apply]\n  mediaforge undo [PATH] [--json]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--include-hidden] [--include-generated] [--dry-run] [--json] [--list]\n  mediaforge --version\n  mediaforge --help"
+        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json|--csv] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS] [--largest N]\n  mediaforge dupes [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--top-groups N]\n  mediaforge probe <FILE> [--compact] [--summary]\n  mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--type video|audio] [--min-size SIZE] [--max-size SIZE] [--jobs N] [--summary]\n  mediaforge storyboard <VIDEO> --output <IMAGE> [--interval SECONDS] [--columns N] [--rows N] [--width PIXELS]\n  mediaforge proxy <VIDEO> --output <FILE.mp4> [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge proxy-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET] [--jobs N] [--skip-existing] [--json]\n  mediaforge proxy-config init [FILE] [--profile fast|balanced|quality] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge extract-audio <VIDEO> --output <FILE> [--format mp3|wav|flac] [--bitrate RATE] [--stream N]\n  mediaforge extract-audio-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--format mp3|wav|flac] [--bitrate RATE] [--stream N] [--jobs N] [--skip-existing] [--json]\n  mediaforge project [PATH] [--json]\n  mediaforge gitignore [PATH] [--apply]\n  mediaforge organize [PATH] [--by type|extension] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--apply]\n  mediaforge sequence [PATH] [--prefix NAME] [--start N] [--padding N] [--extension EXTENSIONS] [--include-hidden] [--natural] [--json] [--apply]\n  mediaforge undo [PATH] [--json]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--include-hidden] [--include-generated] [--dry-run] [--json] [--list]\n  mediaforge --version\n  mediaforge --help"
     );
 }
 
@@ -1479,6 +1479,8 @@ fn run_probe_dir(args: &[String]) -> Result<(), String> {
     let mut summary = false;
     let mut selected_kind = None;
     let mut extensions = None;
+    let mut min_size = 0_u64;
+    let mut max_size = None;
     let mut jobs = std::thread::available_parallelism()
         .map(usize::from)
         .unwrap_or(1)
@@ -1498,6 +1500,18 @@ fn run_probe_dir(args: &[String]) -> Result<(), String> {
                     "audio" => Kind::Audio,
                     _ => return Err("--type must be 'video' or 'audio'".to_owned()),
                 });
+            }
+            "--min-size" => {
+                let value = iter
+                    .next()
+                    .ok_or_else(|| "--min-size requires a value".to_owned())?;
+                min_size = parse_size(value)?;
+            }
+            "--max-size" => {
+                let value = iter
+                    .next()
+                    .ok_or_else(|| "--max-size requires a value".to_owned())?;
+                max_size = Some(parse_size(value)?);
             }
             "--extension" => {
                 let value = iter.next().ok_or_else(|| {
@@ -1523,7 +1537,7 @@ fn run_probe_dir(args: &[String]) -> Result<(), String> {
             }
             "--help" | "-h" => {
                 println!(
-                    "Usage: mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--type video|audio] [--jobs N] [--summary]\n\nProbe video and audio assets in a directory with ffprobe. Emits one JSON Lines record per file. --type filters to video or audio assets and selects only that stream type in the report. --jobs controls concurrent ffprobe processes (1–32). --summary selects compact fields for size, duration, bitrate, codecs, dimensions, pixel/aspect formats, frame rates, and audio layout."
+                    "Usage: mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--type video|audio] [--min-size SIZE] [--max-size SIZE] [--jobs N] [--summary]\n\nProbe video and audio assets in a directory with ffprobe. Emits one JSON Lines record per file. --type filters to video or audio assets and selects only that stream type in the report. --min-size and --max-size filter file sizes before probing and accept bytes or K/M/G/T units. --jobs controls concurrent ffprobe processes (1–32). --summary selects compact fields for size, duration, bitrate, codecs, dimensions, pixel/aspect formats, frame rates, and audio layout."
                 );
                 return Ok(());
             }
@@ -1537,6 +1551,9 @@ fn run_probe_dir(args: &[String]) -> Result<(), String> {
         }
     }
     let path = path.ok_or_else(|| "probe-dir requires a directory path".to_owned())?;
+    if max_size.is_some_and(|max_size| min_size > max_size) {
+        return Err("--min-size cannot be greater than --max-size".to_owned());
+    }
     let root = fs::canonicalize(&path)
         .map_err(|error| format!("cannot access {}: {error}", path.display()))?;
     if !root.is_dir() {
@@ -1559,6 +1576,8 @@ fn run_probe_dir(args: &[String]) -> Result<(), String> {
     if let Some(extensions) = extensions {
         records.retain(|record| extensions.contains(&record.extension));
     }
+    records
+        .retain(|record| record.size >= min_size && max_size.is_none_or(|max| record.size <= max));
     records.sort_by(|left, right| left.relative.cmp(&right.relative));
     if records.is_empty() {
         return Ok(());
