@@ -53,7 +53,7 @@ mediaforge scan ./Media
 mediaforge scan ./Game/Content --json
 mediaforge scan . --include-hidden
 mediaforge scan ./Media --type video --min-size 500M
-mediaforge dupes ./Game/Content --min-size 1M
+mediaforge dupes ./Game/Content --include-hidden --min-size 1M
 mediaforge project ./Game
 mediaforge gitignore ./Game
 mediaforge organize ./Media --by type
@@ -71,6 +71,7 @@ Hidden folders and common generated/dependency directories (`.git`, `node_module
 ```sh
 mediaforge dupes ./Media
 mediaforge dupes ./Game/Content --json --min-size 1M
+mediaforge dupes ./Media --include-hidden
 ```
 
 ## Inspect a project
