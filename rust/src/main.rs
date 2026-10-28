@@ -1064,7 +1064,8 @@ fn run_project(args: &[String]) -> Result<(), String> {
                     entry.path().display()
                 )
             })?;
-            let association = json_top_level_string_field(&contents, "EngineAssociation");
+            let association = json_top_level_string_field(&contents, "EngineAssociation")
+                .filter(|association| !association.trim().is_empty());
             unreal_files.push((project_file, association));
         }
     }
