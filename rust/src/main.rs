@@ -5429,7 +5429,7 @@ fn run_proxy_dir(args: &[String]) -> Result<(), String> {
             "--skip-existing" => skip_existing = true,
             "--help" | "-h" => {
                 println!(
-                    "Usage: mediaforge proxy-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET] [--jobs N] [--skip-existing] [--json]\n\nCreate H.264/AAC proxies for video assets while preserving their relative folders. Automatically reads .mediaforge-proxy from the working directory when present. Explicit options override settings-file values. --jobs controls concurrent ffmpeg processes (1–16; default 4). Existing outputs are never overwritten; --skip-existing skips them to resume a batch. Failed files are reported after the remaining videos are processed. The output directory must already exist. --json emits progress and per-file result records as JSON Lines."
+                    "Usage: mediaforge proxy-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET] [--jobs N] [--skip-existing] [--json]\n\nCreate H.264/AAC proxies for video assets while preserving their relative folders. Automatically reads .mediaforge-proxy from the working directory when present. Explicit options override settings-file values. --jobs controls concurrent ffmpeg processes (1–16; default 4). Existing regular output files are never overwritten; --skip-existing skips those files. Other occupied output paths are errors. Failed files are reported after the remaining videos are processed. The output directory must already exist. --json emits progress and per-file result records as JSON Lines."
                 );
                 return Ok(());
             }
@@ -5552,7 +5552,13 @@ fn run_proxy_dir(args: &[String]) -> Result<(), String> {
                         let output_state = entry_state(output).map_err(|error| {
                             format!("cannot inspect output {}: {error}", output.display())
                         })?;
-                        if skip_existing && output_state != EntryState::Missing {
+                        if output_state == EntryState::Other {
+                            return Err(format!(
+                                "output path exists but is not a regular file: {}",
+                                output.display()
+                            ));
+                        }
+                        if skip_existing && output_state == EntryState::File {
                             return Ok(false);
                         }
                         if let Some(parent) = output.parent() {
@@ -5943,7 +5949,7 @@ fn run_extract_audio_dir(args: &[String]) -> Result<(), String> {
             "--json" => json = true,
             "--help" | "-h" => {
                 println!(
-                    "Usage: mediaforge extract-audio-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--format mp3|wav|flac] [--bitrate RATE] [--stream N] [--jobs N] [--skip-existing] [--json]\n\nExtract audio from video and audio assets while preserving relative folders. Defaults to MP3 at 192k from the first audio stream. --jobs controls concurrent ffmpeg processes (1–16; default 4). Existing outputs are never overwritten; --skip-existing skips them to resume a batch. The output directory must already exist. --json emits progress and per-file results as JSON Lines."
+                    "Usage: mediaforge extract-audio-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--format mp3|wav|flac] [--bitrate RATE] [--stream N] [--jobs N] [--skip-existing] [--json]\n\nExtract audio from video and audio assets while preserving relative folders. Defaults to MP3 at 192k from the first audio stream. --jobs controls concurrent ffmpeg processes (1–16; default 4). Existing regular output files are never overwritten; --skip-existing skips those files. Other occupied output paths are errors. The output directory must already exist. --json emits progress and per-file results as JSON Lines."
                 );
                 return Ok(());
             }
@@ -6079,7 +6085,13 @@ fn run_extract_audio_dir(args: &[String]) -> Result<(), String> {
                         let output_state = entry_state(output).map_err(|error| {
                             format!("cannot inspect output {}: {error}", output.display())
                         })?;
-                        if skip_existing && output_state != EntryState::Missing {
+                        if output_state == EntryState::Other {
+                            return Err(format!(
+                                "output path exists but is not a regular file: {}",
+                                output.display()
+                            ));
+                        }
+                        if skip_existing && output_state == EntryState::File {
                             return Ok(false);
                         }
                         if let Some(parent) = output.parent() {
