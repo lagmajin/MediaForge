@@ -5693,12 +5693,6 @@ struct SceneDetection {
     nominal_fps: u32,
 }
 
-struct SceneSegment {
-    index: usize,
-    start: f64,
-    end: f64,
-}
-
 #[derive(Clone, Copy)]
 struct VideoTiming {
     duration: Option<f64>,
@@ -5970,48 +5964,39 @@ fn write_scene_detection_json(
         return Ok(());
     }
     if let Some(duration) = detection.duration {
-        let mut intervals = Vec::with_capacity(detection.cuts.len() + 1);
         let mut start = 0.0_f64;
+        let mut segment_count = 0;
         for cut in &detection.cuts {
             if cut.seconds > start && cut.seconds < duration {
-                intervals.push(SceneSegment {
-                    index: intervals.len() + 1,
+                segment_count += 1;
+                write_scene_segment_json(
+                    output,
+                    &source,
+                    segment_count,
                     start,
-                    end: cut.seconds,
-                });
+                    cut.seconds,
+                    detection.fps,
+                    detection.nominal_fps,
+                )?;
                 start = cut.seconds;
             }
         }
         if start < duration {
-            intervals.push(SceneSegment {
-                index: intervals.len() + 1,
-                start,
-                end: duration,
-            });
-        }
-        for interval in &intervals {
-            writeln!(
+            segment_count += 1;
+            write_scene_segment_json(
                 output,
-                "{{\"type\":\"segment\",\"path\":{source},\"segment\":{},\"start_timecode\":{},\"start_seconds\":{:.6},\"start_frame\":{},\"end_timecode\":{},\"end_seconds\":{:.6},\"end_frame\":{},\"duration_seconds\":{:.6},\"fps\":{:.6},\"nominal_fps\":{}}}",
-                interval.index,
-                json_string(&scene_timecode(interval.start)),
-                interval.start,
-                (interval.start * detection.fps).round() as u64,
-                json_string(&scene_timecode(interval.end)),
-                interval.end,
-                (interval.end * detection.fps).round() as u64,
-                interval.end - interval.start,
+                &source,
+                segment_count,
+                start,
+                duration,
                 detection.fps,
-                detection.nominal_fps
+                detection.nominal_fps,
             )?;
         }
         writeln!(
             output,
             "{{\"type\":\"summary\",\"path\":{source},\"segments\":{},\"scene_cuts\":{},\"duration_seconds\":{duration:.6},\"fps\":{:.6},\"nominal_fps\":{},\"threshold\":{threshold:.6},\"min_gap_seconds\":{min_gap:.6}}}",
-            intervals.len(),
-            detection.cut_count,
-            detection.fps,
-            detection.nominal_fps
+            segment_count, detection.cut_count, detection.fps, detection.nominal_fps
         )?;
     } else {
         for cut in &detection.cuts {
@@ -6033,6 +6018,47 @@ fn write_scene_detection_json(
         )?;
     }
     Ok(())
+}
+
+fn write_scene_segment_json(
+    output: &mut impl Write,
+    source: &str,
+    index: usize,
+    start: f64,
+    end: f64,
+    fps: f64,
+    nominal_fps: u32,
+) -> io::Result<()> {
+    writeln!(
+        output,
+        "{{\"type\":\"segment\",\"path\":{source},\"segment\":{index},\"start_timecode\":{},\"start_seconds\":{start:.6},\"start_frame\":{},\"end_timecode\":{},\"end_seconds\":{end:.6},\"end_frame\":{},\"duration_seconds\":{:.6},\"fps\":{fps:.6},\"nominal_fps\":{nominal_fps}}}",
+        json_string(&scene_timecode(start)),
+        (start * fps).round() as u64,
+        json_string(&scene_timecode(end)),
+        (end * fps).round() as u64,
+        end - start
+    )
+}
+
+fn write_scene_segment_csv(
+    output: &mut impl Write,
+    input: &str,
+    index: usize,
+    start: f64,
+    end: f64,
+    fps: f64,
+) -> io::Result<()> {
+    write_csv_field(output, input)?;
+    write!(output, ",{index},")?;
+    write_csv_field(output, &scene_timecode(start))?;
+    write!(output, ",{start:.6},{},", (start * fps).round() as u64)?;
+    write_csv_field(output, &scene_timecode(end))?;
+    writeln!(
+        output,
+        ",{end:.6},{},{:.6},{fps:.6}",
+        (end * fps).round() as u64,
+        end - start
+    )
 }
 
 fn run_scene_detect(args: &[String]) -> Result<(), String> {
@@ -6108,44 +6134,33 @@ fn run_scene_detect(args: &[String]) -> Result<(), String> {
     let output_result = (|| -> io::Result<()> {
         if output_format == "csv" {
             if let Some(duration) = duration {
-                let mut intervals = Vec::with_capacity(cuts.len() + 1);
                 let mut start = 0.0_f64;
+                let mut segment_index = 0;
+                let input_text = input.to_string_lossy();
+                output.write_all(b"path,segment,start_timecode,start_seconds,start_frame,end_timecode,end_seconds,end_frame,duration_seconds,fps\n")?;
                 for cut in cuts {
                     if cut.seconds > start && cut.seconds < duration {
-                        intervals.push(SceneSegment {
-                            index: intervals.len() + 1,
+                        segment_index += 1;
+                        write_scene_segment_csv(
+                            &mut output,
+                            &input_text,
+                            segment_index,
                             start,
-                            end: cut.seconds,
-                        });
+                            cut.seconds,
+                            fps,
+                        )?;
                         start = cut.seconds;
                     }
                 }
                 if start < duration {
-                    intervals.push(SceneSegment {
-                        index: intervals.len() + 1,
+                    segment_index += 1;
+                    write_scene_segment_csv(
+                        &mut output,
+                        &input_text,
+                        segment_index,
                         start,
-                        end: duration,
-                    });
-                }
-                output.write_all(b"path,segment,start_timecode,start_seconds,start_frame,end_timecode,end_seconds,end_frame,duration_seconds,fps\n")?;
-                for interval in &intervals {
-                    write_csv_field(&mut output, &input.to_string_lossy())?;
-                    write!(output, ",{},", interval.index)?;
-                    write_csv_field(&mut output, &scene_timecode(interval.start))?;
-                    write!(
-                        output,
-                        ",{:.6},{},",
-                        interval.start,
-                        (interval.start * fps).round() as u64
-                    )?;
-                    write_csv_field(&mut output, &scene_timecode(interval.end))?;
-                    writeln!(
-                        output,
-                        ",{:.6},{},{:.6},{:.6}",
-                        interval.end,
-                        (interval.end * fps).round() as u64,
-                        interval.end - interval.start,
-                        fps
+                        duration,
+                        fps,
                     )?;
                 }
             } else {
