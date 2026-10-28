@@ -8063,23 +8063,24 @@ fn validate_portable_relative_path(value: &str) -> Result<PathBuf, String> {
 }
 
 fn portable_relative_path(path: &Path) -> Option<String> {
-    path.components()
-        .map(|component| match component {
-            std::path::Component::Normal(part) => part.to_str().and_then(|part| {
-                if part
-                    .chars()
-                    .any(|character| matches!(character, '/' | '\\' | ':' | '\0'))
-                {
-                    None
-                } else {
-                    Some(part)
-                }
-            }),
-            _ => None,
-        })
-        .collect::<Option<Vec<_>>>()
-        .filter(|parts| !parts.is_empty())
-        .map(|parts| parts.join("/"))
+    let mut portable = String::with_capacity(path.as_os_str().len());
+    for component in path.components() {
+        let std::path::Component::Normal(part) = component else {
+            return None;
+        };
+        let part = part.to_str()?;
+        if part
+            .chars()
+            .any(|character| matches!(character, '/' | '\\' | ':' | '\0'))
+        {
+            return None;
+        }
+        if !portable.is_empty() {
+            portable.push('/');
+        }
+        portable.push_str(part);
+    }
+    (!portable.is_empty()).then_some(portable)
 }
 
 fn reject_symlink_components(root: &Path, relative: &Path) -> Result<(), String> {
