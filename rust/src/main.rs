@@ -1181,7 +1181,7 @@ fn fraction_ceil_scaled(fraction: &str, multiplier: u128) -> u128 {
 
 fn print_help() {
     println!(
-        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE]\n  mediaforge dupes [PATH] [--json] [--include-hidden] [--min-size SIZE]\n  mediaforge probe <FILE> [--compact]\n  mediaforge project [PATH] [--json]\n  mediaforge gitignore [PATH] [--apply]\n  mediaforge organize [PATH] [--by type|extension] [--apply]\n  mediaforge undo [PATH]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--include-hidden] [--include-generated] [--dry-run] [--json]\n  mediaforge --version\n  mediaforge --help"
+        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE]\n  mediaforge dupes [PATH] [--json] [--include-hidden] [--min-size SIZE]\n  mediaforge probe <FILE> [--compact]\n  mediaforge project [PATH] [--json]\n  mediaforge gitignore [PATH] [--apply]\n  mediaforge organize [PATH] [--by type|extension] [--apply]\n  mediaforge undo [PATH]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--include-hidden] [--include-generated] [--dry-run] [--json]\n  mediaforge --version\n  mediaforge --help"
     );
 }
 
@@ -3011,6 +3011,30 @@ fn parse_pack_types(value: &str) -> Result<HashSet<Kind>, String> {
     Ok(kinds)
 }
 
+fn parse_pack_extensions(value: &str) -> Result<HashSet<String>, String> {
+    let mut extensions = HashSet::new();
+    for name in value.split(',').map(str::trim) {
+        if name.is_empty() {
+            return Err("--extension contains an empty value".to_owned());
+        }
+        if name.eq_ignore_ascii_case("none") {
+            extensions.insert("[no extension]".to_owned());
+            continue;
+        }
+        let extension = name.strip_prefix('.').unwrap_or(name);
+        if extension.is_empty()
+            || extension.starts_with('.')
+            || !extension
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+        {
+            return Err(format!("invalid file extension '{name}'"));
+        }
+        extensions.insert(format!(".{}", extension.to_ascii_lowercase()));
+    }
+    Ok(extensions)
+}
+
 fn validate_archive_component(component: &str) -> Result<(), String> {
     if component.is_empty()
         || component.ends_with('.')
@@ -3124,6 +3148,7 @@ fn run_pack(args: &[String]) -> Result<(), String> {
     let mut dry_run = false;
     let mut json = false;
     let mut selected_types: Option<HashSet<Kind>> = None;
+    let mut selected_extensions: Option<HashSet<String>> = None;
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
         match arg.as_str() {
@@ -3143,9 +3168,15 @@ fn run_pack(args: &[String]) -> Result<(), String> {
                     .ok_or_else(|| "--type requires a comma-separated type list".to_owned())?;
                 selected_types = Some(parse_pack_types(value)?);
             }
+            "--extension" => {
+                let value = iter.next().ok_or_else(|| {
+                    "--extension requires a comma-separated extension list".to_owned()
+                })?;
+                selected_extensions = Some(parse_pack_extensions(value)?);
+            }
             "--help" | "-h" => {
                 println!(
-                    "Usage: mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--include-hidden] [--include-generated] [--dry-run] [--json]\n\nCreate an uncompressed, stream-written tar archive. --type accepts comma-separated scan types: video, audio, image, model, texture, project, other. Git-ignored and hidden files are skipped by default. Common Unity, Unreal, and Godot generated folders are excluded unless --include-generated is used. PAX extensions support long paths and files larger than 8 GiB. --json emits a machine-readable result summary."
+                    "Usage: mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--include-hidden] [--include-generated] [--dry-run] [--json]\n\nCreate an uncompressed, stream-written tar archive. --type accepts comma-separated scan types: video, audio, image, model, texture, project, other. --extension accepts comma-separated extensions such as mov,mxf; use none for files without an extension. Git-ignored and hidden files are skipped by default. Common Unity, Unreal, and Godot generated folders are excluded unless --include-generated is used. PAX extensions support long paths and files larger than 8 GiB. --json emits a machine-readable result summary."
                 );
                 return Ok(());
             }
@@ -3213,6 +3244,9 @@ fn run_pack(args: &[String]) -> Result<(), String> {
     )?;
     if let Some(types) = &selected_types {
         records.retain(|record| types.contains(&record.kind));
+    }
+    if let Some(extensions) = &selected_extensions {
+        records.retain(|record| extensions.contains(&record.extension));
     }
     let mut entries = Vec::<(&FileRecord, String)>::with_capacity(records.len());
     let mut portable_names = HashMap::<String, (String, bool)>::new();
