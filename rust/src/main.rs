@@ -3084,7 +3084,10 @@ fn run_dupes(args: &[String]) -> Result<(), String> {
     };
     let truncated_groups = total_groups - displayed_groups;
     if json {
-        println!(
+        let stdout = io::stdout();
+        let mut output = io::BufWriter::with_capacity(64 * 1024, stdout.lock());
+        write!(
+            output,
             "{{\n  \"root\": {},\n  \"min_size_bytes\": {},\n  \"max_size_bytes\": {},\n  \"exclude_path_contains\": [{}],\n  \"groups_total\": {},\n  \"groups_returned\": {},\n  \"groups_truncated\": {},\n  \"groups\": [",
             json_string(&root.to_string_lossy()),
             min_size,
@@ -3097,9 +3100,8 @@ fn run_dupes(args: &[String]) -> Result<(), String> {
             total_groups,
             displayed_groups,
             truncated_groups
-        );
-        let stdout = io::stdout();
-        let mut output = io::BufWriter::with_capacity(64 * 1024, stdout.lock());
+        )
+        .map_err(|error| format!("could not write duplicate JSON: {error}"))?;
         for (index, (size, files)) in groups.iter().take(displayed_groups).enumerate() {
             let comma = if index + 1 == displayed_groups {
                 ""
@@ -3120,15 +3122,17 @@ fn run_dupes(args: &[String]) -> Result<(), String> {
             writeln!(output, "]}}{}", comma)
                 .map_err(|error| format!("could not write duplicate JSON: {error}"))?;
         }
-        output
-            .flush()
-            .map_err(|error| format!("could not write duplicate JSON: {error}"))?;
-        println!(
+        writeln!(
+            output,
             "  ],\n  \"duplicate_files\": {},\n  \"reclaimable_bytes\": {},\n  \"reclaimable_size\": {}\n}}",
             duplicate_files,
             reclaimable,
             json_string(&human_size_wide(reclaimable))
-        );
+        )
+        .map_err(|error| format!("could not write duplicate JSON: {error}"))?;
+        output
+            .flush()
+            .map_err(|error| format!("could not write duplicate JSON: {error}"))?;
     } else {
         println!(
             "Verified duplicate files: {duplicate_files} · potential reclaim: {}",
@@ -12591,7 +12595,9 @@ fn run_doctor(args: &[String]) -> Result<(), String> {
             ),
             Err(error) => format!("{{\"available\":false,\"error\":{}}}", json_string(error)),
         };
-        println!(
+        let stdout = io::stdout();
+        writeln!(
+            stdout.lock(),
             "{{\"schema_version\":1,\"type\":\"doctor\",\"media_tools_ready\":{ready},\"proxy_ready\":{proxy_ready},\"audio_encoders\":{{\"mp3\":{},\"wav\":{},\"flac\":{}}},\"ffmpeg\":{},\"ffprobe\":{},\"ffmpeg_encoder_check_error\":{}}}",
             has_encoder("libmp3lame"),
             has_encoder("pcm_s16le"),
@@ -12603,7 +12609,8 @@ fn run_doctor(args: &[String]) -> Result<(), String> {
                 .err()
                 .map(|error| json_string(error))
                 .unwrap_or_else(|| "null".to_owned())
-        );
+        )
+        .map_err(|error| format!("could not write doctor JSON: {error}"))?;
     } else {
         println!("MediaForge {VERSION} · {}", env::consts::OS);
         for (name, result) in [("ffmpeg", ffmpeg), ("ffprobe", ffprobe)] {
