@@ -5933,7 +5933,7 @@ fn detect_scene_cuts(
             }
         })?;
     const ERROR_DETAIL_LIMIT: usize = 64 * 1024;
-    let mut diagnostic_detail = Vec::with_capacity(ERROR_DETAIL_LIMIT);
+    let mut diagnostic_detail = Vec::new();
     let Some(stderr_pipe) = child.stderr.take() else {
         let _ = child.kill();
         let _ = child.wait();
