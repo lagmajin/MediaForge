@@ -4912,9 +4912,9 @@ fn collect_json_scalars(
     bytes: &[u8],
     index: &mut usize,
     prefix: &mut String,
-    fields: &mut HashMap<String, String>,
+    selected_indices: &HashMap<&str, usize>,
+    fields: &mut [Option<String>],
     depth: usize,
-    selected_fields: &[&str],
 ) -> Result<(), String> {
     if depth > 64 {
         return Err("ffprobe JSON nesting is too deep".to_owned());
@@ -4947,7 +4947,7 @@ fn collect_json_scalars(
                     prefix.push('.');
                 }
                 prefix.push_str(key);
-                collect_json_scalars(bytes, index, prefix, fields, depth + 1, selected_fields)?;
+                collect_json_scalars(bytes, index, prefix, selected_indices, fields, depth + 1)?;
                 prefix.truncate(previous_length);
                 skip_json_whitespace(bytes, index);
                 match bytes.get(*index) {
@@ -4972,7 +4972,7 @@ fn collect_json_scalars(
                 let previous_length = prefix.len();
                 prefix.push('[');
                 write!(prefix, "{element}]").expect("writing a JSON array index to a String");
-                collect_json_scalars(bytes, index, prefix, fields, depth + 1, selected_fields)?;
+                collect_json_scalars(bytes, index, prefix, selected_indices, fields, depth + 1)?;
                 prefix.truncate(previous_length);
                 element += 1;
                 skip_json_whitespace(bytes, index);
@@ -4989,11 +4989,9 @@ fn collect_json_scalars(
         Some(b'"') => {
             let start = *index;
             *index = json_string_end(bytes, start)?;
-            if selected_fields.contains(&prefix.as_str()) {
-                fields.insert(
-                    prefix.clone(),
-                    String::from_utf8_lossy(&bytes[start..*index]).into_owned(),
-                );
+            if let Some(field_index) = selected_indices.get(prefix.as_str()) {
+                fields[*field_index] =
+                    Some(String::from_utf8_lossy(&bytes[start..*index]).into_owned());
             }
             Ok(())
         }
@@ -5007,11 +5005,9 @@ fn collect_json_scalars(
             if start == *index {
                 return Err("invalid JSON scalar in ffprobe output".to_owned());
             }
-            if selected_fields.contains(&prefix.as_str()) {
-                fields.insert(
-                    prefix.clone(),
-                    String::from_utf8_lossy(&bytes[start..*index]).into_owned(),
-                );
+            if let Some(field_index) = selected_indices.get(prefix.as_str()) {
+                fields[*field_index] =
+                    Some(String::from_utf8_lossy(&bytes[start..*index]).into_owned());
             }
             Ok(())
         }
@@ -5043,24 +5039,26 @@ enum ProbeRetainedData {
 }
 
 fn probe_selected_values(probe: &str, selected_fields: &[&str]) -> Result<Vec<String>, String> {
-    let mut fields = HashMap::with_capacity(selected_fields.len());
+    let selected_indices = selected_fields
+        .iter()
+        .enumerate()
+        .map(|(index, field)| (*field, index))
+        .collect::<HashMap<_, _>>();
+    let mut fields = std::iter::repeat_with(|| None)
+        .take(selected_fields.len())
+        .collect::<Vec<Option<String>>>();
     let mut cursor = 0;
     collect_json_scalars(
         probe.as_bytes(),
         &mut cursor,
         &mut String::with_capacity(64),
+        &selected_indices,
         &mut fields,
         0,
-        selected_fields,
     )?;
-    Ok(selected_fields
-        .iter()
-        .map(|field| {
-            fields
-                .get(*field)
-                .cloned()
-                .unwrap_or_else(|| "null".to_owned())
-        })
+    Ok(fields
+        .into_iter()
+        .map(|value| value.unwrap_or_else(|| "null".to_owned()))
         .collect())
 }
 
