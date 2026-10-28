@@ -5701,7 +5701,7 @@ fn fraction_ceil_scaled(fraction: &str, multiplier: u128) -> u128 {
 
 fn print_help() {
     println!(
-        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge doctor [--json] [--strict]\n  mediaforge scan-config <init|validate|show> [FILE] [--json]\n  mediaforge scan [PATH] [--json|--csv] [--compact] [--summary] [--csv-info] [--show-filters] [--include-hidden] [--strict] [--no-same-size] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--modified-since UNIX_SECONDS] [--modified-until UNIX_SECONDS] [--modified-within DURATION] [--path-contains TEXT ...] [--exclude-path-contains TEXT ...] [--extension EXTENSIONS ...] [--largest N] [--sort path|size|modified] [--settings FILE]\n  mediaforge dupes [PATH] [--json] [--compact] [--summary] [--include-hidden] [--exclude-path-contains TEXT ...] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--top-groups N] [--jobs N]\n  mediaforge probe <FILE> [--compact] [--summary]\n  mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--type video|audio] [--min-size SIZE] [--max-size SIZE] [--jobs N] [--summary] [--compare] [--compare-summary] [--csv]\n  mediaforge storyboard <VIDEO> --output <IMAGE> [--interval SECONDS] [--columns N] [--rows N] [--width PIXELS]\n  mediaforge storyboard-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--format jpg|jpeg|png|webp] [--interval SECONDS] [--columns N] [--rows N] [--width PIXELS] [--include-hidden] [--jobs N] [--skip-existing] [--json] [--summary]\n  mediaforge scene-detect-dir <PATH> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--summary] [--format jsonl|csv] [--fps RATE] [--extension EXTENSIONS] [--include-hidden] [--jobs N]\n  mediaforge scene-detect <VIDEO> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--summary] [--format jsonl|csv] [--fps RATE]\n  mediaforge proxy <VIDEO> --output <FILE.mp4> [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge proxy-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET] [--jobs N] [--skip-existing] [--json] [--summary]\n  mediaforge proxy-config init [FILE] [--profile fast|balanced|quality] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge extract-audio <VIDEO> --output <FILE> [--format mp3|wav|flac] [--bitrate RATE] [--stream N]\n  mediaforge extract-audio-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--format mp3|wav|flac] [--bitrate RATE] [--stream N] [--jobs N] [--skip-existing] [--json] [--summary]\n  mediaforge snapshot [PATH] (--output FILE [--overwrite] | --diff FILE [--update]) [--json|--csv] [--compact] [--summary] [--include-hidden] [--include-generated] [--hash] [--jobs N] [--fail-on-change]\n  mediaforge project [PATH] [--json] [--compact] [--no-cache-sizes] [--no-editor-files]\n  mediaforge unity-meta [PROJECT_PATH] [--json] [--compact] [--summary] [--sidecars-only] [--include-hidden]\n  mediaforge gitignore [PATH] [--apply] [--json] [--compact]\n  mediaforge organize [PATH] [--by type|extension|size] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--compact] [--summary] [--apply]\n  mediaforge rename [PATH] [--replace OLD NEW] [--prefix TEXT] [--suffix TEXT] [--extension-case keep|lower|upper] [--extension EXTENSIONS] [--include-hidden] [--json] [--compact] [--summary] [--apply]
+        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge doctor [--json] [--strict]\n  mediaforge scan-config <init|validate|show> [FILE] [--json]\n  mediaforge scan [PATH] [--json|--csv] [--compact] [--summary] [--csv-info] [--show-filters] [--include-hidden] [--strict] [--no-same-size] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--modified-since UNIX_SECONDS] [--modified-until UNIX_SECONDS] [--modified-within DURATION] [--path-contains TEXT ...] [--exclude-path-contains TEXT ...] [--extension EXTENSIONS ...] [--largest N] [--sort path|size|modified] [--settings FILE]\n  mediaforge dupes [PATH] [--json] [--compact] [--summary] [--include-hidden] [--exclude-path-contains TEXT ...] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--top-groups N] [--jobs N]\n  mediaforge probe <FILE> [--compact] [--summary]\n  mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--type video|audio] [--min-size SIZE] [--max-size SIZE] [--jobs N] [--summary] [--compare] [--compare-summary] [--csv]\n  mediaforge verify-media <PATH> [--type video|audio] [--extension EXTENSIONS] [--include-hidden] [--jobs N] [--summary]\n  mediaforge storyboard <VIDEO> --output <IMAGE> [--interval SECONDS] [--columns N] [--rows N] [--width PIXELS]\n  mediaforge storyboard-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--format jpg|jpeg|png|webp] [--interval SECONDS] [--columns N] [--rows N] [--width PIXELS] [--include-hidden] [--jobs N] [--skip-existing] [--json] [--summary]\n  mediaforge scene-detect-dir <PATH> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--summary] [--format jsonl|csv] [--fps RATE] [--extension EXTENSIONS] [--include-hidden] [--jobs N]\n  mediaforge scene-detect <VIDEO> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--summary] [--format jsonl|csv] [--fps RATE]\n  mediaforge proxy <VIDEO> --output <FILE.mp4> [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge proxy-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET] [--jobs N] [--skip-existing] [--json] [--summary]\n  mediaforge proxy-config init [FILE] [--profile fast|balanced|quality] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge extract-audio <VIDEO> --output <FILE> [--format mp3|wav|flac] [--bitrate RATE] [--stream N]\n  mediaforge extract-audio-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--format mp3|wav|flac] [--bitrate RATE] [--stream N] [--jobs N] [--skip-existing] [--json] [--summary]\n  mediaforge snapshot [PATH] (--output FILE [--overwrite] | --diff FILE [--update]) [--json|--csv] [--compact] [--summary] [--include-hidden] [--include-generated] [--hash] [--jobs N] [--fail-on-change]\n  mediaforge project [PATH] [--json] [--compact] [--no-cache-sizes] [--no-editor-files]\n  mediaforge unity-meta [PROJECT_PATH] [--json] [--compact] [--summary] [--sidecars-only] [--include-hidden]\n  mediaforge gitignore [PATH] [--apply] [--json] [--compact]\n  mediaforge organize [PATH] [--by type|extension|size] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--compact] [--summary] [--apply]\n  mediaforge rename [PATH] [--replace OLD NEW] [--prefix TEXT] [--suffix TEXT] [--extension-case keep|lower|upper] [--extension EXTENSIONS] [--include-hidden] [--json] [--compact] [--summary] [--apply]
   mediaforge sequence [PATH] [--prefix NAME] [--start N] [--padding N] [--extension EXTENSIONS] [--include-hidden] [--natural] [--json] [--compact] [--summary] [--apply]\n  mediaforge undo [PATH] [--json] [--compact]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--exclude-path-contains TEXT ...] [--include-hidden] [--include-generated] [--dry-run] [--json] [--compact] [--list]\n  mediaforge --version\n  mediaforge --help"
     );
 }
@@ -6507,6 +6507,228 @@ fn run_probe_dir(args: &[String]) -> Result<(), String> {
     }
     if failures > 0 {
         return Err(format!("ffprobe failed for {failures} file(s)"));
+    }
+    Ok(())
+}
+
+fn verify_media_file(path: &Path) -> Result<(), String> {
+    let mut command = Command::new("ffmpeg");
+    command
+        .args([
+            "-hide_banner",
+            "-nostdin",
+            "-v",
+            "error",
+            "-xerror",
+            "-threads",
+            "1",
+            "-i",
+        ])
+        .arg(path)
+        .args([
+            "-map", "0:v?", "-map", "0:a?", "-threads", "1", "-f", "null", "-",
+        ]);
+    let (status, detail) = run_with_bounded_stderr(&mut command)
+        .map_err(|error| format!("could not start ffmpeg: {error}"))?;
+    if status.success() {
+        return Ok(());
+    }
+    let detail = String::from_utf8_lossy(&detail);
+    let detail = detail.trim();
+    if detail.is_empty() {
+        return Err(format!("ffmpeg exited with {status}"));
+    }
+    let mut bounded = detail.chars().take(2048).collect::<String>();
+    if detail.chars().count() > 2048 {
+        bounded.push_str("… error detail truncated");
+    }
+    Err(bounded)
+}
+
+fn run_verify_media(args: &[String]) -> Result<(), String> {
+    const MAX_JOBS: usize = 16;
+    const DEFAULT_EXTENSIONS: &str = "mp4,mov,mxf,mkv,avi,webm,m4v,mpg,mpeg,m2v,mpv,ts,mts,m2ts,vob,ogv,3gp,3g2,wmv,flv,f4v,asf,wav,aiff,aif,flac,mp3,ogg,m4a,aac,caf,ac3,eac3,opus,wma,amr";
+    let mut root = None;
+    let mut include_hidden = false;
+    let mut summary_only = false;
+    let mut selected_kind = None;
+    let mut extensions = None;
+    let mut jobs = std::thread::available_parallelism()
+        .map(usize::from)
+        .unwrap_or(1)
+        .min(4);
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--include-hidden" => include_hidden = true,
+            "--summary" => summary_only = true,
+            "--type" => {
+                let value = iter
+                    .next()
+                    .ok_or_else(|| "--type requires video or audio".to_owned())?;
+                selected_kind = Some(match value.as_str() {
+                    "video" => Kind::Video,
+                    "audio" => Kind::Audio,
+                    _ => return Err("--type must be 'video' or 'audio'".to_owned()),
+                });
+            }
+            "--extension" => {
+                let value = iter.next().ok_or_else(|| {
+                    "--extension requires a comma-separated extension list".to_owned()
+                })?;
+                extensions = Some(parse_extensions(value)?);
+            }
+            "--jobs" => {
+                let value = iter
+                    .next()
+                    .ok_or_else(|| "--jobs requires a positive integer".to_owned())?;
+                jobs = value
+                    .parse::<usize>()
+                    .map_err(|_| format!("invalid worker count '{value}'"))?;
+                if jobs == 0 || jobs > MAX_JOBS {
+                    return Err(format!("--jobs must be between 1 and {MAX_JOBS}"));
+                }
+            }
+            "--help" | "-h" => {
+                println!(
+                    "Usage: mediaforge verify-media <PATH> [--type video|audio] [--extension EXTENSIONS] [--include-hidden] [--jobs N] [--summary]\n\nDecode every supported video/audio file under PATH with ffmpeg and fail files that report decode errors. The default extension list omits game audio banks and MIDI files that ffmpeg does not normally decode; --extension can select other classified formats. JSON Lines reports each file as it completes, followed by file and byte totals. --summary emits only failure records and the final counts. --jobs controls concurrent ffmpeg decoders (1–16; default 4)."
+                );
+                return Ok(());
+            }
+            value if value.starts_with('-') => return Err(format!("unknown option: {value}")),
+            value => {
+                if root.is_some() {
+                    return Err("verify-media accepts one directory path".into());
+                }
+                root = Some(PathBuf::from(value));
+            }
+        }
+    }
+    let root = root.ok_or_else(|| "verify-media requires a directory path".to_owned())?;
+    let root = fs::canonicalize(&root)
+        .map_err(|error| format!("cannot access {}: {error}", root.display()))?;
+    if !root.is_dir() {
+        return Err(format!("expected a directory: {}", root.display()));
+    }
+    if extensions.is_none() {
+        extensions = Some(parse_extensions(DEFAULT_EXTENSIONS)?);
+    }
+    let ignored = ignored_by_git(&root)?;
+    let kinds = selected_kind.map_or_else(|| vec![Kind::Video, Kind::Audio], |kind| vec![kind]);
+    let filters = StrictWalkFilters {
+        kinds: Some(&kinds),
+        extensions: extensions.as_ref(),
+        omit_absolute_path: false,
+        store_relative_path: true,
+        omit_modified_time: true,
+        omit_extension: true,
+        ..StrictWalkFilters::default()
+    };
+    let mut records = Vec::<FileRecord>::new();
+    walk_strict_filtered_with_callback(
+        &root,
+        &root,
+        include_hidden,
+        SKIP_DIRS,
+        &ignored,
+        &filters,
+        |record| {
+            records.push(record);
+            Ok(())
+        },
+    )?;
+    records.sort_unstable_by(|left, right| left.relative.cmp(&right.relative));
+
+    let total_bytes = records
+        .iter()
+        .map(|record| u128::from(record.size))
+        .sum::<u128>();
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let completed = std::sync::atomic::AtomicUsize::new(0);
+    let failed = std::sync::atomic::AtomicUsize::new(0);
+    let failed_bytes = std::sync::Mutex::new(0_u128);
+    let output_lock = std::sync::Mutex::new(());
+    let output_failed = std::sync::atomic::AtomicBool::new(false);
+    let first_output_error = std::sync::Mutex::new(None::<String>);
+    std::thread::scope(|scope| {
+        for _ in 0..jobs.min(records.len()) {
+            scope.spawn(|| {
+                loop {
+                    if output_failed.load(std::sync::atomic::Ordering::Acquire) {
+                        break;
+                    }
+                    let index = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    let Some(record) = records.get(index) else {
+                        break;
+                    };
+                    let result = verify_media_file(&record.path);
+                    let success = result.is_ok();
+                    let _guard = output_lock.lock().expect("verify-media output mutex poisoned");
+                    let current = completed.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                    if !success {
+                        failed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        *failed_bytes
+                            .lock()
+                            .expect("verify-media byte counter mutex poisoned") +=
+                            u128::from(record.size);
+                    }
+                    if summary_only && success {
+                        continue;
+                    }
+                    let stdout = io::stdout();
+                    let mut output = io::BufWriter::with_capacity(4096, stdout.lock());
+                    let write_result = match result {
+                        Ok(()) => writeln!(
+                            output,
+                            "{{\"type\":\"result\",\"current\":{current},\"total\":{},\"path\":{},\"ok\":true,\"size_bytes\":{}}}",
+                            records.len(),
+                            json_string(&record.relative),
+                            record.size
+                        ),
+                        Err(error) => writeln!(
+                            output,
+                            "{{\"type\":\"result\",\"current\":{current},\"total\":{},\"path\":{},\"ok\":false,\"size_bytes\":{},\"error\":{}}}",
+                            records.len(),
+                            json_string(&record.relative),
+                            record.size,
+                            json_string(&error)
+                        ),
+                    }
+                    .and_then(|()| output.flush());
+                    if let Err(error) = write_result {
+                        output_failed.store(true, std::sync::atomic::Ordering::Release);
+                        *first_output_error
+                            .lock()
+                            .expect("verify-media output error mutex poisoned") =
+                            Some(error.to_string());
+                        break;
+                    }
+                }
+            });
+        }
+    });
+    if let Some(error) = first_output_error
+        .into_inner()
+        .map_err(|_| "verify-media output error could not be collected".to_owned())?
+    {
+        return Err(format!("could not write verify-media output: {error}"));
+    }
+    let failed = failed.load(std::sync::atomic::Ordering::Relaxed);
+    let failed_bytes = *failed_bytes
+        .lock()
+        .map_err(|_| "verify-media byte counter mutex poisoned".to_owned())?;
+    let successful = records.len() - failed;
+    let verified_bytes = total_bytes - failed_bytes;
+    let stdout = io::stdout();
+    let mut output = stdout.lock();
+    writeln!(
+        output,
+        "{{\"type\":\"summary\",\"files\":{},\"successful\":{successful},\"failed\":{failed},\"total_bytes\":{total_bytes},\"verified_bytes\":{verified_bytes},\"failed_bytes\":{failed_bytes}}}",
+        records.len()
+    )
+    .map_err(|error| format!("could not write verify-media summary: {error}"))?;
+    if failed > 0 {
+        return Err(format!("media verification failed for {failed} file(s)"));
     }
     Ok(())
 }
@@ -14388,6 +14610,7 @@ fn run() -> Result<(), String> {
         Some("dupes") => run_dupes(&args[1..]),
         Some("probe") => run_probe(&args[1..]),
         Some("probe-dir") => run_probe_dir(&args[1..]),
+        Some("verify-media") => run_verify_media(&args[1..]),
         Some("storyboard") => run_storyboard(&args[1..]),
         Some("storyboard-dir") => run_storyboard_dir(&args[1..]),
         Some("scene-detect") => run_scene_detect(&args[1..]),
