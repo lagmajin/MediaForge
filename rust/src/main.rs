@@ -1081,25 +1081,24 @@ fn print_scan_filter_preview(
 }
 
 fn largest_records(records: &[FileRecord], limit: usize) -> Vec<&FileRecord> {
-    let mut ordered = records
-        .iter()
-        .map(|record| {
-            (
-                (
-                    std::cmp::Reverse(record.size),
-                    record.relative.to_lowercase(),
-                    record.relative.clone(),
-                ),
-                record,
-            )
-        })
-        .collect::<Vec<_>>();
+    let mut ordered = records.iter().collect::<Vec<_>>();
+    let compare = |left: &&FileRecord, right: &&FileRecord| {
+        std::cmp::Reverse(left.size)
+            .cmp(&std::cmp::Reverse(right.size))
+            .then_with(|| {
+                left.relative
+                    .chars()
+                    .flat_map(char::to_lowercase)
+                    .cmp(right.relative.chars().flat_map(char::to_lowercase))
+            })
+            .then_with(|| left.relative.cmp(&right.relative))
+    };
     if limit < ordered.len() {
-        ordered.select_nth_unstable_by(limit, |left, right| left.0.cmp(&right.0));
+        ordered.select_nth_unstable_by(limit, compare);
         ordered.truncate(limit);
     }
-    ordered.sort_unstable_by(|left, right| left.0.cmp(&right.0));
-    ordered.into_iter().map(|(_, record)| record).collect()
+    ordered.sort_unstable_by(compare);
+    ordered
 }
 
 fn print_json(
