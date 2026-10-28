@@ -135,14 +135,14 @@ Hidden folders and common generated/dependency directories (`.git`, `node_module
 
 ## Find exact duplicates
 
-`dupes` groups candidates by file size, compares small samples from the beginning, middle, and end to skip obvious non-matches, then verifies remaining candidates byte-for-byte in streaming chunks. It reports reclaimable space without loading entire video files into memory. `--min-size` and `--max-size` can bound the sizes examined, helping skip large files that are not relevant to a particular cleanup. `--top-groups N` limits the displayed groups and sorts by reclaimable space; all eligible files are still checked, and summary totals cover every verified group. JSON reports the size bounds and total, returned, and omitted group counts. It never deletes or modifies files. Unlike the summary `scan`, `dupes`, `organize`, and `pack` stop with an error if a directory or file cannot be inspected, so they do not silently present an incomplete result as complete.
+`dupes` groups candidates by file size, compares small samples from the beginning, middle, and end to skip obvious non-matches, then verifies remaining candidates byte-for-byte in streaming chunks. It reports reclaimable space without loading entire video files into memory. Sample reads run concurrently; `--jobs N` controls 1–64 workers and defaults to up to four (use `--jobs 1` for a busy or slower disk). `--min-size` and `--max-size` can bound the sizes examined, helping skip large files that are not relevant to a particular cleanup. `--top-groups N` limits the displayed groups and sorts by reclaimable space; all eligible files are still checked, and summary totals cover every verified group. JSON reports the size bounds and total, returned, and omitted group counts. It never deletes or modifies files. Unlike the summary `scan`, `dupes`, `organize`, and `pack` stop with an error if a directory or file cannot be inspected, so they do not silently present an incomplete result as complete.
 
 ```sh
 mediaforge dupes ./Media
 mediaforge dupes ./Game/Content --json --min-size 1M
 mediaforge dupes ./Media --include-hidden
 mediaforge dupes ./Media --top-groups 10 --json
-mediaforge dupes ./Media --type video --max-size 2G --top-groups 20
+mediaforge dupes ./Media --type video --max-size 2G --top-groups 20 --jobs 4
 ```
 
 ## Inspect a project
