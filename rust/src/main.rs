@@ -4958,12 +4958,12 @@ const PROBE_COMPARE_FIELDS: &[&str] = &[
 ];
 
 enum ProbeRetainedData {
-    CsvJson(String),
+    CsvValues(Vec<String>),
     CompareValues(Vec<String>),
 }
 
-fn probe_compare_values(probe: &str) -> Result<Vec<String>, String> {
-    let mut fields = HashMap::with_capacity(PROBE_COMPARE_FIELDS.len());
+fn probe_selected_values(probe: &str, selected_fields: &[&str]) -> Result<Vec<String>, String> {
+    let mut fields = HashMap::with_capacity(selected_fields.len());
     let mut cursor = 0;
     collect_json_scalars(
         probe.as_bytes(),
@@ -4971,9 +4971,9 @@ fn probe_compare_values(probe: &str) -> Result<Vec<String>, String> {
         &mut String::with_capacity(64),
         &mut fields,
         0,
-        PROBE_COMPARE_FIELDS,
+        selected_fields,
     )?;
-    Ok(PROBE_COMPARE_FIELDS
+    Ok(selected_fields
         .iter()
         .map(|field| {
             fields
@@ -4983,6 +4983,23 @@ fn probe_compare_values(probe: &str) -> Result<Vec<String>, String> {
         })
         .collect())
 }
+
+const PROBE_CSV_FIELDS: &[&str] = &[
+    "format.format_name",
+    "format.duration",
+    "streams[0].codec_type",
+    "streams[0].codec_name",
+    "streams[0].profile",
+    "streams[0].width",
+    "streams[0].height",
+    "streams[0].avg_frame_rate",
+    "streams[0].pix_fmt",
+    "streams[0].sample_rate",
+    "streams[0].channels",
+    "streams[0].channel_layout",
+    "format.size",
+    "format.bit_rate",
+];
 
 fn summarize_probe_differences(
     records: &[FilePathRecord],
@@ -5064,8 +5081,8 @@ fn summarize_probe_differences(
     Ok(())
 }
 
-fn probe_csv_value<'a>(fields: &'a HashMap<String, String>, name: &str) -> Cow<'a, str> {
-    let Some(value) = fields.get(name) else {
+fn probe_csv_value(value: Option<&str>) -> Cow<'_, str> {
+    let Some(value) = value else {
         return Cow::Borrowed("");
     };
     if value == "null" {
@@ -5108,43 +5125,18 @@ fn print_probe_csv_row(
     path: &str,
     ok: bool,
     error: &str,
-    probe: Option<&str>,
+    values: Option<&[String]>,
 ) -> Result<(), String> {
-    const CSV_FIELDS: &[&str] = &[
-        "format.format_name",
-        "format.duration",
-        "streams[0].codec_type",
-        "streams[0].codec_name",
-        "streams[0].profile",
-        "streams[0].width",
-        "streams[0].height",
-        "streams[0].avg_frame_rate",
-        "streams[0].pix_fmt",
-        "streams[0].sample_rate",
-        "streams[0].channels",
-        "streams[0].channel_layout",
-        "format.size",
-        "format.bit_rate",
-    ];
-    let mut fields = HashMap::with_capacity(CSV_FIELDS.len());
-    if let Some(probe) = probe {
-        let mut cursor = 0;
-        collect_json_scalars(
-            probe.as_bytes(),
-            &mut cursor,
-            &mut String::with_capacity(64),
-            &mut fields,
-            0,
-            CSV_FIELDS,
-        )?;
-    }
     let mut first = true;
     let result = (|| -> io::Result<()> {
         write_csv_column(output, &mut first, path)?;
         write_csv_column(output, &mut first, if ok { "true" } else { "false" })?;
         write_csv_column(output, &mut first, error)?;
-        for name in CSV_FIELDS {
-            write_csv_column(output, &mut first, &probe_csv_value(&fields, name))?;
+        for index in 0..PROBE_CSV_FIELDS.len() {
+            let value = values
+                .and_then(|values| values.get(index))
+                .map(String::as_str);
+            write_csv_column(output, &mut first, &probe_csv_value(value))?;
         }
         output.write_all(b"\n")
     })();
@@ -5328,15 +5320,25 @@ fn run_probe_dir(args: &[String]) -> Result<(), String> {
                             json.push('}');
                             (true, json, None)
                         }
-                        Ok(probe) if compare => match probe_compare_values(&probe) {
+                        Ok(probe) if compare => {
+                            match probe_selected_values(&probe, PROBE_COMPARE_FIELDS) {
+                                Ok(values) => (
+                                    true,
+                                    String::new(),
+                                    Some(ProbeRetainedData::CompareValues(values)),
+                                ),
+                                Err(error) => (false, error, None),
+                            }
+                        }
+                        Ok(probe) if csv => match probe_selected_values(&probe, PROBE_CSV_FIELDS) {
                             Ok(values) => (
                                 true,
                                 String::new(),
-                                Some(ProbeRetainedData::CompareValues(values)),
+                                Some(ProbeRetainedData::CsvValues(values)),
                             ),
                             Err(error) => (false, error, None),
                         },
-                        Ok(probe) => (true, String::new(), Some(ProbeRetainedData::CsvJson(probe))),
+                        Ok(_) => (true, String::new(), None),
                         Err(error) if stream_results => (
                             false,
                             format!(
@@ -5394,7 +5396,7 @@ fn run_probe_dir(args: &[String]) -> Result<(), String> {
                 *success,
                 error,
                 probe.as_ref().and_then(|data| match data {
-                    ProbeRetainedData::CsvJson(json) => Some(json.as_str()),
+                    ProbeRetainedData::CsvValues(values) => Some(values.as_slice()),
                     ProbeRetainedData::CompareValues(_) => None,
                 }),
             )?;
