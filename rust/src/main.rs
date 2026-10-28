@@ -1370,15 +1370,18 @@ fn print_report(
 ) {
     let total_bytes: u128 = records.iter().map(|record| u128::from(record.size)).sum();
     let mut by_type: BTreeMap<&str, (u64, u128)> = BTreeMap::new();
-    let mut by_size: HashMap<u64, usize> = HashMap::new();
+    let mut seen_sizes = HashSet::new();
+    let mut duplicate_sizes = HashSet::new();
     for record in records {
         let entry = by_type.entry(record.kind.as_str()).or_default();
         entry.0 += 1;
         entry.1 += u128::from(record.size);
-        *by_size.entry(record.size).or_default() += 1;
+        if !seen_sizes.insert(record.size) {
+            duplicate_sizes.insert(record.size);
+        }
     }
     let largest = largest_records(records, largest_limit);
-    let candidate_groups = by_size.values().filter(|count| **count > 1).count();
+    let candidate_groups = duplicate_sizes.len();
     println!("MediaForge scan: {}", root.display());
     println!("{} files · {}", records.len(), human_size_wide(total_bytes));
     if skipped_paths > 0 {
