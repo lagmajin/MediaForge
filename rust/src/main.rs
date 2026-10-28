@@ -912,6 +912,7 @@ fn run_dupes(args: &[String]) -> Result<(), String> {
     let mut json = false;
     let mut include_hidden = false;
     let mut min_size = 0;
+    let mut max_size = None;
     let mut kind_filter = None;
     let mut extension_filter = None;
     let mut top_groups = None;
@@ -926,6 +927,12 @@ fn run_dupes(args: &[String]) -> Result<(), String> {
                     .next()
                     .ok_or_else(|| "--min-size requires a value".to_owned())?;
                 min_size = parse_size(value)?;
+            }
+            "--max-size" => {
+                let value = iter
+                    .next()
+                    .ok_or_else(|| "--max-size requires a value".to_owned())?;
+                max_size = Some(parse_size(value)?);
             }
             "--type" => {
                 let value = iter
@@ -953,7 +960,7 @@ fn run_dupes(args: &[String]) -> Result<(), String> {
             }
             "--help" | "-h" => {
                 println!(
-                    "Usage: mediaforge dupes [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS] [--top-groups N]\n\nFind byte-for-byte duplicate files. Files are compared in fixed-size chunks to keep memory use low. --top-groups limits displayed groups, ordered by reclaimable space; summary totals include all groups. --type accepts video, audio, image, model, texture, project, or other. --extension accepts a comma-separated list such as mov,mxf; use none for files without an extension. Fractional size thresholds round up to the next byte."
+                    "Usage: mediaforge dupes [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--top-groups N]\n\nFind byte-for-byte duplicate files. Files are compared in fixed-size chunks to keep memory use low. --min-size and --max-size limit which file sizes are checked; both accept bytes or K/M/G/T units. --top-groups limits displayed groups, ordered by reclaimable space; summary totals include all groups. --type accepts video, audio, image, model, texture, project, or other. --extension accepts a comma-separated list such as mov,mxf; use none for files without an extension. Fractional size thresholds round up to the next byte."
                 );
                 return Ok(());
             }
@@ -967,6 +974,9 @@ fn run_dupes(args: &[String]) -> Result<(), String> {
         }
     }
     let path = path.unwrap_or_else(|| PathBuf::from("."));
+    if max_size.is_some_and(|max_size| max_size < min_size) {
+        return Err("--max-size must be greater than or equal to --min-size".to_owned());
+    }
     let root = fs::canonicalize(&path)
         .map_err(|error| format!("cannot access {}: {error}", path.display()))?;
     if !root.is_dir() {
@@ -989,7 +999,9 @@ fn run_dupes(args: &[String]) -> Result<(), String> {
         records.retain(|record| extensions.contains(&record.extension));
     }
     let mut by_size: BTreeMap<u64, Vec<String>> = BTreeMap::new();
-    for record in records.into_iter().filter(|record| record.size >= min_size) {
+    for record in records.into_iter().filter(|record| {
+        record.size >= min_size && max_size.map_or(true, |max_size| record.size <= max_size)
+    }) {
         by_size
             .entry(record.size)
             .or_default()
@@ -1051,8 +1063,10 @@ fn run_dupes(args: &[String]) -> Result<(), String> {
     let truncated_groups = total_groups - displayed_groups;
     if json {
         println!(
-            "{{\n  \"root\": {},\n  \"groups_total\": {},\n  \"groups_returned\": {},\n  \"groups_truncated\": {},\n  \"groups\": [",
+            "{{\n  \"root\": {},\n  \"min_size_bytes\": {},\n  \"max_size_bytes\": {},\n  \"groups_total\": {},\n  \"groups_returned\": {},\n  \"groups_truncated\": {},\n  \"groups\": [",
             json_string(&root.to_string_lossy()),
+            min_size,
+            max_size.map_or_else(|| "null".to_owned(), |size| size.to_string()),
             total_groups,
             displayed_groups,
             truncated_groups
@@ -1263,7 +1277,7 @@ fn fraction_ceil_scaled(fraction: &str, multiplier: u128) -> u128 {
 
 fn print_help() {
     println!(
-        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS] [--largest N]\n  mediaforge dupes [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS] [--top-groups N]\n  mediaforge probe <FILE> [--compact]\n  mediaforge project [PATH] [--json]\n  mediaforge gitignore [PATH] [--apply]\n  mediaforge organize [PATH] [--by type|extension] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--apply]\n  mediaforge undo [PATH] [--json]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--include-hidden] [--include-generated] [--dry-run] [--json] [--list]\n  mediaforge --version\n  mediaforge --help"
+        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS] [--largest N]\n  mediaforge dupes [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--top-groups N]\n  mediaforge probe <FILE> [--compact]\n  mediaforge project [PATH] [--json]\n  mediaforge gitignore [PATH] [--apply]\n  mediaforge organize [PATH] [--by type|extension] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--apply]\n  mediaforge undo [PATH] [--json]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--include-hidden] [--include-generated] [--dry-run] [--json] [--list]\n  mediaforge --version\n  mediaforge --help"
     );
 }
 
