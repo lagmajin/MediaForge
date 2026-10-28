@@ -10138,14 +10138,24 @@ fn ustar_name(path: &[u8]) -> Option<(&[u8], &[u8])> {
 }
 
 fn write_tar_octal(field: &mut [u8], value: u64) -> Result<(), String> {
-    let digits = format!("{value:o}");
-    if digits.len() > field.len().saturating_sub(1) {
+    if field.len() < 2 {
         return Err("tar numeric field overflow".to_owned());
     }
     field.fill(b'0');
-    let start = field.len() - digits.len() - 1;
-    field[start..start + digits.len()].copy_from_slice(digits.as_bytes());
     field[field.len() - 1] = 0;
+    let mut remaining = value;
+    let mut cursor = field.len() - 1;
+    loop {
+        if cursor == 0 {
+            return Err("tar numeric field overflow".to_owned());
+        }
+        cursor -= 1;
+        field[cursor] = b'0' + (remaining & 0o7) as u8;
+        remaining >>= 3;
+        if remaining == 0 {
+            break;
+        }
+    }
     Ok(())
 }
 
@@ -10179,8 +10189,15 @@ fn tar_header(
     if checksum > 0o777777 {
         return Err("tar header checksum overflow".to_owned());
     }
-    let checksum_text = format!("{checksum:06o}\0 ");
-    header[148..156].copy_from_slice(checksum_text.as_bytes());
+    let mut checksum_field = [b'0'; 8];
+    checksum_field[6] = 0;
+    checksum_field[7] = b' ';
+    let mut remaining = checksum;
+    for digit in checksum_field[..6].iter_mut().rev() {
+        *digit = b'0' + (remaining & 0o7) as u8;
+        remaining >>= 3;
+    }
+    header[148..156].copy_from_slice(&checksum_field);
     Ok(header)
 }
 
