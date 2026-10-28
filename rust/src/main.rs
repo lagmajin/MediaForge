@@ -1227,7 +1227,7 @@ fn fraction_ceil_scaled(fraction: &str, multiplier: u128) -> u128 {
 
 fn print_help() {
     println!(
-        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS]\n  mediaforge dupes [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS]\n  mediaforge probe <FILE> [--compact]\n  mediaforge project [PATH] [--json]\n  mediaforge gitignore [PATH] [--apply]\n  mediaforge organize [PATH] [--by type|extension] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--json] [--apply]\n  mediaforge undo [PATH]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--include-hidden] [--include-generated] [--dry-run] [--json]\n  mediaforge --version\n  mediaforge --help"
+        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS]\n  mediaforge dupes [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS]\n  mediaforge probe <FILE> [--compact]\n  mediaforge project [PATH] [--json]\n  mediaforge gitignore [PATH] [--apply]\n  mediaforge organize [PATH] [--by type|extension] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--json] [--apply]\n  mediaforge undo [PATH] [--json]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--include-hidden] [--include-generated] [--dry-run] [--json]\n  mediaforge --version\n  mediaforge --help"
     );
 }
 
@@ -2826,11 +2826,13 @@ fn run_organize(args: &[String]) -> Result<(), String> {
 
 fn run_undo(args: &[String]) -> Result<(), String> {
     let mut path = None;
+    let mut json = false;
     for arg in args {
         match arg.as_str() {
+            "--json" => json = true,
             "--help" | "-h" => {
                 println!(
-                    "Usage: mediaforge undo [PATH]\n\nRestore files moved by the most recent 'mediaforge organize --apply' in PATH."
+                    "Usage: mediaforge undo [PATH] [--json]\n\nRestore files moved by the most recent 'mediaforge organize --apply' in PATH. --json emits restored and conflict counts."
                 );
                 return Ok(());
             }
@@ -2903,13 +2905,29 @@ fn run_undo(args: &[String]) -> Result<(), String> {
             conflicts += 1;
         }
     }
-    if conflicts == 0 {
+    let manifest_retained = conflicts != 0;
+    if !manifest_retained {
         remove_organize_manifests(&root)?;
-        println!("Restored {restored} file(s); undo manifest removed.");
-    } else {
+    }
+    if json {
+        println!(
+            "{{\n  \"root\": {},\n  \"restored_count\": {},\n  \"conflict_count\": {},\n  \"manifest_retained\": {},\n  \"result\": {}\n}}",
+            json_string(&root.to_string_lossy()),
+            restored,
+            conflicts,
+            if manifest_retained { "true" } else { "false" },
+            json_string(if manifest_retained {
+                "partial"
+            } else {
+                "restored"
+            })
+        );
+    } else if manifest_retained {
         println!(
             "Restored {restored} file(s); {conflicts} conflict(s) remain. Manifest retained for recovery."
         );
+    } else {
+        println!("Restored {restored} file(s); undo manifest removed.");
     }
     Ok(())
 }

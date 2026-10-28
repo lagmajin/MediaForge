@@ -103,9 +103,10 @@ mediaforge organize ./Media --by type --type video --min-size 500M --json
 mediaforge organize ./Media --by extension --include-hidden
 mediaforge organize ./Media --by type --apply
 mediaforge undo ./Media
+mediaforge undo ./Media --json
 ```
 
-Organization is a preview unless `--apply` is supplied. Use `--type`, `--extension`, and `--min-size` to limit which files are organized; for example, `--type video --min-size 500M` selects large video assets. Hidden files are skipped by default; pass `--include-hidden` to include them. Add `--json` to emit one machine-readable JSON object with the filtered move plan, counts, and `include_hidden` setting; with `--apply`, the object reports the completed move count and undo manifest path. Moves preserve paths below the new type/extension folder, skip destination collisions, and refuse symlink paths. Before moving anything, MediaForge writes a `.mediaforge-undo` recovery manifest with portable `/` separators. `undo` restores files only when the original location is clear; it retains the manifest if a conflict needs manual handling. Older manifests are still readable; ambiguous old records are handled conservatively and may need manual conflict resolution. It never deletes source files.
+Organization is a preview unless `--apply` is supplied. Use `--type`, `--extension`, and `--min-size` to limit which files are organized; for example, `--type video --min-size 500M` selects large video assets. Hidden files are skipped by default; pass `--include-hidden` to include them. Add `--json` to emit one machine-readable JSON object with the filtered move plan, counts, and `include_hidden` setting; with `--apply`, the object reports the completed move count and undo manifest path. Moves preserve paths below the new type/extension folder, skip destination collisions, and refuse symlink paths. Before moving anything, MediaForge writes a `.mediaforge-undo` recovery manifest with portable `/` separators. `undo` restores files only when the original location is clear; it retains the manifest if a conflict needs manual handling. Add `--json` to get restored and conflict counts plus the manifest-retained state as JSON. Older manifests are still readable; ambiguous old records are handled conservatively and may need manual conflict resolution. It never deletes source files.
 
 ## Pack a project for handoff
 
