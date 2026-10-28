@@ -1277,7 +1277,7 @@ fn fraction_ceil_scaled(fraction: &str, multiplier: u128) -> u128 {
 
 fn print_help() {
     println!(
-        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS] [--largest N]\n  mediaforge dupes [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--top-groups N]\n  mediaforge probe <FILE> [--compact]\n  mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--jobs N] [--summary]\n  mediaforge storyboard <VIDEO> --output <IMAGE> [--interval SECONDS] [--columns N] [--rows N] [--width PIXELS]\n  mediaforge proxy <VIDEO> --output <FILE.mp4> [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge proxy-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--max-width PIXELS] [--crf N] [--preset PRESET] [--json]\n  mediaforge extract-audio <VIDEO> --output <FILE> [--format mp3|wav|flac] [--bitrate RATE] [--stream N]\n  mediaforge project [PATH] [--json]\n  mediaforge gitignore [PATH] [--apply]\n  mediaforge organize [PATH] [--by type|extension] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--apply]\n  mediaforge sequence [PATH] [--prefix NAME] [--start N] [--padding N] [--extension EXTENSIONS] [--include-hidden] [--json] [--apply]\n  mediaforge undo [PATH] [--json]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--include-hidden] [--include-generated] [--dry-run] [--json] [--list]\n  mediaforge --version\n  mediaforge --help"
+        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS] [--largest N]\n  mediaforge dupes [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--top-groups N]\n  mediaforge probe <FILE> [--compact]\n  mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--jobs N] [--summary]\n  mediaforge storyboard <VIDEO> --output <IMAGE> [--interval SECONDS] [--columns N] [--rows N] [--width PIXELS]\n  mediaforge proxy <VIDEO> --output <FILE.mp4> [--profile fast|balanced|quality] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge proxy-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--profile fast|balanced|quality] [--max-width PIXELS] [--crf N] [--preset PRESET] [--json]\n  mediaforge extract-audio <VIDEO> --output <FILE> [--format mp3|wav|flac] [--bitrate RATE] [--stream N]\n  mediaforge project [PATH] [--json]\n  mediaforge gitignore [PATH] [--apply]\n  mediaforge organize [PATH] [--by type|extension] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--apply]\n  mediaforge sequence [PATH] [--prefix NAME] [--start N] [--padding N] [--extension EXTENSIONS] [--include-hidden] [--json] [--apply]\n  mediaforge undo [PATH] [--json]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--include-hidden] [--include-generated] [--dry-run] [--json] [--list]\n  mediaforge --version\n  mediaforge --help"
     );
 }
 
@@ -1679,12 +1679,24 @@ fn run_storyboard(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+fn proxy_profile_defaults(profile: &str) -> Result<(u32, u8, &'static str), String> {
+    match profile {
+        "fast" => Ok((960, 32, "ultrafast")),
+        "balanced" => Ok((1280, 28, "veryfast")),
+        "quality" => Ok((1920, 22, "fast")),
+        _ => Err(format!(
+            "unknown proxy profile '{profile}'; choose fast, balanced, or quality"
+        )),
+    }
+}
+
 fn run_proxy(args: &[String]) -> Result<(), String> {
     let mut input = None;
     let mut output = None;
-    let mut max_width = 1280_u32;
-    let mut crf = 28_u8;
-    let mut preset = "veryfast".to_owned();
+    let mut profile = "balanced".to_owned();
+    let mut max_width = None;
+    let mut crf = None;
+    let mut preset = None;
     let mut quiet = false;
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
@@ -1699,28 +1711,39 @@ fn run_proxy(args: &[String]) -> Result<(), String> {
                 let value = iter
                     .next()
                     .ok_or_else(|| "--max-width requires pixels".to_owned())?;
-                max_width = value
-                    .parse::<u32>()
-                    .map_err(|_| format!("invalid maximum width '{value}'"))?;
+                max_width = Some(
+                    value
+                        .parse::<u32>()
+                        .map_err(|_| format!("invalid maximum width '{value}'"))?,
+                );
             }
             "--crf" => {
                 let value = iter
                     .next()
                     .ok_or_else(|| "--crf requires a value from 0 to 51".to_owned())?;
-                crf = value
-                    .parse::<u8>()
-                    .map_err(|_| format!("invalid CRF '{value}'; use a value from 0 to 51"))?;
+                crf = Some(
+                    value
+                        .parse::<u8>()
+                        .map_err(|_| format!("invalid CRF '{value}'; use a value from 0 to 51"))?,
+                );
+            }
+            "--profile" => {
+                profile = iter
+                    .next()
+                    .ok_or_else(|| "--profile requires fast, balanced, or quality".to_owned())?
+                    .clone();
             }
             "--preset" => {
-                preset = iter
-                    .next()
-                    .ok_or_else(|| "--preset requires an x264 preset".to_owned())?
-                    .clone();
+                preset = Some(
+                    iter.next()
+                        .ok_or_else(|| "--preset requires an x264 preset".to_owned())?
+                        .clone(),
+                );
             }
             "--quiet" => quiet = true,
             "--help" | "-h" => {
                 println!(
-                    "Usage: mediaforge proxy <VIDEO> --output <FILE.mp4> [--max-width PIXELS] [--crf N] [--preset PRESET]\n\nCreate an H.264/AAC editing proxy with ffmpeg. Defaults: 1280-pixel maximum width, CRF 28, veryfast preset. Existing files are never overwritten."
+                    "Usage: mediaforge proxy <VIDEO> --output <FILE.mp4> [--profile fast|balanced|quality] [--max-width PIXELS] [--crf N] [--preset PRESET]\n\nCreate an H.264/AAC editing proxy with ffmpeg. Defaults to the balanced profile. Explicit --max-width, --crf, and --preset values override profile settings. Existing files are never overwritten."
                 );
                 return Ok(());
             }
@@ -1735,6 +1758,10 @@ fn run_proxy(args: &[String]) -> Result<(), String> {
     }
     let input = input.ok_or_else(|| "proxy requires a video file".to_owned())?;
     let output = output.ok_or_else(|| "proxy requires --output <FILE.mp4>".to_owned())?;
+    let (profile_width, profile_crf, profile_preset) = proxy_profile_defaults(&profile)?;
+    let max_width = max_width.unwrap_or(profile_width);
+    let crf = crf.unwrap_or(profile_crf);
+    let preset = preset.unwrap_or_else(|| profile_preset.to_owned());
     if !(16..=7680).contains(&max_width) {
         return Err("--max-width must be between 16 and 7680 pixels".to_owned());
     }
@@ -1891,9 +1918,10 @@ fn run_proxy_dir(args: &[String]) -> Result<(), String> {
     let mut output_root = None;
     let mut extensions = None;
     let mut include_hidden = false;
-    let mut max_width = 1280_u32;
-    let mut crf = 28_u8;
-    let mut preset = "veryfast".to_owned();
+    let mut profile = "balanced".to_owned();
+    let mut max_width = None;
+    let mut crf = None;
+    let mut preset = None;
     let mut json = false;
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
@@ -1912,31 +1940,42 @@ fn run_proxy_dir(args: &[String]) -> Result<(), String> {
             }
             "--include-hidden" => include_hidden = true,
             "--json" => json = true,
+            "--profile" => {
+                profile = iter
+                    .next()
+                    .ok_or_else(|| "--profile requires fast, balanced, or quality".to_owned())?
+                    .clone();
+            }
             "--max-width" => {
                 let value = iter
                     .next()
                     .ok_or_else(|| "--max-width requires pixels".to_owned())?;
-                max_width = value
-                    .parse::<u32>()
-                    .map_err(|_| format!("invalid maximum width '{value}'"))?;
+                max_width = Some(
+                    value
+                        .parse::<u32>()
+                        .map_err(|_| format!("invalid maximum width '{value}'"))?,
+                );
             }
             "--crf" => {
                 let value = iter
                     .next()
                     .ok_or_else(|| "--crf requires a value from 0 to 51".to_owned())?;
-                crf = value
-                    .parse::<u8>()
-                    .map_err(|_| format!("invalid CRF '{value}'; use a value from 0 to 51"))?;
+                crf = Some(
+                    value
+                        .parse::<u8>()
+                        .map_err(|_| format!("invalid CRF '{value}'; use a value from 0 to 51"))?,
+                );
             }
             "--preset" => {
-                preset = iter
-                    .next()
-                    .ok_or_else(|| "--preset requires an x264 preset".to_owned())?
-                    .clone();
+                preset = Some(
+                    iter.next()
+                        .ok_or_else(|| "--preset requires an x264 preset".to_owned())?
+                        .clone(),
+                );
             }
             "--help" | "-h" => {
                 println!(
-                    "Usage: mediaforge proxy-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--max-width PIXELS] [--crf N] [--preset PRESET] [--json]\n\nCreate H.264/AAC proxies for video assets while preserving their relative folders. Existing outputs are never overwritten. Failed files are reported after the remaining videos are processed. The output directory must already exist. --json emits progress and per-file result records as JSON Lines."
+                    "Usage: mediaforge proxy-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--profile fast|balanced|quality] [--max-width PIXELS] [--crf N] [--preset PRESET] [--json]\n\nCreate H.264/AAC proxies for video assets while preserving their relative folders. Defaults to the balanced profile; explicit encoding options override profile settings. Existing outputs are never overwritten. Failed files are reported after the remaining videos are processed. The output directory must already exist. --json emits progress and per-file result records as JSON Lines."
                 );
                 return Ok(());
             }
@@ -1952,6 +1991,10 @@ fn run_proxy_dir(args: &[String]) -> Result<(), String> {
     let path = path.ok_or_else(|| "proxy-dir requires an input directory".to_owned())?;
     let output_root =
         output_root.ok_or_else(|| "proxy-dir requires --output-dir <DIR>".to_owned())?;
+    let (profile_width, profile_crf, profile_preset) = proxy_profile_defaults(&profile)?;
+    let max_width = max_width.unwrap_or(profile_width);
+    let crf = crf.unwrap_or(profile_crf);
+    let preset = preset.unwrap_or_else(|| profile_preset.to_owned());
     if !(16..=7680).contains(&max_width) {
         return Err("--max-width must be between 16 and 7680 pixels".to_owned());
     }

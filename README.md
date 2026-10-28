@@ -40,7 +40,7 @@ mediaforge probe-dir ./Media --summary --jobs 4
 mediaforge storyboard ./Media/shot.mp4 --output ./Media/shot-sheet.jpg
 mediaforge storyboard ./Media/shot.mp4 -o ./Media/shot-sheet.png --interval 5 --columns 6 --rows 4 --width 240
 mediaforge proxy ./Media/shot.mp4 --output ./Proxies/shot-proxy.mp4
-mediaforge proxy ./Media/shot.mp4 -o ./Proxies/shot-proxy.mp4 --max-width 960 --crf 30 --preset ultrafast
+mediaforge proxy ./Media/shot.mp4 -o ./Proxies/shot-proxy.mp4 --profile fast
 mediaforge proxy-dir ./Media --output-dir ./Proxies --extension mov,mxf --max-width 1280 --preset veryfast
 mediaforge proxy-dir ./Media --output-dir ./Proxies --extension mov,mxf --json
 mediaforge extract-audio ./Media/shot.mp4 --output ./Audio/shot.mp3
@@ -51,7 +51,7 @@ mediaforge extract-audio ./Media/shot.mp4 -o ./Audio/shot.wav --format wav --str
 
 `storyboard` creates a contact sheet using `ffmpeg` (also required on `PATH`). It samples at the requested interval (10 seconds by default), with a 5×5 grid of 320-pixel-wide thumbnails by default. JPG, PNG, and WebP outputs are supported. It refuses to overwrite existing files and only publishes the image after FFmpeg finishes successfully.
 
-`proxy` creates an H.264/AAC MP4 suitable for smoother editing. It scales down to at most 1280 pixels wide by default, with CRF 28 and the `veryfast` x264 preset. Lower CRF preserves more quality; faster presets trade compression efficiency for shorter encoding time. Set `--max-width`, `--crf` (0–51), and `--preset` to tune the result. FFmpeg must include libx264 and AAC support. Existing files are never overwritten.
+`proxy` creates an H.264/AAC MP4 suitable for smoother editing. `--profile fast` uses 960 pixels, CRF 32, and `ultrafast`; `balanced` uses 1280, CRF 28, and `veryfast`; `quality` uses 1920, CRF 22, and `fast`. `balanced` is the default. Explicit `--max-width`, `--crf` (0–51), and `--preset` values override the selected profile. Lower CRF preserves more quality; faster presets trade compression efficiency for shorter encoding time. FFmpeg must include libx264 and AAC support. Existing files are never overwritten.
 
 `proxy-dir` applies the same proxy settings to video files in a directory tree, preserving relative folders beneath an existing output directory. It skips files already inside that output directory, never overwrites existing proxies, continues after per-file errors, and returns a nonzero exit status if any file failed. Set `--extension` to limit inputs. Add `--json` for JSON Lines progress, per-file success/error records, and a final summary.
 
