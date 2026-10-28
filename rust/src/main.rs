@@ -266,11 +266,24 @@ fn is_real_file(path: &Path) -> bool {
     fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_file())
 }
 
-fn sort_entries(entries: &mut [fs::DirEntry]) {
-    entries.sort_by_cached_key(|entry| {
-        let name = entry.file_name().to_string_lossy().into_owned();
-        (name.to_lowercase(), name)
+fn sort_entries(entries: &mut Vec<fs::DirEntry>) {
+    let mut keyed = entries
+        .drain(..)
+        .map(|entry| {
+            let lowercase_name = entry.file_name().to_string_lossy().to_lowercase();
+            (lowercase_name, entry)
+        })
+        .collect::<Vec<_>>();
+    keyed.sort_by(|(left_lower, left), (right_lower, right)| {
+        left_lower.cmp(right_lower).then_with(|| {
+            let left_name = left.file_name();
+            let right_name = right.file_name();
+            left_name
+                .to_string_lossy()
+                .cmp(&right_name.to_string_lossy())
+        })
     });
+    entries.extend(keyed.into_iter().map(|(_, entry)| entry));
 }
 
 fn natural_name_cmp(left: &str, right: &str) -> std::cmp::Ordering {
