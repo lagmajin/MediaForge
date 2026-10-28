@@ -264,6 +264,8 @@ fn walk_with_skip_dirs_mode_counted(
     include_hidden: bool,
     skip_dirs: &[&str],
     ignored: &[IgnoreRule],
+    path_contains_lower: &[String],
+    exclude_path_contains_lower: &[String],
     records: &mut Vec<FileRecord>,
     strict: bool,
     skipped_paths: &mut usize,
@@ -320,10 +322,21 @@ fn walk_with_skip_dirs_mode_counted(
                 .unwrap_or(&path)
                 .to_string_lossy()
                 .replace('\\', "/");
+            let relative_lower =
+                if path_contains_lower.is_empty() && exclude_path_contains_lower.is_empty() {
+                    None
+                } else {
+                    Some(relative.to_lowercase())
+                };
             if file_type.is_dir() {
                 if directory_name_matches(&name, skip_dirs)
                     || (!include_hidden && is_hidden(&path))
                     || is_ignored_directory(&relative, &active_ignored)
+                    || exclude_path_contains_lower.iter().any(|needle| {
+                        relative_lower
+                            .as_ref()
+                            .is_some_and(|value| value.contains(needle))
+                    })
                 {
                     continue;
                 }
@@ -334,6 +347,19 @@ fn walk_with_skip_dirs_mode_counted(
                 };
                 pending.push((path, child_ignored));
             } else if file_type.is_file() && !is_ignored(&relative, &active_ignored) {
+                if exclude_path_contains_lower.iter().any(|needle| {
+                    relative_lower
+                        .as_ref()
+                        .is_some_and(|value| value.contains(needle))
+                }) || (!path_contains_lower.is_empty()
+                    && !path_contains_lower.iter().all(|needle| {
+                        relative_lower
+                            .as_ref()
+                            .is_some_and(|value| value.contains(needle))
+                    }))
+                {
+                    continue;
+                }
                 if !include_hidden && is_dot_hidden(&path) {
                     continue;
                 }
@@ -2151,12 +2177,22 @@ fn run_scan(args: &[String]) -> Result<(), String> {
     let mut records = Vec::new();
     let mut skipped_paths = 0_usize;
     let mut skipped_examples = Vec::new();
+    let path_contains_lower = path_contains
+        .iter()
+        .map(|value| value.to_lowercase())
+        .collect::<Vec<_>>();
+    let exclude_path_contains_lower = exclude_path_contains
+        .iter()
+        .map(|value| value.to_lowercase())
+        .collect::<Vec<_>>();
     walk_with_skip_dirs_mode_counted(
         &root,
         &root,
         include_hidden,
         SKIP_DIRS,
         &ignored,
+        &path_contains_lower,
+        &exclude_path_contains_lower,
         &mut records,
         strict,
         &mut skipped_paths,
@@ -2185,30 +2221,6 @@ fn run_scan(args: &[String]) -> Result<(), String> {
             };
             modified_since.is_none_or(|since| modified >= since)
                 && modified_until.is_none_or(|until| modified <= until)
-        });
-    }
-    let path_contains_lower = path_contains
-        .iter()
-        .map(|value| value.to_lowercase())
-        .collect::<Vec<_>>();
-    if !path_contains_lower.is_empty() {
-        records.retain(|record| {
-            let relative = record.relative.to_lowercase();
-            path_contains_lower
-                .iter()
-                .all(|needle| relative.contains(needle))
-        });
-    }
-    let exclude_path_contains_lower = exclude_path_contains
-        .iter()
-        .map(|value| value.to_lowercase())
-        .collect::<Vec<_>>();
-    if !exclude_path_contains_lower.is_empty() {
-        records.retain(|record| {
-            let relative = record.relative.to_lowercase();
-            !exclude_path_contains_lower
-                .iter()
-                .any(|needle| relative.contains(needle))
         });
     }
     if let Some(sort) = csv_sort {
