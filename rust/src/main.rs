@@ -3118,6 +3118,7 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
     let mut baseline = None;
     let mut json = false;
     let mut csv = false;
+    let mut summary_only = false;
     let mut overwrite = false;
     let mut update_baseline = false;
     let mut fail_on_change = false;
@@ -3145,6 +3146,7 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
             }
             "--json" => json = true,
             "--csv" => csv = true,
+            "--summary" => summary_only = true,
             "--overwrite" => overwrite = true,
             "--update" => update_baseline = true,
             "--fail-on-change" => fail_on_change = true,
@@ -3164,7 +3166,7 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
             }
             "--help" | "-h" => {
                 println!(
-                    "Usage: mediaforge snapshot [PATH] (--output FILE [--overwrite] | --diff FILE [--update]) [--json|--csv] [--include-hidden] [--include-generated] [--hash] [--jobs N] [--fail-on-change]\n\nSave or compare project snapshots using relative paths, sizes, and modification times. --diff FILE --update replaces the baseline with the current project state after producing the diff. By default this is a fast metadata-only scan; --hash stores SHA-256 file fingerprints and compares contents, ignoring timestamp-only changes. --jobs controls concurrent file hashing (1–64; default up to 4). Unity/Unreal/Godot generated cache directories and hidden files are skipped by default. Snapshot files store inclusion settings and can be compared on another supported OS. --csv and --json select diff output formats. --fail-on-change applies only to --diff."
+                    "Usage: mediaforge snapshot [PATH] (--output FILE [--overwrite] | --diff FILE [--update]) [--json|--csv] [--summary] [--include-hidden] [--include-generated] [--hash] [--jobs N] [--fail-on-change]\n\nSave or compare project snapshots using relative paths, sizes, and modification times. --diff FILE --update replaces the baseline with the current project state after producing the diff. By default this is a fast metadata-only scan; --hash stores SHA-256 file fingerprints and compares contents, ignoring timestamp-only changes. --summary omits per-file diff rows while retaining totals and per-asset-type summaries. --jobs controls concurrent file hashing (1–64; default up to 4). Unity/Unreal/Godot generated cache directories and hidden files are skipped by default. Snapshot files store inclusion settings and can be compared on another supported OS. --csv and --json select diff output formats. --fail-on-change applies only to --diff."
                 );
                 return Ok(());
             }
@@ -3197,6 +3199,9 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
     }
     if fail_on_change && baseline.is_none() {
         return Err("--fail-on-change can only be used with --diff".to_owned());
+    }
+    if summary_only && baseline.is_none() {
+        return Err("--summary can only be used with --diff".to_owned());
     }
     let path = path.unwrap_or_else(|| PathBuf::from("."));
     let root = fs::canonicalize(&path)
@@ -3383,26 +3388,28 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
                 "modified_size_delta_bytes".to_owned(),
             ],
         )?;
-        for (relative, current) in &current_entries {
-            let old = old_entries.get(relative).copied();
-            let change = match old {
-                None => "added",
-                Some(previous) if !snapshot_entries_equal(previous, *current, use_hash) => {
-                    "modified"
-                }
-                Some(_) => continue,
-            };
-            write_snapshot_csv_row(
-                &mut stdout,
-                &snapshot_csv_event(change, relative, old, Some(*current)),
-            )?;
-        }
-        for (relative, old) in &old_entries {
-            if !current_entries.contains_key(relative) {
+        if !summary_only {
+            for (relative, current) in &current_entries {
+                let old = old_entries.get(relative).copied();
+                let change = match old {
+                    None => "added",
+                    Some(previous) if !snapshot_entries_equal(previous, *current, use_hash) => {
+                        "modified"
+                    }
+                    Some(_) => continue,
+                };
                 write_snapshot_csv_row(
                     &mut stdout,
-                    &snapshot_csv_event("removed", relative, Some(*old), None),
+                    &snapshot_csv_event(change, relative, old, Some(*current)),
                 )?;
+            }
+            for (relative, old) in &old_entries {
+                if !current_entries.contains_key(relative) {
+                    write_snapshot_csv_row(
+                        &mut stdout,
+                        &snapshot_csv_event("removed", relative, Some(*old), None),
+                    )?;
+                }
             }
         }
         let mut summary = vec!["summary".to_owned(); 15];
@@ -3427,41 +3434,43 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
             write_snapshot_csv_row(&mut stdout, &type_summary)?;
         }
     } else if json {
-        for (relative, current) in &current_entries {
-            let old = old_entries.get(relative);
-            let kind = match old {
-                None => "added",
-                Some(previous) if !snapshot_entries_equal(*previous, *current, use_hash) => {
-                    "modified"
-                }
-                Some(_) => continue,
-            };
-            println!(
-                "{{\"type\":{kind:?},\"asset_type\":{},\"path\":{},\"old_size_bytes\":{},\"new_size_bytes\":{},\"size_delta_bytes\":{},\"old_modified_unix_ns\":{},\"new_modified_unix_ns\":{}}}",
-                json_string(classify(Path::new(relative)).as_str()),
-                json_string(relative),
-                old.map_or("null".to_owned(), |value| value.size.to_string()),
-                current.size,
-                old.map_or_else(
-                    || current.size.to_string(),
-                    |value| (i128::from(current.size) - i128::from(value.size)).to_string()
-                ),
-                read_json_timestamp(old.and_then(|value| value.modified_ns)),
-                read_json_timestamp(current.modified_ns)
-            );
-        }
-        for (relative, old) in &old_entries {
-            if current_entries.contains_key(relative) {
-                continue;
+        if !summary_only {
+            for (relative, current) in &current_entries {
+                let old = old_entries.get(relative);
+                let kind = match old {
+                    None => "added",
+                    Some(previous) if !snapshot_entries_equal(*previous, *current, use_hash) => {
+                        "modified"
+                    }
+                    Some(_) => continue,
+                };
+                println!(
+                    "{{\"type\":{kind:?},\"asset_type\":{},\"path\":{},\"old_size_bytes\":{},\"new_size_bytes\":{},\"size_delta_bytes\":{},\"old_modified_unix_ns\":{},\"new_modified_unix_ns\":{}}}",
+                    json_string(classify(Path::new(relative)).as_str()),
+                    json_string(relative),
+                    old.map_or("null".to_owned(), |value| value.size.to_string()),
+                    current.size,
+                    old.map_or_else(
+                        || current.size.to_string(),
+                        |value| (i128::from(current.size) - i128::from(value.size)).to_string()
+                    ),
+                    read_json_timestamp(old.and_then(|value| value.modified_ns)),
+                    read_json_timestamp(current.modified_ns)
+                );
             }
-            println!(
-                "{{\"type\":\"removed\",\"asset_type\":{},\"path\":{},\"old_size_bytes\":{},\"new_size_bytes\":null,\"size_delta_bytes\":{},\"old_modified_unix_ns\":{},\"new_modified_unix_ns\":null}}",
-                json_string(classify(Path::new(relative)).as_str()),
-                json_string(relative),
-                old.size,
-                -i128::from(old.size),
-                read_json_timestamp(old.modified_ns)
-            );
+            for (relative, old) in &old_entries {
+                if current_entries.contains_key(relative) {
+                    continue;
+                }
+                println!(
+                    "{{\"type\":\"removed\",\"asset_type\":{},\"path\":{},\"old_size_bytes\":{},\"new_size_bytes\":null,\"size_delta_bytes\":{},\"old_modified_unix_ns\":{},\"new_modified_unix_ns\":null}}",
+                    json_string(classify(Path::new(relative)).as_str()),
+                    json_string(relative),
+                    old.size,
+                    -i128::from(old.size),
+                    read_json_timestamp(old.modified_ns)
+                );
+            }
         }
         let type_summary = by_type
             .iter()
@@ -3498,28 +3507,30 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
                 stats.added, stats.removed, stats.modified, stats.unchanged
             );
         }
-        for (relative, current) in &current_entries {
-            let asset_type = classify(Path::new(relative)).as_str();
-            match old_entries.get(relative) {
-                None => println!(
-                    "  added    {asset_type:<9} {:>10}  {relative}",
-                    human_size(current.size)
-                ),
-                Some(previous) if previous != current => println!(
-                    "  modified {asset_type:<9} {:>10} -> {:<10} {relative}",
-                    human_size(previous.size),
-                    human_size(current.size)
-                ),
-                Some(_) => {}
+        if !summary_only {
+            for (relative, current) in &current_entries {
+                let asset_type = classify(Path::new(relative)).as_str();
+                match old_entries.get(relative) {
+                    None => println!(
+                        "  added    {asset_type:<9} {:>10}  {relative}",
+                        human_size(current.size)
+                    ),
+                    Some(previous) if previous != current => println!(
+                        "  modified {asset_type:<9} {:>10} -> {:<10} {relative}",
+                        human_size(previous.size),
+                        human_size(current.size)
+                    ),
+                    Some(_) => {}
+                }
             }
-        }
-        for (relative, previous) in &old_entries {
-            if !current_entries.contains_key(relative) {
-                println!(
-                    "  removed  {:<9} {:>10}  {relative}",
-                    classify(Path::new(relative)).as_str(),
-                    human_size(previous.size)
-                );
+            for (relative, previous) in &old_entries {
+                if !current_entries.contains_key(relative) {
+                    println!(
+                        "  removed  {:<9} {:>10}  {relative}",
+                        classify(Path::new(relative)).as_str(),
+                        human_size(previous.size)
+                    );
+                }
             }
         }
     }
@@ -3635,7 +3646,7 @@ fn fraction_ceil_scaled(fraction: &str, multiplier: u128) -> u128 {
 
 fn print_help() {
     println!(
-        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge doctor [--json]\n  mediaforge scan-config <init|validate|show> [FILE] [--json]\n  mediaforge scan [PATH] [--json|--csv] [--csv-info] [--show-filters] [--include-hidden] [--strict] [--no-same-size] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--modified-since UNIX_SECONDS] [--modified-until UNIX_SECONDS] [--modified-within DURATION] [--path-contains TEXT ...] [--exclude-path-contains TEXT ...] [--extension EXTENSIONS ...] [--largest N] [--sort path|size|modified] [--settings FILE]\n  mediaforge dupes [PATH] [--json] [--summary] [--include-hidden] [--exclude-path-contains TEXT ...] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--top-groups N] [--jobs N]\n  mediaforge probe <FILE> [--compact] [--summary]\n  mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--type video|audio] [--min-size SIZE] [--max-size SIZE] [--jobs N] [--summary] [--compare] [--csv]\n  mediaforge storyboard <VIDEO> --output <IMAGE> [--interval SECONDS] [--columns N] [--rows N] [--width PIXELS]\n  mediaforge scene-detect-dir <PATH> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--fps RATE] [--extension EXTENSIONS] [--include-hidden] [--jobs N]\n  mediaforge scene-detect <VIDEO> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--format jsonl|csv] [--fps RATE]\n  mediaforge proxy <VIDEO> --output <FILE.mp4> [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge proxy-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET] [--jobs N] [--skip-existing] [--json]\n  mediaforge proxy-config init [FILE] [--profile fast|balanced|quality] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge extract-audio <VIDEO> --output <FILE> [--format mp3|wav|flac] [--bitrate RATE] [--stream N]\n  mediaforge extract-audio-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--format mp3|wav|flac] [--bitrate RATE] [--stream N] [--jobs N] [--skip-existing] [--json]\n  mediaforge snapshot [PATH] (--output FILE [--overwrite] | --diff FILE [--update]) [--json|--csv] [--include-hidden] [--include-generated] [--hash] [--jobs N] [--fail-on-change]\n  mediaforge project [PATH] [--json]\n  mediaforge unity-meta [PROJECT_PATH] [--json] [--include-hidden]\n  mediaforge gitignore [PATH] [--apply] [--json]\n  mediaforge organize [PATH] [--by type|extension|size] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--apply]\n  mediaforge rename [PATH] [--replace OLD NEW] [--prefix TEXT] [--suffix TEXT] [--extension-case keep|lower|upper] [--extension EXTENSIONS] [--include-hidden] [--json] [--apply]
+        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge doctor [--json]\n  mediaforge scan-config <init|validate|show> [FILE] [--json]\n  mediaforge scan [PATH] [--json|--csv] [--csv-info] [--show-filters] [--include-hidden] [--strict] [--no-same-size] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--modified-since UNIX_SECONDS] [--modified-until UNIX_SECONDS] [--modified-within DURATION] [--path-contains TEXT ...] [--exclude-path-contains TEXT ...] [--extension EXTENSIONS ...] [--largest N] [--sort path|size|modified] [--settings FILE]\n  mediaforge dupes [PATH] [--json] [--summary] [--include-hidden] [--exclude-path-contains TEXT ...] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--top-groups N] [--jobs N]\n  mediaforge probe <FILE> [--compact] [--summary]\n  mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--type video|audio] [--min-size SIZE] [--max-size SIZE] [--jobs N] [--summary] [--compare] [--csv]\n  mediaforge storyboard <VIDEO> --output <IMAGE> [--interval SECONDS] [--columns N] [--rows N] [--width PIXELS]\n  mediaforge scene-detect-dir <PATH> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--fps RATE] [--extension EXTENSIONS] [--include-hidden] [--jobs N]\n  mediaforge scene-detect <VIDEO> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--format jsonl|csv] [--fps RATE]\n  mediaforge proxy <VIDEO> --output <FILE.mp4> [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge proxy-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET] [--jobs N] [--skip-existing] [--json]\n  mediaforge proxy-config init [FILE] [--profile fast|balanced|quality] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge extract-audio <VIDEO> --output <FILE> [--format mp3|wav|flac] [--bitrate RATE] [--stream N]\n  mediaforge extract-audio-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--format mp3|wav|flac] [--bitrate RATE] [--stream N] [--jobs N] [--skip-existing] [--json]\n  mediaforge snapshot [PATH] (--output FILE [--overwrite] | --diff FILE [--update]) [--json|--csv] [--summary] [--include-hidden] [--include-generated] [--hash] [--jobs N] [--fail-on-change]\n  mediaforge project [PATH] [--json]\n  mediaforge unity-meta [PROJECT_PATH] [--json] [--include-hidden]\n  mediaforge gitignore [PATH] [--apply] [--json]\n  mediaforge organize [PATH] [--by type|extension|size] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--apply]\n  mediaforge rename [PATH] [--replace OLD NEW] [--prefix TEXT] [--suffix TEXT] [--extension-case keep|lower|upper] [--extension EXTENSIONS] [--include-hidden] [--json] [--apply]
   mediaforge sequence [PATH] [--prefix NAME] [--start N] [--padding N] [--extension EXTENSIONS] [--include-hidden] [--natural] [--json] [--apply]\n  mediaforge undo [PATH] [--json]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--exclude-path-contains TEXT ...] [--include-hidden] [--include-generated] [--dry-run] [--json] [--list]\n  mediaforge --version\n  mediaforge --help"
     );
 }
