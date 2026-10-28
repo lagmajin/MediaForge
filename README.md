@@ -56,6 +56,7 @@ mediaforge scan ./Media --type video --min-size 500M
 mediaforge dupes ./Game/Content --min-size 1M
 mediaforge project ./Game
 mediaforge organize ./Media --by type
+mediaforge pack ./Game --output ../Game.tar --dry-run
 ```
 
 Hidden folders and common generated/dependency directories (`.git`, `node_modules`, virtual environments) are skipped by default. Symlinks are not followed. The duplicate section only groups equal file sizes; it does not claim the files have identical content. JSON output includes byte counts and relative paths for scripts and other tools.
@@ -89,6 +90,15 @@ mediaforge undo ./Media
 
 Organization is a preview unless `--apply` is supplied. Moves preserve paths below the new type/extension folder, skip destination collisions, and refuse symlink paths. Before moving anything, MediaForge writes a `.mediaforge-undo` recovery manifest. `undo` restores files only when the original location is clear; it retains the manifest if a conflict needs manual handling. It never deletes source files.
 
+## Pack a project for handoff
+
+```sh
+mediaforge pack ./Game --output ../Game.tar --dry-run
+mediaforge pack ./Game --output ../Game.tar
+```
+
+`pack` creates an uncompressed tar archive using only Rust's standard library. It streams file contents, preserves relative paths and Unix file permissions, and uses PAX extensions for long Unicode paths and files larger than 8 GiB. Hidden files, simple `.gitignore` patterns, and common Unity/Unreal/Godot generated folders (`Library`, `Intermediate`, `DerivedDataCache`, `.godot`, and related folders) are skipped by default. Use `--include-generated` to include those folders. Unreal's `Saved` folder is retained because it can contain backups and logs. Symlinks are never followed. Empty directories are not stored. The output must be outside the input folder and must not already exist. Already-compressed video and image files are copied as-is, so the archive can be large.
+
 ## Cross-platform roadmap
 
 - [x] Python reference CLI for Windows, macOS, and Linux
@@ -99,6 +109,7 @@ Organization is a preview unless `--apply` is supplied. Moves preserve paths bel
 - [x] Content-verified duplicate detection on demand
 - [x] Safe media organization plans with preview and undo
 - [x] Read-only project and generated-cache inspection for Unity, Unreal, and Godot
+- [x] Streaming tar package creation for project handoff
 - [ ] Optional AI assistance only for ambiguous labeling, never required for core commands
 
 ## Development (Rust)

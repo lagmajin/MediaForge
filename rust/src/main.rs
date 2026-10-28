@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::env;
-use std::fs::{self, OpenOptions};
+use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufRead, BufReader, Cursor, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
@@ -14,6 +14,15 @@ const SKIP_DIRS: &[&str] = &[
     "__pycache__",
     ".venv",
     "venv",
+];
+const PACK_GENERATED_DIRS: &[&str] = &[
+    "Library",
+    "Temp",
+    "Obj",
+    "Intermediate",
+    "DerivedDataCache",
+    "Binaries",
+    ".godot",
 ];
 const PROJECT_ARTIFACT_DIRS: &[&str] = &[
     "Library",
@@ -101,6 +110,16 @@ fn is_hidden(name: &str) -> bool {
 }
 
 fn walk(root: &Path, current: &Path, include_hidden: bool, records: &mut Vec<FileRecord>) {
+    walk_with_skip_dirs(root, current, include_hidden, SKIP_DIRS, records);
+}
+
+fn walk_with_skip_dirs(
+    root: &Path,
+    current: &Path,
+    include_hidden: bool,
+    skip_dirs: &[&str],
+    records: &mut Vec<FileRecord>,
+) {
     let Ok(entries) = fs::read_dir(current) else {
         return;
     };
@@ -116,10 +135,10 @@ fn walk(root: &Path, current: &Path, include_hidden: bool, records: &mut Vec<Fil
             continue;
         }
         if file_type.is_dir() {
-            if SKIP_DIRS.contains(&name.as_str()) || (!include_hidden && is_hidden(&name)) {
+            if skip_dirs.contains(&name.as_str()) || (!include_hidden && is_hidden(&name)) {
                 continue;
             }
-            walk(root, &path, include_hidden, records);
+            walk_with_skip_dirs(root, &path, include_hidden, skip_dirs, records);
         } else if file_type.is_file() && (include_hidden || !is_hidden(&name)) {
             let Ok(metadata) = entry.metadata() else {
                 continue;
@@ -577,7 +596,7 @@ fn parse_size(value: &str) -> Result<u64, String> {
 
 fn print_help() {
     println!(
-        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE]\n  mediaforge dupes [PATH] [--json] [--min-size SIZE]\n  mediaforge probe <FILE> [--compact]\n  mediaforge project [PATH] [--json]\n  mediaforge organize [PATH] [--by type|extension] [--apply]\n  mediaforge undo [PATH]\n  mediaforge --version\n  mediaforge --help"
+        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE]\n  mediaforge dupes [PATH] [--json] [--min-size SIZE]\n  mediaforge probe <FILE> [--compact]\n  mediaforge project [PATH] [--json]\n  mediaforge organize [PATH] [--by type|extension] [--apply]\n  mediaforge undo [PATH]\n  mediaforge pack <PATH> --output <FILE.tar> [--include-hidden] [--include-generated] [--dry-run]\n  mediaforge --version\n  mediaforge --help"
     );
 }
 
@@ -921,6 +940,8 @@ fn run_project(args: &[String]) -> Result<(), String> {
 
 const ORGANIZE_MANIFEST: &str = ".mediaforge-undo";
 const ORGANIZE_MAGIC: &[u8; 8] = b"MFORG001";
+const TAR_BLOCK_SIZE: usize = 512;
+const TAR_OCTAL_MAX: u64 = 0o77777777777;
 
 #[derive(Clone, Debug)]
 struct PlannedMove {
@@ -1292,6 +1313,372 @@ fn run_undo(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+fn ustar_name(path: &[u8]) -> Option<(&[u8], &[u8])> {
+    if path.len() <= 100 {
+        return Some((path, &[]));
+    }
+    for (index, byte) in path.iter().enumerate().rev() {
+        if *byte == b'/' && index <= 155 && path.len() - index - 1 <= 100 {
+            return Some((&path[index + 1..], &path[..index]));
+        }
+    }
+    None
+}
+
+fn write_tar_octal(field: &mut [u8], value: u64) -> Result<(), String> {
+    let digits = format!("{value:o}");
+    if digits.len() > field.len().saturating_sub(1) {
+        return Err("tar numeric field overflow".to_owned());
+    }
+    field.fill(b'0');
+    let start = field.len() - digits.len() - 1;
+    field[start..start + digits.len()].copy_from_slice(digits.as_bytes());
+    field[field.len() - 1] = 0;
+    Ok(())
+}
+
+fn tar_header(
+    name: &[u8],
+    prefix: &[u8],
+    mode: u32,
+    size: u64,
+    modified: u64,
+    kind: u8,
+) -> Result<[u8; TAR_BLOCK_SIZE], String> {
+    if name.len() > 100 || prefix.len() > 155 {
+        return Err("tar path header field is too long".to_owned());
+    }
+    let mut header = [0_u8; TAR_BLOCK_SIZE];
+    header[..name.len()].copy_from_slice(name);
+    write_tar_octal(&mut header[100..108], mode as u64)?;
+    write_tar_octal(&mut header[108..116], 0)?;
+    write_tar_octal(&mut header[116..124], 0)?;
+    write_tar_octal(&mut header[124..136], size)?;
+    write_tar_octal(&mut header[136..148], modified)?;
+    header[148..156].fill(b' ');
+    header[156] = kind;
+    header[257..263].copy_from_slice(b"ustar\0");
+    header[263..265].copy_from_slice(b"00");
+    header[265..265 + b"mediaforge".len()].copy_from_slice(b"mediaforge");
+    if !prefix.is_empty() {
+        header[345..345 + prefix.len()].copy_from_slice(prefix);
+    }
+    let checksum: u64 = header.iter().map(|byte| *byte as u64).sum();
+    if checksum > 0o777777 {
+        return Err("tar header checksum overflow".to_owned());
+    }
+    let checksum_text = format!("{checksum:06o}\0 ");
+    header[148..156].copy_from_slice(checksum_text.as_bytes());
+    Ok(header)
+}
+
+fn pax_record(key: &str, value: &str) -> String {
+    let body = format!(" {key}={value}\n");
+    let mut length = body.len() + 1;
+    loop {
+        let updated = body.len() + length.to_string().len();
+        if updated == length {
+            return format!("{length}{body}");
+        }
+        length = updated;
+    }
+}
+
+fn write_tar_payload(writer: &mut File, contents: &[u8]) -> io::Result<()> {
+    writer.write_all(contents)?;
+    let padding = (TAR_BLOCK_SIZE - contents.len() % TAR_BLOCK_SIZE) % TAR_BLOCK_SIZE;
+    if padding > 0 {
+        writer.write_all(&[0_u8; TAR_BLOCK_SIZE][..padding])?;
+    }
+    Ok(())
+}
+
+fn pack_file(
+    writer: &mut File,
+    archive_name: &str,
+    record: &FileRecord,
+    index: usize,
+) -> Result<(), String> {
+    let path_bytes = archive_name.as_bytes();
+    let split = ustar_name(path_bytes);
+    let pax_path = split.is_none();
+    let source_metadata = fs::symlink_metadata(&record.path)
+        .map_err(|error| format!("cannot inspect {}: {error}", record.path.display()))?;
+    if !source_metadata.is_file() || source_metadata.file_type().is_symlink() {
+        return Err(format!(
+            "source changed type since scan: {}",
+            record.path.display()
+        ));
+    }
+    if source_metadata.len() != record.size {
+        return Err(format!(
+            "source size changed since scan: {}",
+            record.path.display()
+        ));
+    }
+    let mode = archive_mode(&source_metadata);
+    let modified = source_metadata
+        .modified()
+        .ok()
+        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+        .map_or(0, |duration| duration.as_secs());
+    let pax_size = record.size > TAR_OCTAL_MAX;
+    let pax_mtime = modified > TAR_OCTAL_MAX;
+
+    if pax_path || pax_size || pax_mtime {
+        let mut pax = String::new();
+        if pax_path {
+            pax.push_str(&pax_record("path", archive_name));
+        }
+        if pax_size {
+            pax.push_str(&pax_record("size", &record.size.to_string()));
+        }
+        if pax_mtime {
+            pax.push_str(&pax_record("mtime", &modified.to_string()));
+        }
+        let pax_name = format!("PaxHeaders/MediaForge/{index}");
+        let header = tar_header(pax_name.as_bytes(), &[], 0o644, pax.len() as u64, 0, b'x')?;
+        writer
+            .write_all(&header)
+            .and_then(|()| write_tar_payload(writer, pax.as_bytes()))
+            .map_err(|error| format!("could not write PAX header: {error}"))?;
+    }
+
+    let (header_name, prefix) = if pax_path {
+        (format!("PaxFiles/{index}"), "".to_owned())
+    } else {
+        let (name, prefix) = split.expect("checked USTAR path split");
+        (
+            String::from_utf8_lossy(name).into_owned(),
+            String::from_utf8_lossy(prefix).into_owned(),
+        )
+    };
+    let header_size = if pax_size { 0 } else { record.size };
+    let header_mtime = modified.min(TAR_OCTAL_MAX);
+    let header = tar_header(
+        header_name.as_bytes(),
+        prefix.as_bytes(),
+        mode,
+        header_size,
+        header_mtime,
+        b'0',
+    )?;
+    writer
+        .write_all(&header)
+        .map_err(|error| format!("could not write tar header: {error}"))?;
+
+    let mut input = File::open(&record.path)
+        .map_err(|error| format!("cannot open {}: {error}", record.path.display()))?;
+    let mut limited = (&mut input).take(record.size);
+    let copied = io::copy(&mut limited, writer)
+        .map_err(|error| format!("could not archive {}: {error}", record.path.display()))?;
+    if copied != record.size {
+        return Err(format!(
+            "source changed while packing: {}",
+            record.path.display()
+        ));
+    }
+    let mut extra = [0_u8; 1];
+    if input
+        .read(&mut extra)
+        .map_err(|error| format!("could not verify {}: {error}", record.path.display()))?
+        != 0
+    {
+        return Err(format!(
+            "source grew while packing: {}",
+            record.path.display()
+        ));
+    }
+    let padding =
+        (TAR_BLOCK_SIZE as u64 - record.size % TAR_BLOCK_SIZE as u64) % TAR_BLOCK_SIZE as u64;
+    if padding > 0 {
+        writer
+            .write_all(&[0_u8; TAR_BLOCK_SIZE][..padding as usize])
+            .map_err(|error| format!("could not pad tar member: {error}"))?;
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn archive_mode(metadata: &fs::Metadata) -> u32 {
+    use std::os::unix::fs::PermissionsExt;
+    metadata.permissions().mode() & 0o777
+}
+
+#[cfg(not(unix))]
+fn archive_mode(_: &fs::Metadata) -> u32 {
+    0o644
+}
+
+fn run_pack(args: &[String]) -> Result<(), String> {
+    let mut path = None;
+    let mut output = None;
+    let mut include_hidden = false;
+    let mut include_generated = false;
+    let mut dry_run = false;
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--output" | "-o" => {
+                output = Some(PathBuf::from(
+                    iter.next()
+                        .ok_or_else(|| "--output requires a file path".to_owned())?,
+                ));
+            }
+            "--include-hidden" => include_hidden = true,
+            "--include-generated" => include_generated = true,
+            "--dry-run" => dry_run = true,
+            "--help" | "-h" => {
+                println!(
+                    "Usage: mediaforge pack <PATH> --output <FILE.tar> [--include-hidden] [--include-generated] [--dry-run]\n\nCreate an uncompressed, stream-written tar archive. Git-ignored and hidden files are skipped by default. Common Unity, Unreal, and Godot generated folders are excluded unless --include-generated is used. PAX extensions support long paths and files larger than 8 GiB."
+                );
+                return Ok(());
+            }
+            value if value.starts_with('-') => return Err(format!("unknown option: {value}")),
+            value => {
+                if path.is_some() {
+                    return Err("pack accepts one input directory".into());
+                }
+                path = Some(PathBuf::from(value));
+            }
+        }
+    }
+    let path = path.ok_or_else(|| "pack requires an input directory".to_owned())?;
+    let output = output.ok_or_else(|| "pack requires --output <FILE.tar>".to_owned())?;
+    let root = fs::canonicalize(&path)
+        .map_err(|error| format!("cannot access {}: {error}", path.display()))?;
+    if !root.is_dir() {
+        return Err(format!("expected a project directory: {}", root.display()));
+    }
+    let requested_name = output
+        .file_name()
+        .ok_or_else(|| "output must name a file".to_owned())?;
+    let requested_parent = output
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let output_parent = fs::canonicalize(requested_parent).map_err(|error| {
+        format!(
+            "cannot access output directory {}: {error}",
+            requested_parent.display()
+        )
+    })?;
+    let output_path = output_parent.join(requested_name);
+    if output_path.starts_with(&root) {
+        return Err("archive output must be outside the input directory".to_owned());
+    }
+    let output_exists = fs::symlink_metadata(&output_path).is_ok();
+    if output_exists && !dry_run {
+        return Err(format!(
+            "output already exists; refusing to overwrite: {}",
+            output_path.display()
+        ));
+    }
+
+    let ignored = ignored_by_git(&root);
+    let mut records = Vec::new();
+    let mut skip_dirs = SKIP_DIRS.to_vec();
+    if !include_generated {
+        skip_dirs.extend_from_slice(PACK_GENERATED_DIRS);
+    }
+    walk_with_skip_dirs(
+        &root,
+        &root,
+        include_hidden || include_generated,
+        &skip_dirs,
+        &mut records,
+    );
+    records.retain(|record| !is_ignored(&record.relative, &ignored));
+    let mut entries = Vec::<(&FileRecord, String)>::with_capacity(records.len());
+    let mut total_bytes = 0_u64;
+    for record in &records {
+        let relative = record
+            .path
+            .strip_prefix(&root)
+            .map_err(|error| format!("cannot relativize {}: {error}", record.path.display()))?;
+        let mut components = Vec::new();
+        for component in relative.components() {
+            let std::path::Component::Normal(part) = component else {
+                return Err(format!("unsafe archive path: {}", relative.display()));
+            };
+            let part = part.to_str().ok_or_else(|| {
+                format!("non-UTF-8 path cannot be packed: {}", relative.display())
+            })?;
+            if part
+                .chars()
+                .any(|character| matches!(character, '\\' | ':' | '\0'))
+            {
+                return Err(format!(
+                    "path contains a character unsafe for cross-platform extraction: {}",
+                    relative.display()
+                ));
+            }
+            components.push(part);
+        }
+        if components.is_empty() {
+            return Err("cannot archive the input directory itself".to_owned());
+        }
+        let archive_name = components.join("/");
+        if archive_name.len() > 1024 * 1024 {
+            return Err(format!("archive path is too long: {archive_name}"));
+        }
+        entries.push((record, archive_name));
+        total_bytes = total_bytes.saturating_add(record.size);
+    }
+    println!(
+        "Pack plan: {} file(s), {} uncompressed",
+        entries.len(),
+        human_size(total_bytes)
+    );
+    for (record, name) in entries.iter().take(30) {
+        println!("  {}  {name}", human_size(record.size));
+    }
+    if entries.len() > 30 {
+        println!("  ... and {} more", entries.len() - 30);
+    }
+    if dry_run {
+        if output_exists {
+            println!(
+                "Dry run; no archive was written. Output already exists and would not be overwritten."
+            );
+        } else {
+            println!("Dry run; would create {}", output_path.display());
+        }
+        return Ok(());
+    }
+
+    let mut archive = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&output_path)
+        .map_err(|error| format!("cannot create archive {}: {error}", output_path.display()))?;
+    let write_result = (|| -> Result<(), String> {
+        for (index, (record, name)) in entries.iter().enumerate() {
+            pack_file(&mut archive, name, record, index + 1)?;
+        }
+        archive
+            .write_all(&[0_u8; TAR_BLOCK_SIZE * 2])
+            .map_err(|error| format!("could not finish tar archive: {error}"))?;
+        archive
+            .sync_all()
+            .map_err(|error| format!("could not flush archive: {error}"))
+    })();
+    drop(archive);
+    if let Err(error) = write_result {
+        let _ = fs::remove_file(&output_path);
+        return Err(error);
+    }
+    let archive_size = fs::metadata(&output_path)
+        .map_err(|error| format!("archive was created but could not be inspected: {error}"))?
+        .len();
+    println!(
+        "Created {} ({})",
+        output_path.display(),
+        human_size(archive_size)
+    );
+    Ok(())
+}
+
 fn run() -> Result<(), String> {
     let args: Vec<String> = env::args().skip(1).collect();
     match args.first().map(String::as_str) {
@@ -1309,6 +1696,7 @@ fn run() -> Result<(), String> {
         Some("project") => run_project(&args[1..]),
         Some("organize") => run_organize(&args[1..]),
         Some("undo") => run_undo(&args[1..]),
+        Some("pack") => run_pack(&args[1..]),
         Some(command) => Err(format!(
             "unknown command: {command}\nRun 'mediaforge --help' for usage."
         )),
