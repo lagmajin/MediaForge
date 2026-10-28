@@ -8394,15 +8394,17 @@ fn unity_meta_guid(contents: &str) -> Result<Option<String>, ()> {
 
 fn run_unity_meta(args: &[String]) -> Result<(), String> {
     let mut json = false;
+    let mut summary = false;
     let mut include_hidden = false;
     let mut path = None;
     for arg in args {
         match arg.as_str() {
             "--json" => json = true,
+            "--summary" => summary = true,
             "--include-hidden" => include_hidden = true,
             "--help" | "-h" => {
                 println!(
-                    "Usage: mediaforge unity-meta [PROJECT_PATH] [--json] [--include-hidden]\n\nCheck Unity Assets for missing or orphaned .meta files, missing or malformed GUIDs, and duplicate GUID collisions. Honors .gitignore by default, follows no symlinks, and never changes files. Exits with an error status when issues are found."
+                    "Usage: mediaforge unity-meta [PROJECT_PATH] [--json] [--summary] [--include-hidden]\n\nCheck Unity Assets for missing or orphaned .meta files, missing or malformed GUIDs, and duplicate GUID collisions. --summary verifies all assets but omits issue path lists and duplicate GUID details. Honors .gitignore by default, follows no symlinks, and never changes files. Exits with an error status when issues are found."
                 );
                 return Ok(());
             }
@@ -8582,41 +8584,62 @@ fn run_unity_meta(args: &[String]) -> Result<(), String> {
             write_json_string(&mut output, &root.to_string_lossy())?;
             write!(
                 output,
-                ",\"checked\":{checked},\"missing_meta_count\":{},\"orphan_meta_count\":{},\"missing_guid_count\":{},\"invalid_guid_count\":{},\"duplicate_guid_count\":{duplicate_guid_count},\"missing_meta\":[",
+                ",\"checked\":{checked},\"details_included\":{},\"missing_meta_count\":{},\"orphan_meta_count\":{},\"missing_guid_count\":{},\"invalid_guid_count\":{},\"duplicate_guid_count\":{duplicate_guid_count},\"missing_meta\":[",
+                !summary,
                 missing_meta.len(),
                 orphan_meta.len(),
                 missing_guid.len(),
                 invalid_guid.len()
             )?;
-            for (index, path) in missing_meta.iter().enumerate() {
+            for (index, path) in missing_meta
+                .iter()
+                .take(if summary { 0 } else { usize::MAX })
+                .enumerate()
+            {
                 if index > 0 {
                     output.write_all(b",")?;
                 }
                 write_json_string(&mut output, path)?;
             }
             output.write_all(b"],\"orphan_meta\":[")?;
-            for (index, path) in orphan_meta.iter().enumerate() {
+            for (index, path) in orphan_meta
+                .iter()
+                .take(if summary { 0 } else { usize::MAX })
+                .enumerate()
+            {
                 if index > 0 {
                     output.write_all(b",")?;
                 }
                 write_json_string(&mut output, path)?;
             }
             output.write_all(b"],\"missing_guid\":[")?;
-            for (index, path) in missing_guid.iter().enumerate() {
+            for (index, path) in missing_guid
+                .iter()
+                .take(if summary { 0 } else { usize::MAX })
+                .enumerate()
+            {
                 if index > 0 {
                     output.write_all(b",")?;
                 }
                 write_json_string(&mut output, path)?;
             }
             output.write_all(b"],\"invalid_guid\":[")?;
-            for (index, path) in invalid_guid.iter().enumerate() {
+            for (index, path) in invalid_guid
+                .iter()
+                .take(if summary { 0 } else { usize::MAX })
+                .enumerate()
+            {
                 if index > 0 {
                     output.write_all(b",")?;
                 }
                 write_json_string(&mut output, path)?;
             }
             output.write_all(b"],\"duplicate_guids\":[")?;
-            for (index, (guid, paths)) in duplicate_guids.iter().enumerate() {
+            for (index, (guid, paths)) in duplicate_guids
+                .iter()
+                .take(if summary { 0 } else { usize::MAX })
+                .enumerate()
+            {
                 if index > 0 {
                     output.write_all(b",")?;
                 }
@@ -8639,23 +8662,38 @@ fn run_unity_meta(args: &[String]) -> Result<(), String> {
         println!("Unity metadata audit: {}", root.display());
         println!("Checked paths: {checked}");
         println!("Missing .meta files: {}", missing_meta.len());
-        for path in &missing_meta {
+        for path in missing_meta
+            .iter()
+            .take(if summary { 0 } else { usize::MAX })
+        {
             println!("  missing: {path}");
         }
         println!("Orphan .meta files: {}", orphan_meta.len());
-        for path in &orphan_meta {
+        for path in orphan_meta
+            .iter()
+            .take(if summary { 0 } else { usize::MAX })
+        {
             println!("  orphan: {path}");
         }
         println!("Missing GUIDs: {}", missing_guid.len());
-        for path in &missing_guid {
+        for path in missing_guid
+            .iter()
+            .take(if summary { 0 } else { usize::MAX })
+        {
             println!("  no guid: {path}");
         }
         println!("Malformed GUIDs: {}", invalid_guid.len());
-        for path in &invalid_guid {
+        for path in invalid_guid
+            .iter()
+            .take(if summary { 0 } else { usize::MAX })
+        {
             println!("  invalid guid: {path}");
         }
         println!("Duplicate GUID collisions: {duplicate_guid_count}");
-        for (guid, paths) in &duplicate_guids {
+        for (guid, paths) in duplicate_guids
+            .iter()
+            .take(if summary { 0 } else { usize::MAX })
+        {
             println!("  {guid}: {}", paths.join(", "));
         }
         if issue_count == 0 {
