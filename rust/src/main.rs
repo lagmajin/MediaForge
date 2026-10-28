@@ -3086,7 +3086,7 @@ fn collect_snapshot_entries(
     records: &[FileRecord],
     hash_content: bool,
     jobs: usize,
-) -> Result<BTreeMap<String, SnapshotEntry>, String> {
+) -> Result<BTreeMap<&str, SnapshotEntry>, String> {
     if jobs == 0 {
         return Err("snapshot worker count must be greater than zero".to_owned());
     }
@@ -3138,7 +3138,7 @@ fn collect_snapshot_entries(
         };
         if entries
             .insert(
-                record.relative.clone(),
+                record.relative.as_str(),
                 snapshot_entry(record, content_hash),
             )
             .is_some()
@@ -3318,7 +3318,7 @@ fn snapshot_temp_file(parent: &Path) -> Result<(PathBuf, File), String> {
 fn write_snapshot_manifest(
     output: &Path,
     records: &[FileRecord],
-    entries: &BTreeMap<String, SnapshotEntry>,
+    entries: &BTreeMap<&str, SnapshotEntry>,
     include_hidden: bool,
     include_generated: bool,
     hash_content: bool,
@@ -3403,7 +3403,7 @@ fn write_snapshot_manifest(
                 .and_then(|()| writer.write_all(&record.size.to_le_bytes()))
                 .map_err(|error| format!("could not write snapshot entry: {error}"))?;
             match entries
-                .get(&record.relative)
+                .get(record.relative.as_str())
                 .and_then(|entry| entry.modified_ns)
             {
                 Some(value) => writer
@@ -3415,7 +3415,7 @@ fn write_snapshot_manifest(
             if hash_content {
                 writer
                     .write_all(
-                        &entries[&record.relative]
+                        &entries[record.relative.as_str()]
                             .content_hash
                             .expect("hash mode entries have hashes"),
                     )
@@ -3759,7 +3759,7 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
     for (relative, current) in &current_entries {
         let asset_type = classify(Path::new(relative)).as_str();
         let stats = by_type.entry(asset_type).or_default();
-        match old_entries.get(relative) {
+        match old_entries.get(*relative) {
             None => {
                 let size_stats = by_size.entry(size_category(current.size)).or_default();
                 added += 1;
@@ -3786,7 +3786,7 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
         }
     }
     for (relative, previous) in &old_entries {
-        if !current_entries.contains_key(relative) {
+        if !current_entries.contains_key(relative.as_str()) {
             removed += 1;
             removed_bytes += u128::from(previous.size);
             let asset_type = classify(Path::new(relative)).as_str();
@@ -3841,7 +3841,7 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
         )?;
         if !summary_only {
             for (relative, current) in &current_entries {
-                let old = old_entries.get(relative).copied();
+                let old = old_entries.get(*relative).copied();
                 let change = match old {
                     None => "added",
                     Some(previous) if !snapshot_entries_equal(previous, *current, use_hash) => {
@@ -3855,7 +3855,7 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
                 )?;
             }
             for (relative, old) in &old_entries {
-                if !current_entries.contains_key(relative) {
+                if !current_entries.contains_key(relative.as_str()) {
                     write_snapshot_csv_row(
                         &mut stdout,
                         &snapshot_csv_event("removed", relative, Some(*old), None),
@@ -3898,7 +3898,7 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
     } else if json {
         if !summary_only {
             for (relative, current) in &current_entries {
-                let old = old_entries.get(relative);
+                let old = old_entries.get(*relative);
                 let kind = match old {
                     None => "added",
                     Some(previous) if !snapshot_entries_equal(*previous, *current, use_hash) => {
@@ -3921,7 +3921,7 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
                 );
             }
             for (relative, old) in &old_entries {
-                if current_entries.contains_key(relative) {
+                if current_entries.contains_key(relative.as_str()) {
                     continue;
                 }
                 println!(
@@ -3999,7 +3999,7 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
         if !summary_only {
             for (relative, current) in &current_entries {
                 let asset_type = classify(Path::new(relative)).as_str();
-                match old_entries.get(relative) {
+                match old_entries.get(*relative) {
                     None => println!(
                         "  added    {asset_type:<9} {:>10}  {relative}",
                         human_size(current.size)
@@ -4013,7 +4013,7 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
                 }
             }
             for (relative, previous) in &old_entries {
-                if !current_entries.contains_key(relative) {
+                if !current_entries.contains_key(relative.as_str()) {
                     println!(
                         "  removed  {:<9} {:>10}  {relative}",
                         classify(Path::new(relative)).as_str(),
