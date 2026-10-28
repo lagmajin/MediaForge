@@ -1058,10 +1058,17 @@ where
 struct IgnoreRule {
     pattern: IgnorePattern,
     base: Arc<str>,
+    scan_prefix: Arc<str>,
     negated: bool,
     anchored: bool,
     directory_only: bool,
     has_slash: bool,
+}
+
+struct GitIgnoreScope {
+    repository_root: Option<PathBuf>,
+    scan_prefix: Arc<str>,
+    repository_ignore: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug)]
@@ -1093,6 +1100,11 @@ thread_local! {
 }
 
 fn ignored_by_git(root: &Path) -> Result<Vec<IgnoreRule>, String> {
+    let GitIgnoreScope {
+        repository_root,
+        scan_prefix,
+        repository_ignore,
+    } = git_repository_scope(root)?;
     let mut global_rules = Vec::new();
     if let Some(path) = global_ignore_file(root)? {
         let metadata = match fs::metadata(&path) {
@@ -1109,10 +1121,10 @@ fn ignored_by_git(root: &Path) -> Result<Vec<IgnoreRule>, String> {
             let contents = fs::read_to_string(&path).map_err(|error| {
                 format!("cannot read global ignore file {}: {error}", path.display())
             })?;
-            global_rules.extend(contents.lines().filter_map(parse_ignore_rule));
+            global_rules.extend(parse_scoped_ignore_rules(&contents, "", &scan_prefix));
         }
     }
-    if let Some(path) = repository_ignore_file(root)? {
+    if let Some(path) = repository_ignore {
         let contents = match fs::read_to_string(&path) {
             Ok(contents) => Some(contents),
             Err(error) if error.kind() == io::ErrorKind::NotFound => None,
@@ -1124,10 +1136,121 @@ fn ignored_by_git(root: &Path) -> Result<Vec<IgnoreRule>, String> {
             }
         };
         if let Some(contents) = contents {
-            global_rules.extend(contents.lines().filter_map(parse_ignore_rule));
+            global_rules.extend(parse_scoped_ignore_rules(&contents, "", &scan_prefix));
         }
     }
+    if let Some(repository_root) = repository_root {
+        let mut ancestors = Vec::new();
+        let mut directory = root.parent();
+        while let Some(current) = directory {
+            if !current.starts_with(&repository_root) {
+                break;
+            }
+            ancestors.push(current.to_path_buf());
+            if current == repository_root {
+                break;
+            }
+            directory = current.parent();
+        }
+        ancestors.reverse();
+        for directory in ancestors {
+            global_rules = extend_ignore_rules_with_prefix(
+                &repository_root,
+                &directory,
+                &global_rules,
+                &scan_prefix,
+            )?
+            .into_owned();
+        }
+    }
+    if !scan_prefix.is_empty() && global_rules.is_empty() {
+        global_rules.push(IgnoreRule {
+            pattern: IgnorePattern::Literal(String::new()),
+            base: Arc::from("\0"),
+            scan_prefix: Arc::clone(&scan_prefix),
+            negated: false,
+            anchored: true,
+            directory_only: false,
+            has_slash: false,
+        });
+    }
     Ok(extend_ignore_rules(root, root, &global_rules)?.into_owned())
+}
+
+fn git_repository_scope(root: &Path) -> Result<GitIgnoreScope, String> {
+    let output = match Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args([
+            "rev-parse",
+            "--show-toplevel",
+            "--show-prefix",
+            "--git-path",
+            "info/exclude",
+        ])
+        .output()
+    {
+        Ok(output) if output.status.success() => output,
+        Ok(_) => {
+            return Ok(GitIgnoreScope {
+                repository_root: None,
+                scan_prefix: Arc::from(""),
+                repository_ignore: None,
+            });
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            return Ok(GitIgnoreScope {
+                repository_root: None,
+                scan_prefix: Arc::from(""),
+                repository_ignore: None,
+            });
+        }
+        Err(error) => return Err(format!("could not resolve Git repository root: {error}")),
+    };
+    let output = String::from_utf8_lossy(&output.stdout);
+    let mut lines = output.lines();
+    let repository_root = lines
+        .next()
+        .filter(|line| !line.trim().is_empty())
+        .ok_or_else(|| "Git returned an empty repository root".to_owned())?;
+    let prefix = lines.next().unwrap_or_default().trim_matches(['/', '\\']);
+    let ignore_path = lines
+        .next()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(PathBuf::from);
+    let repository_root = fs::canonicalize(repository_root)
+        .map_err(|error| format!("cannot access Git repository root {repository_root}: {error}"))?;
+    if !root.starts_with(&repository_root) {
+        return Err(format!(
+            "scan root {} is outside Git repository {}",
+            root.display(),
+            repository_root.display()
+        ));
+    }
+    let ignore_path = ignore_path.map(|path| {
+        if path.is_absolute() {
+            path
+        } else {
+            root.join(path)
+        }
+    });
+    Ok(GitIgnoreScope {
+        repository_root: Some(repository_root),
+        scan_prefix: Arc::from(prefix),
+        repository_ignore: ignore_path,
+    })
+}
+
+fn parse_scoped_ignore_rules(text: &str, base: &str, scan_prefix: &str) -> Vec<IgnoreRule> {
+    text.lines()
+        .filter_map(parse_ignore_rule)
+        .map(|mut rule| {
+            rule.base = Arc::from(base);
+            rule.scan_prefix = Arc::from(scan_prefix);
+            rule
+        })
+        .collect()
 }
 
 fn global_ignore_file(root: &Path) -> Result<Option<PathBuf>, String> {
@@ -1176,37 +1299,22 @@ fn global_ignore_file(root: &Path) -> Result<Option<PathBuf>, String> {
     Ok(config_root.map(|path| path.join("git").join("ignore")))
 }
 
-fn repository_ignore_file(root: &Path) -> Result<Option<PathBuf>, String> {
-    let output = match Command::new("git")
-        .arg("-C")
-        .arg(root)
-        .args(["rev-parse", "--git-path", "info/exclude"])
-        .output()
-    {
-        Ok(output) if output.status.success() => output,
-        Ok(_) => return Ok(None),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => {
-            return Err(format!("could not locate repository ignore file: {error}"));
-        }
-    };
-    let value = String::from_utf8_lossy(&output.stdout);
-    let value = value.trim();
-    if value.is_empty() {
-        return Ok(None);
-    }
-    let path = PathBuf::from(value);
-    Ok(Some(if path.is_absolute() {
-        path
-    } else {
-        root.join(path)
-    }))
-}
-
 fn extend_ignore_rules<'a>(
     root: &Path,
     directory: &Path,
     inherited: &'a [IgnoreRule],
+) -> Result<Cow<'a, [IgnoreRule]>, String> {
+    let scan_prefix = inherited
+        .first()
+        .map_or("", |rule| rule.scan_prefix.as_ref());
+    extend_ignore_rules_with_prefix(root, directory, inherited, scan_prefix)
+}
+
+fn extend_ignore_rules_with_prefix<'a>(
+    root: &Path,
+    directory: &Path,
+    inherited: &'a [IgnoreRule],
+    scan_prefix: &str,
 ) -> Result<Cow<'a, [IgnoreRule]>, String> {
     let path = directory.join(".gitignore");
     let metadata = match fs::symlink_metadata(&path) {
@@ -1223,15 +1331,21 @@ fn extend_ignore_rules<'a>(
         Ok(text) => text,
         Err(error) => return Err(format!("cannot read {}: {error}", path.display())),
     };
-    let base = directory
+    let local_base = directory
         .strip_prefix(root)
         .map_err(|error| format!("cannot relativize {}: {error}", directory.display()))?
         .to_string_lossy()
         .replace('\\', "/");
+    let base = match (scan_prefix.is_empty(), local_base.is_empty()) {
+        (true, _) => local_base,
+        (false, true) => scan_prefix.to_owned(),
+        (false, false) => format!("{scan_prefix}/{local_base}"),
+    };
     let base: Arc<str> = Arc::from(base);
     let mut local_rules = Vec::new();
     for mut rule in text.lines().filter_map(parse_ignore_rule) {
         rule.base = Arc::clone(&base);
+        rule.scan_prefix = Arc::from(scan_prefix);
         local_rules.push(rule);
     }
     if local_rules.is_empty() {
@@ -1275,6 +1389,7 @@ fn parse_ignore_rule(line: &str) -> Option<IgnoreRule> {
     Some(IgnoreRule {
         pattern,
         base: Arc::from(""),
+        scan_prefix: Arc::from(""),
         negated,
         anchored,
         directory_only,
@@ -1634,12 +1749,18 @@ fn is_ignored_path(relative: &str, is_directory: bool, rules: &[IgnoreRule]) -> 
     if rules.is_empty() {
         return false;
     }
+    let scan_prefix = rules[0].scan_prefix.as_ref();
+    let relative = if scan_prefix.is_empty() {
+        Cow::Borrowed(relative)
+    } else {
+        Cow::Owned(format!("{scan_prefix}/{relative}"))
+    };
     GLOB_MATCH_SCRATCH.with(|scratch| {
         let mut scratch = scratch.borrow_mut();
         rules
             .iter()
             .rev()
-            .find(|rule| rule_matches_path(rule, relative, is_directory, &mut scratch))
+            .find(|rule| rule_matches_path(rule, &relative, is_directory, &mut scratch))
             .is_some_and(|rule| !rule.negated)
     })
 }
