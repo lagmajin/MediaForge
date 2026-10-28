@@ -888,6 +888,99 @@ fn project_file_kind(path: &str) -> Option<&'static str> {
     }
 }
 
+fn json_top_level_string_field(contents: &str, field: &str) -> Option<String> {
+    let bytes = contents.as_bytes();
+    let mut index = if contents.starts_with('\u{feff}') {
+        3
+    } else {
+        0
+    };
+    while bytes.get(index).is_some_and(u8::is_ascii_whitespace) {
+        index += 1;
+    }
+    if bytes.get(index) != Some(&b'{') {
+        return None;
+    }
+
+    let mut object_depth = 0_usize;
+    let mut array_depth = 0_usize;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'{' => {
+                object_depth += 1;
+                index += 1;
+            }
+            b'}' => {
+                object_depth = object_depth.saturating_sub(1);
+                index += 1;
+            }
+            b'[' => {
+                array_depth += 1;
+                index += 1;
+            }
+            b']' => {
+                array_depth = array_depth.saturating_sub(1);
+                index += 1;
+            }
+            b'"' => {
+                let start = index + 1;
+                index = start;
+                let mut escaped = false;
+                while index < bytes.len() {
+                    match bytes[index] {
+                        b'\\' if !escaped => escaped = true,
+                        b'"' if !escaped => break,
+                        _ => escaped = false,
+                    }
+                    index += 1;
+                }
+                if index == bytes.len() {
+                    return None;
+                }
+                let token = &contents[start..index];
+                let is_top_level_key = object_depth == 1
+                    && array_depth == 0
+                    && !token.contains('\\')
+                    && token == field;
+                index += 1;
+                if is_top_level_key {
+                    while bytes.get(index).is_some_and(u8::is_ascii_whitespace) {
+                        index += 1;
+                    }
+                    if bytes.get(index) != Some(&b':') {
+                        continue;
+                    }
+                    index += 1;
+                    while bytes.get(index).is_some_and(u8::is_ascii_whitespace) {
+                        index += 1;
+                    }
+                    if bytes.get(index) != Some(&b'"') {
+                        continue;
+                    }
+                    let value_start = index + 1;
+                    index = value_start;
+                    let mut escaped = false;
+                    while index < bytes.len() {
+                        match bytes[index] {
+                            b'\\' if !escaped => escaped = true,
+                            b'"' if !escaped => break,
+                            _ => escaped = false,
+                        }
+                        index += 1;
+                    }
+                    if index == bytes.len() {
+                        return None;
+                    }
+                    let value = &contents[value_start..index];
+                    return (!value.contains('\\')).then(|| value.to_owned());
+                }
+            }
+            _ => index += 1,
+        }
+    }
+    None
+}
+
 fn run_project(args: &[String]) -> Result<(), String> {
     let mut json = false;
     let mut path = None;
@@ -950,7 +1043,7 @@ fn run_project(args: &[String]) -> Result<(), String> {
             entry.map_err(|error| format!("cannot read entry in {}: {error}", root.display()))
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let mut unreal_files = Vec::new();
+    let mut unreal_files = Vec::<(String, Option<String>)>::new();
     for entry in &root_entries {
         let file_type = entry.file_type().map_err(|error| {
             format!(
@@ -964,10 +1057,18 @@ fn run_project(args: &[String]) -> Result<(), String> {
                 .extension()
                 .is_some_and(|extension| extension.eq_ignore_ascii_case("uproject"))
         {
-            unreal_files.push(entry.file_name().to_string_lossy().into_owned());
+            let project_file = entry.file_name().to_string_lossy().into_owned();
+            let contents = fs::read_to_string(entry.path()).map_err(|error| {
+                format!(
+                    "cannot read Unreal project descriptor {}: {error}",
+                    entry.path().display()
+                )
+            })?;
+            let association = json_top_level_string_field(&contents, "EngineAssociation");
+            unreal_files.push((project_file, association));
         }
     }
-    unreal_files.sort_by_key(|name: &String| name.to_lowercase());
+    unreal_files.sort_by_key(|(name, _)| name.to_lowercase());
     if !unreal_files.is_empty() {
         engines.push((
             "Unreal Engine",
@@ -1077,10 +1178,28 @@ fn run_project(args: &[String]) -> Result<(), String> {
             "  \"unreal_project_files\": [{}],",
             unreal_files
                 .iter()
-                .map(|file| json_string(file))
+                .map(|(file, _)| json_string(file))
                 .collect::<Vec<_>>()
                 .join(", ")
         );
+        println!("  \"unreal_engine_associations\": [");
+        for (index, (file, association)) in unreal_files.iter().enumerate() {
+            let comma = if index + 1 == unreal_files.len() {
+                ""
+            } else {
+                ","
+            };
+            println!(
+                "    {{\"project\": {}, \"engine_association\": {}}}{}",
+                json_string(file),
+                association
+                    .as_deref()
+                    .map(json_string)
+                    .unwrap_or_else(|| "null".to_owned()),
+                comma
+            );
+        }
+        println!("  ],");
         println!("  \"missing_required_paths\": [");
         for (index, (engine, missing_path)) in missing.iter().enumerate() {
             let comma = if index + 1 == missing.len() { "" } else { "," };
@@ -1129,8 +1248,12 @@ fn run_project(args: &[String]) -> Result<(), String> {
         if let Some(version) = &unity_version {
             println!("Unity editor version: {version}");
         }
-        for project_file in unreal_files {
-            println!("Unreal project: {project_file}");
+        for (project_file, association) in unreal_files {
+            if let Some(association) = association {
+                println!("Unreal project: {project_file} (EngineAssociation: {association})");
+            } else {
+                println!("Unreal project: {project_file}");
+            }
         }
         if !missing.is_empty() {
             println!("\nMissing expected paths");
