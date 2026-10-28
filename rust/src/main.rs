@@ -2117,37 +2117,30 @@ where
         return Ok(());
     }
     let worker_count = jobs.min(paths.len());
-    let results = (0..paths.len())
-        .map(|_| OnceLock::new())
-        .collect::<Vec<OnceLock<Result<u64, String>>>>();
-    let next = std::sync::atomic::AtomicUsize::new(0);
-    std::thread::scope(|scope| {
-        let handles = (0..worker_count)
-            .map(|_| {
-                scope.spawn(|| {
-                    loop {
-                        let index = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        let Some(relative) = paths.get(index) else {
-                            break;
-                        };
-                        results[index]
-                            .set(sample_signature_for_path(root, relative.as_ref(), size))
-                            .expect("each duplicate sample slot is written once");
-                    }
+    let chunk_size = paths.len().div_ceil(worker_count);
+    let results = std::thread::scope(|scope| {
+        let handles = paths
+            .chunks(chunk_size)
+            .map(|chunk| {
+                scope.spawn(move || {
+                    chunk
+                        .iter()
+                        .map(|relative| sample_signature_for_path(root, relative.as_ref(), size))
+                        .collect::<Vec<_>>()
                 })
             })
             .collect::<Vec<_>>();
-        for handle in handles {
-            handle.join().expect("duplicate sampling worker panicked");
-        }
+        handles
+            .into_iter()
+            .map(|handle| handle.join().expect("duplicate sampling worker panicked"))
+            .collect::<Vec<_>>()
     });
-    for (index, result) in results.into_iter().enumerate() {
-        visit(
-            index,
-            result
-                .into_inner()
-                .expect("every duplicate sample is written"),
-        )?;
+    let mut index = 0;
+    for chunk_results in results {
+        for result in chunk_results {
+            visit(index, result)?;
+            index += 1;
+        }
     }
     Ok(())
 }
