@@ -2104,26 +2104,38 @@ fn sample_signatures<P: AsRef<str> + Sync>(
             .collect();
     }
     let worker_count = jobs.min(paths.len());
+    let results = (0..paths.len())
+        .map(|_| OnceLock::new())
+        .collect::<Vec<OnceLock<Result<u64, String>>>>();
+    let next = std::sync::atomic::AtomicUsize::new(0);
     std::thread::scope(|scope| {
         let handles = (0..worker_count)
-            .map(|worker_index| {
-                let base_size = paths.len() / worker_count;
-                let remainder = paths.len() % worker_count;
-                let start = worker_index * base_size + worker_index.min(remainder);
-                let end = start + base_size + usize::from(worker_index < remainder);
-                scope.spawn(move || {
-                    paths[start..end]
-                        .iter()
-                        .map(|relative| sample_signature_for_path(root, relative.as_ref(), size))
-                        .collect::<Vec<_>>()
+            .map(|_| {
+                scope.spawn(|| {
+                    loop {
+                        let index = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        let Some(relative) = paths.get(index) else {
+                            break;
+                        };
+                        results[index]
+                            .set(sample_signature_for_path(root, relative.as_ref(), size))
+                            .expect("each duplicate sample slot is written once");
+                    }
                 })
             })
             .collect::<Vec<_>>();
-        handles
-            .into_iter()
-            .flat_map(|handle| handle.join().expect("duplicate sampling worker panicked"))
-            .collect::<Vec<_>>()
-    })
+        for handle in handles {
+            handle.join().expect("duplicate sampling worker panicked");
+        }
+    });
+    results
+        .into_iter()
+        .map(|result| {
+            result
+                .into_inner()
+                .expect("every duplicate sample is written")
+        })
+        .collect()
 }
 
 struct VerifiedDuplicateGroup {
