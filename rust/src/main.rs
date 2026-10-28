@@ -1721,7 +1721,7 @@ fn print_json(
                 groups.push((size, count, Vec::<&str>::with_capacity(count)));
             }
         }
-        groups.sort_by_key(|(size, _, _)| *size);
+        groups.sort_unstable_by_key(|(size, _, _)| *size);
     }
     if include_same_size {
         for record in records {
