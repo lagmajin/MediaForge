@@ -8358,7 +8358,16 @@ fn unity_meta_target_exists_in_directory(
     is_real_file(target) || is_real_directory(target)
 }
 
-fn unity_meta_guid(contents: &str) -> Result<Option<String>, ()> {
+fn unity_hex_nibble(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
+}
+
+fn unity_meta_guid(contents: &str) -> Result<Option<[u8; 16]>, ()> {
     let mut guid = None;
     for (index, raw_line) in contents.lines().enumerate() {
         let line = if index == 0 {
@@ -8387,9 +8396,26 @@ fn unity_meta_guid(contents: &str) -> Result<Option<String>, ()> {
         if value.len() != 32 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
             return Err(());
         }
-        guid = Some(value.to_ascii_lowercase());
+        let mut parsed = [0_u8; 16];
+        let bytes = value.as_bytes();
+        for index in 0..16 {
+            let high = unity_hex_nibble(bytes[index * 2]).ok_or(())?;
+            let low = unity_hex_nibble(bytes[index * 2 + 1]).ok_or(())?;
+            parsed[index] = (high << 4) | low;
+        }
+        guid = Some(parsed);
     }
     Ok(guid)
+}
+
+fn unity_guid_string(guid: [u8; 16]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut output = String::with_capacity(32);
+    for byte in guid {
+        output.push(HEX[(byte >> 4) as usize] as char);
+        output.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    output
 }
 
 fn run_unity_meta(args: &[String]) -> Result<(), String> {
@@ -8443,7 +8469,7 @@ fn run_unity_meta(args: &[String]) -> Result<(), String> {
     let mut orphan_meta = Vec::<String>::new();
     let mut missing_guid = Vec::<String>::new();
     let mut invalid_guid = Vec::<String>::new();
-    let mut guid_paths = HashMap::<String, (String, Option<Vec<String>>)>::new();
+    let mut guid_paths = HashMap::<[u8; 16], (String, Option<Vec<String>>)>::new();
     let assets_meta = unity_meta_sidecar(&assets);
     if !is_real_file(&assets_meta) {
         missing_meta_count += 1;
@@ -8617,7 +8643,7 @@ fn run_unity_meta(args: &[String]) -> Result<(), String> {
         .into_iter()
         .filter_map(|(guid, (_, paths))| paths.map(|paths| (guid, paths)))
         .collect::<Vec<_>>();
-    duplicate_guids.sort_unstable_by(|left, right| left.0.cmp(&right.0));
+    duplicate_guids.sort_unstable_by_key(|entry| entry.0);
     for (_, paths) in &mut duplicate_guids {
         paths.sort();
     }
@@ -8702,7 +8728,7 @@ fn run_unity_meta(args: &[String]) -> Result<(), String> {
                     output.write_all(b",")?;
                 }
                 output.write_all(b"{\"guid\":")?;
-                write_json_string(&mut output, guid)?;
+                write_json_string(&mut output, &unity_guid_string(*guid))?;
                 output.write_all(b",\"paths\":[")?;
                 for (path_index, path) in paths.iter().enumerate() {
                     if path_index > 0 {
@@ -8752,7 +8778,7 @@ fn run_unity_meta(args: &[String]) -> Result<(), String> {
             .iter()
             .take(if summary { 0 } else { usize::MAX })
         {
-            println!("  {guid}: {}", paths.join(", "));
+            println!("  {}: {}", unity_guid_string(*guid), paths.join(", "));
         }
         if issue_count == 0 {
             println!("Unity asset metadata and GUIDs are consistent.");
