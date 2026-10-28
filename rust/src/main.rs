@@ -1569,17 +1569,25 @@ fn print_json(
             files.sort_unstable_by(|left, right| compare_paths_case_insensitive(left, right));
         }
     }
-    println!("{{");
-    println!("  \"schema_version\": 1,");
-    println!("  \"root\": {},", json_string(&root.to_string_lossy()));
-    println!("  \"files\": {},", records.len());
-    println!("  \"incomplete\": {},", skipped_paths > 0);
-    println!("  \"skipped_paths\": {skipped_paths},");
-    println!(
+    let stdout = io::stdout();
+    let mut output = io::BufWriter::with_capacity(64 * 1024, stdout.lock());
+    macro_rules! write_scan_json_line {
+        ($($argument:tt)*) => {
+            writeln!(output, $($argument)*)
+                .map_err(|error| format!("could not write scan JSON: {error}"))?;
+        };
+    }
+    write_scan_json_line!("{{");
+    write_scan_json_line!("  \"schema_version\": 1,");
+    write_scan_json_line!("  \"root\": {},", json_string(&root.to_string_lossy()));
+    write_scan_json_line!("  \"files\": {},", records.len());
+    write_scan_json_line!("  \"incomplete\": {},", skipped_paths > 0);
+    write_scan_json_line!("  \"skipped_paths\": {skipped_paths},");
+    write_scan_json_line!(
         "  \"skipped_paths_truncated\": {},",
         skipped_paths > skipped_examples.len()
     );
-    println!(
+    write_scan_json_line!(
         "  \"skipped_path_examples\": [{}],",
         skipped_examples
             .iter()
@@ -1587,7 +1595,7 @@ fn print_json(
             .collect::<Vec<_>>()
             .join(",")
     );
-    println!(
+    write_scan_json_line!(
         "  \"filters\": {},",
         scan_filters_json(
             kind_filter,
@@ -1603,17 +1611,17 @@ fn print_json(
             strict
         )
     );
-    println!("  \"largest_limit\": {largest_limit},");
-    println!("  \"same_size_candidates_included\": {include_same_size},");
-    println!("  \"total_bytes\": {},", total_bytes);
-    println!(
+    write_scan_json_line!("  \"largest_limit\": {largest_limit},");
+    write_scan_json_line!("  \"same_size_candidates_included\": {include_same_size},");
+    write_scan_json_line!("  \"total_bytes\": {},", total_bytes);
+    write_scan_json_line!(
         "  \"total_size\": {},",
         json_string(&human_size_wide(total_bytes))
     );
-    println!("  \"by_type\": {{");
+    write_scan_json_line!("  \"by_type\": {{");
     for (index, (kind, (count, bytes))) in by_type.iter().enumerate() {
         let comma = if index + 1 == by_type.len() { "" } else { "," };
-        println!(
+        write_scan_json_line!(
             "    {}: {{\"files\": {}, \"bytes\": {}, \"size\": {}}}{}",
             json_string(kind),
             count,
@@ -1622,7 +1630,7 @@ fn print_json(
             comma
         );
     }
-    println!("  }},\n  \"extensions\": {{");
+    write_scan_json_line!("  }},\n  \"extensions\": {{");
     let mut ext_sorted: Vec<_> = extensions.iter().collect();
     ext_sorted.sort_by(|a, b| b.1.0.cmp(&a.1.0).then_with(|| a.0.cmp(b.0)));
     for (index, (extension, (count, _))) in ext_sorted.iter().enumerate() {
@@ -1631,21 +1639,21 @@ fn print_json(
         } else {
             ","
         };
-        println!("    {}: {}{}", json_string(extension), count, comma);
+        write_scan_json_line!("    {}: {}{}", json_string(extension), count, comma);
     }
-    println!("  }},\n  \"extension_bytes\": {{");
+    write_scan_json_line!("  }},\n  \"extension_bytes\": {{");
     for (index, (extension, (_, bytes))) in extensions.iter().enumerate() {
         let comma = if index + 1 == extensions.len() {
             ""
         } else {
             ","
         };
-        println!("    {}: {}{}", json_string(extension), bytes, comma);
+        write_scan_json_line!("    {}: {}{}", json_string(extension), bytes, comma);
     }
-    println!("  }},\n  \"largest\": [");
+    write_scan_json_line!("  }},\n  \"largest\": [");
     for (index, record) in largest.iter().enumerate() {
         let comma = if index + 1 == largest.len() { "" } else { "," };
-        println!(
+        write_scan_json_line!(
             "    {{\"path\": {}, \"size_bytes\": {}, \"size\": {}, \"type\": {}}}{}",
             json_string(&record.relative),
             record.size,
@@ -1655,9 +1663,7 @@ fn print_json(
         );
     }
     if include_same_size {
-        println!("  ],\n  \"same_size_candidates\": [");
-        let stdout = io::stdout();
-        let mut output = io::BufWriter::new(stdout.lock());
+        write_scan_json_line!("  ],\n  \"same_size_candidates\": [");
         for (index, (size, _, files)) in groups.iter().enumerate() {
             let comma = if index + 1 == groups.len() { "" } else { "," };
             write!(output, "    {{\"size_bytes\": {}, \"files\": [", size)
@@ -1674,17 +1680,17 @@ fn print_json(
             writeln!(output, "]}}{}", comma)
                 .map_err(|error| format!("could not write scan JSON: {error}"))?;
         }
-        output
-            .flush()
-            .map_err(|error| format!("could not write scan JSON: {error}"))?;
-        println!("  ],");
+        write_scan_json_line!("  ],");
     } else {
-        println!("  ],\n  \"same_size_candidates\": null,");
+        write_scan_json_line!("  ],\n  \"same_size_candidates\": null,");
     }
-    println!("  \"same_size_candidate_groups\": {candidate_group_count},");
-    println!(
+    write_scan_json_line!("  \"same_size_candidate_groups\": {candidate_group_count},");
+    write_scan_json_line!(
         "  \"note\": \"Same-size groups are candidates only; byte-for-byte duplicates are not verified.\"\n}}"
     );
+    output
+        .flush()
+        .map_err(|error| format!("could not write scan JSON: {error}"))?;
     Ok(())
 }
 
