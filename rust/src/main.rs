@@ -8465,10 +8465,14 @@ fn unity_meta_sidecar_exists_in_directory(
 
 fn unity_meta_target(path: &Path) -> Option<PathBuf> {
     let file_name = path.file_name()?.to_string_lossy();
-    if !file_name.to_ascii_lowercase().ends_with(".meta") {
+    let suffix_start = file_name.len().checked_sub(".meta".len())?;
+    if !file_name
+        .get(suffix_start..)
+        .is_some_and(|suffix| suffix.eq_ignore_ascii_case(".meta"))
+    {
         return None;
     }
-    let target_name = &file_name[..file_name.len() - ".meta".len()];
+    let target_name = file_name.get(..suffix_start)?;
     (!target_name.is_empty()).then(|| path.with_file_name(target_name))
 }
 
