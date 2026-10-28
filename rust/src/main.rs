@@ -11438,7 +11438,7 @@ fn register_portable_archive_path(
             portable_prefix.push('/');
         }
         actual_prefix_len += component.len();
-        portable_prefix.push_str(&component.to_lowercase());
+        portable_prefix.extend(component.chars().flat_map(char::to_lowercase));
         let is_file = components.peek().is_none();
         match paths.get(portable_prefix.as_str()) {
             Some((existing_index, existing_len, true)) if !is_file => {
