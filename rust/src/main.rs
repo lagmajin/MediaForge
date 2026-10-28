@@ -283,10 +283,7 @@ fn metadata_has_hidden_attribute(metadata: &fs::Metadata) -> bool {
     }
 }
 
-fn is_hidden(path: &Path) -> bool {
-    if is_dot_hidden(path) {
-        return true;
-    }
+fn has_hidden_attribute(path: &Path) -> bool {
     #[cfg(windows)]
     {
         fs::symlink_metadata(path).is_ok_and(|metadata| metadata_has_hidden_attribute(&metadata))
@@ -295,6 +292,10 @@ fn is_hidden(path: &Path) -> bool {
     {
         false
     }
+}
+
+fn is_hidden(path: &Path) -> bool {
+    is_dot_hidden(path) || has_hidden_attribute(path)
 }
 
 fn directory_name_matches(name: &str, candidates: &[&str]) -> bool {
@@ -483,7 +484,7 @@ fn walk_with_skip_dirs_mode_counted(
                             .is_some_and(|value| value.contains(needle))
                     });
                 if directory_name_matches(&name, skip_dirs)
-                    || (!include_hidden && is_hidden(&path))
+                    || (!include_hidden && has_hidden_attribute(&path))
                     || is_ignored_directory(relative, &active_ignored)
                     || filters.exclude_path_contains_lower.iter().any(|needle| {
                         relative_lower
@@ -787,7 +788,7 @@ where
                 let name = entry.file_name();
                 let name = name.to_string_lossy();
                 if directory_name_matches(&name, skip_dirs)
-                    || (!include_hidden && is_hidden(&path))
+                    || (!include_hidden && has_hidden_attribute(&path))
                     || is_ignored_directory(relative, &active_ignored)
                     || filters
                         .excluded_subtree
