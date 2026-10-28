@@ -1227,7 +1227,7 @@ fn fraction_ceil_scaled(fraction: &str, multiplier: u128) -> u128 {
 
 fn print_help() {
     println!(
-        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS]\n  mediaforge dupes [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS]\n  mediaforge probe <FILE> [--compact]\n  mediaforge project [PATH] [--json]\n  mediaforge gitignore [PATH] [--apply]\n  mediaforge organize [PATH] [--by type|extension] [--apply]\n  mediaforge undo [PATH]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--include-hidden] [--include-generated] [--dry-run] [--json]\n  mediaforge --version\n  mediaforge --help"
+        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS]\n  mediaforge dupes [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS]\n  mediaforge probe <FILE> [--compact]\n  mediaforge project [PATH] [--json]\n  mediaforge gitignore [PATH] [--apply]\n  mediaforge organize [PATH] [--by type|extension] [--json] [--apply]\n  mediaforge undo [PATH]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--include-hidden] [--include-generated] [--dry-run] [--json]\n  mediaforge --version\n  mediaforge --help"
     );
 }
 
@@ -2546,6 +2546,7 @@ fn run_organize(args: &[String]) -> Result<(), String> {
     let mut path = None;
     let mut by = "type";
     let mut apply = false;
+    let mut json = false;
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
         match arg.as_str() {
@@ -2558,9 +2559,10 @@ fn run_organize(args: &[String]) -> Result<(), String> {
                 }
             }
             "--apply" => apply = true,
+            "--json" => json = true,
             "--help" | "-h" => {
                 println!(
-                    "Usage: mediaforge organize [PATH] [--by type|extension] [--apply]\n\nPreview an asset organization plan. Files are only moved with --apply; a manifest is written so the move can be undone."
+                    "Usage: mediaforge organize [PATH] [--by type|extension] [--json] [--apply]\n\nPreview an asset organization plan. --json emits the plan and skipped count as JSON. Files are only moved with --apply; a manifest is written so the move can be undone."
                 );
                 return Ok(());
             }
@@ -2647,27 +2649,54 @@ fn run_organize(args: &[String]) -> Result<(), String> {
         });
     }
 
-    println!(
-        "Organize preview by {by}: {} file(s) to move; {skipped} skipped",
-        moves.len()
-    );
-    for movement in moves.iter().take(30) {
-        println!("  {} -> {}", movement.from, movement.to);
-    }
-    if moves.len() > 30 {
-        println!("  ... and {} more", moves.len() - 30);
+    if json {
+        println!(
+            "{{\n  \"root\": {},\n  \"by\": {},\n  \"applied\": {},\n  \"moves\": [",
+            json_string(&root.to_string_lossy()),
+            json_string(by),
+            if apply { "true" } else { "false" }
+        );
+        for (index, movement) in moves.iter().enumerate() {
+            let comma = if index + 1 == moves.len() { "" } else { "," };
+            println!(
+                "    {{\"from\": {}, \"to\": {}}}{}",
+                json_string(&movement.from),
+                json_string(&movement.to),
+                comma
+            );
+        }
+        println!(
+            "  ],\n  \"move_count\": {},\n  \"skipped_count\": {}\n}}",
+            moves.len(),
+            skipped
+        );
+    } else {
+        println!(
+            "Organize preview by {by}: {} file(s) to move; {skipped} skipped",
+            moves.len()
+        );
+        for movement in moves.iter().take(30) {
+            println!("  {} -> {}", movement.from, movement.to);
+        }
+        if moves.len() > 30 {
+            println!("  ... and {} more", moves.len() - 30);
+        }
     }
     if !apply {
         if !moves.is_empty() {
-            println!(
-                "\nPreview only. Re-run with --apply to move files; then use 'mediaforge undo {}' to restore them.",
-                root.display()
-            );
+            if !json {
+                println!(
+                    "\nPreview only. Re-run with --apply to move files; then use 'mediaforge undo {}' to restore them.",
+                    root.display()
+                );
+            }
         }
         return Ok(());
     }
     if moves.is_empty() {
-        println!("No files need moving.");
+        if !json {
+            println!("No files need moving.");
+        }
         return Ok(());
     }
 
@@ -2711,10 +2740,18 @@ fn run_organize(args: &[String]) -> Result<(), String> {
             root.join(ORGANIZE_MANIFEST).display()
         ));
     }
-    println!(
-        "Moved {moved} file(s). Undo manifest: {}",
-        root.join(ORGANIZE_MANIFEST).display()
-    );
+    if json {
+        println!(
+            "{{\"result\": \"applied\", \"moved_count\": {}, \"undo_manifest\": {}}}",
+            moved,
+            json_string(&root.join(ORGANIZE_MANIFEST).to_string_lossy())
+        );
+    } else {
+        println!(
+            "Moved {moved} file(s). Undo manifest: {}",
+            root.join(ORGANIZE_MANIFEST).display()
+        );
+    }
     Ok(())
 }
 
