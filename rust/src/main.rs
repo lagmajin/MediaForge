@@ -282,8 +282,12 @@ fn walk_with_skip_dirs_mode_counted(
     skipped_paths: &mut usize,
     skipped_examples: &mut Vec<String>,
 ) -> Result<(), String> {
-    let mut pending = vec![(current.to_path_buf(), Arc::<[IgnoreRule]>::from(ignored))];
-    while let Some((directory, active_ignored)) = pending.pop() {
+    let mut pending = vec![(
+        current.to_path_buf(),
+        Arc::<[IgnoreRule]>::from(ignored),
+        filters.path_contains_lower.is_empty(),
+    )];
+    while let Some((directory, active_ignored, path_filter_satisfied)) = pending.pop() {
         let entries = match fs::read_dir(&directory) {
             Ok(entries) => entries,
             Err(_) if !strict => {
@@ -333,14 +337,20 @@ fn walk_with_skip_dirs_mode_counted(
                 .unwrap_or(&path)
                 .to_string_lossy()
                 .replace('\\', "/");
-            let relative_lower = if filters.path_contains_lower.is_empty()
-                && filters.exclude_path_contains_lower.is_empty()
+            let relative_lower = if !filters.exclude_path_contains_lower.is_empty()
+                || (!path_filter_satisfied && !filters.path_contains_lower.is_empty())
             {
-                None
-            } else {
                 Some(relative.to_lowercase())
+            } else {
+                None
             };
             if file_type.is_dir() {
+                let child_path_filter_satisfied = path_filter_satisfied
+                    || filters.path_contains_lower.iter().all(|needle| {
+                        relative_lower
+                            .as_ref()
+                            .is_some_and(|value| value.contains(needle))
+                    });
                 if directory_name_matches(&name, skip_dirs)
                     || (!include_hidden && is_hidden(&path))
                     || is_ignored_directory(&relative, &active_ignored)
@@ -357,13 +367,14 @@ fn walk_with_skip_dirs_mode_counted(
                     Cow::Borrowed(_) => Arc::clone(&active_ignored),
                     Cow::Owned(rules) => Arc::from(rules),
                 };
-                pending.push((path, child_ignored));
+                pending.push((path, child_ignored, child_path_filter_satisfied));
             } else if file_type.is_file() && !is_ignored(&relative, &active_ignored) {
                 if filters.exclude_path_contains_lower.iter().any(|needle| {
                     relative_lower
                         .as_ref()
                         .is_some_and(|value| value.contains(needle))
-                }) || (!filters.path_contains_lower.is_empty()
+                }) || (!path_filter_satisfied
+                    && !filters.path_contains_lower.is_empty()
                     && !filters.path_contains_lower.iter().all(|needle| {
                         relative_lower
                             .as_ref()
