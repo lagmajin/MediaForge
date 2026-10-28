@@ -500,6 +500,7 @@ struct StrictWalkFilters<'a> {
     max_size: Option<u64>,
     excluded_subtree: Option<&'a Path>,
     exclude_path_contains_lower: Option<&'a [String]>,
+    omit_absolute_path: bool,
 }
 
 fn walk_strict_filtered(
@@ -595,7 +596,11 @@ fn walk_strict_filtered(
                 }
                 records.push(FileRecord {
                     relative,
-                    path: path.clone(),
+                    path: if filters.omit_absolute_path {
+                        PathBuf::new()
+                    } else {
+                        path.clone()
+                    },
                     size,
                     modified: metadata.modified().ok(),
                     kind,
@@ -2029,6 +2034,7 @@ fn run_dupes(args: &[String]) -> Result<(), String> {
         max_size,
         excluded_subtree: None,
         exclude_path_contains_lower: Some(&exclude_path_contains_lower),
+        omit_absolute_path: true,
     };
     walk_strict_filtered(
         &root,
@@ -4292,6 +4298,7 @@ fn run_probe_dir(args: &[String]) -> Result<(), String> {
         max_size,
         excluded_subtree: None,
         exclude_path_contains_lower: None,
+        omit_absolute_path: false,
     };
     walk_strict_filtered(
         &root,
@@ -9981,6 +9988,7 @@ fn run_pack(args: &[String]) -> Result<(), String> {
         max_size,
         excluded_subtree: None,
         exclude_path_contains_lower: Some(&exclude_path_contains_lower),
+        omit_absolute_path: false,
     };
     walk_strict_filtered(
         &root,
