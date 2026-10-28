@@ -12622,19 +12622,36 @@ fn run_pack(args: &[String]) -> Result<(), String> {
         .iter()
         .map(|record| output_path_collision_key(&record.path))
         .collect::<HashSet<_>>();
-    let mut sidecars_by_directory = HashMap::<PathBuf, HashMap<String, Option<String>>>::new();
+    records.sort_unstable_by(|left, right| {
+        left.path
+            .parent()
+            .cmp(&right.path.parent())
+            .then_with(|| left.relative.cmp(&right.relative))
+    });
     let mut ignore_rules_by_directory =
         HashMap::<PathBuf, Arc<[IgnoreRule]>>::from([(PathBuf::new(), Arc::from(ignored.clone()))]);
     let mut unity_sidecars = Vec::<PackFileRecord>::new();
-    for record in &records {
-        let Some(asset_name) = record.path.file_name().and_then(|name| name.to_str()) else {
-            continue;
-        };
-        if strip_ascii_case_insensitive_suffix(asset_name, ".meta").is_some() {
-            continue;
+    let mut group_start = 0;
+    while group_start < records.len() {
+        let parent = records[group_start]
+            .path
+            .parent()
+            .unwrap_or(Path::new("."))
+            .to_path_buf();
+        let mut group_end = group_start + 1;
+        while group_end < records.len()
+            && records[group_end].path.parent().unwrap_or(Path::new(".")) == parent
+        {
+            group_end += 1;
         }
-        let parent = record.path.parent().unwrap_or(Path::new(".")).to_path_buf();
-        if !sidecars_by_directory.contains_key(&parent) {
+        let directory_records = &records[group_start..group_end];
+        if directory_records.iter().any(|record| {
+            record
+                .path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| strip_ascii_case_insensitive_suffix(name, ".meta").is_none())
+        }) {
             let directory = root.join(&parent);
             let entries = fs::read_dir(&directory)
                 .map_err(|error| format!("cannot read directory {}: {error}", directory.display()))?
@@ -12642,83 +12659,92 @@ fn run_pack(args: &[String]) -> Result<(), String> {
                 .map_err(|error| {
                     format!("cannot read directory {}: {error}", directory.display())
                 })?;
-            sidecars_by_directory.insert(parent.clone(), collect_unity_meta_sidecars(&entries));
-        }
-        let sidecar_name = match sidecars_by_directory
-            .get(&parent)
-            .and_then(|sidecars| sidecars.get(&unity_meta_asset_key(asset_name)))
-        {
-            Some(Some(name)) => name,
-            Some(None) => {
-                return Err(format!(
-                    "ambiguous Unity .meta sidecars for {}",
-                    record.relative
-                ));
-            }
-            None => continue,
-        };
-        let relative_path = parent.join(sidecar_name);
-        let path_key = output_path_collision_key(&relative_path);
-        if selected_path_keys.contains(&path_key) {
-            continue;
-        }
-        let relative = relative_path.to_string_lossy().replace('\\', "/");
-        let relative_lower = relative.to_lowercase();
-        if exclude_path_contains_lower
-            .iter()
-            .any(|value| relative_lower.contains(value))
-        {
-            continue;
-        }
-        if !ignore_rules_by_directory.contains_key(&parent) {
-            let mut walked_parent = PathBuf::new();
-            for component in parent.components() {
-                let std::path::Component::Normal(name) = component else {
+            let sidecars_by_name = collect_unity_meta_sidecars(&entries);
+            for record in directory_records {
+                let Some(asset_name) = record.path.file_name().and_then(|name| name.to_str())
+                else {
                     continue;
                 };
-                walked_parent.push(name);
-                if ignore_rules_by_directory.contains_key(&walked_parent) {
+                if strip_ascii_case_insensitive_suffix(asset_name, ".meta").is_some() {
                     continue;
                 }
-                let inherited_path = walked_parent.parent().unwrap_or(Path::new(""));
-                let inherited = ignore_rules_by_directory
-                    .get(inherited_path)
-                    .ok_or_else(|| {
-                        format!(
-                            "cannot resolve ignore rules for {}",
-                            walked_parent.display()
-                        )
-                    })?;
-                let directory = root.join(&walked_parent);
-                let rules = match extend_ignore_rules(&root, &directory, inherited)? {
-                    Cow::Borrowed(_) => Arc::clone(inherited),
-                    Cow::Owned(rules) => Arc::from(rules),
+                let sidecar_name = match sidecars_by_name.get(&unity_meta_asset_key(asset_name)) {
+                    Some(Some(name)) => name,
+                    Some(None) => {
+                        return Err(format!(
+                            "ambiguous Unity .meta sidecars for {}",
+                            record.relative
+                        ));
+                    }
+                    None => continue,
                 };
-                ignore_rules_by_directory.insert(walked_parent.clone(), rules);
+                let relative_path = parent.join(sidecar_name);
+                let path_key = output_path_collision_key(&relative_path);
+                if selected_path_keys.contains(&path_key) {
+                    continue;
+                }
+                let relative = relative_path.to_string_lossy().replace('\\', "/");
+                let relative_lower = relative.to_lowercase();
+                if exclude_path_contains_lower
+                    .iter()
+                    .any(|value| relative_lower.contains(value))
+                {
+                    continue;
+                }
+                if !ignore_rules_by_directory.contains_key(&parent) {
+                    let mut walked_parent = PathBuf::new();
+                    for component in parent.components() {
+                        let std::path::Component::Normal(name) = component else {
+                            continue;
+                        };
+                        walked_parent.push(name);
+                        if ignore_rules_by_directory.contains_key(&walked_parent) {
+                            continue;
+                        }
+                        let inherited_path = walked_parent.parent().unwrap_or(Path::new(""));
+                        let inherited =
+                            ignore_rules_by_directory
+                                .get(inherited_path)
+                                .ok_or_else(|| {
+                                    format!(
+                                        "cannot resolve ignore rules for {}",
+                                        walked_parent.display()
+                                    )
+                                })?;
+                        let directory = root.join(&walked_parent);
+                        let rules = match extend_ignore_rules(&root, &directory, inherited)? {
+                            Cow::Borrowed(_) => Arc::clone(inherited),
+                            Cow::Owned(rules) => Arc::from(rules),
+                        };
+                        ignore_rules_by_directory.insert(walked_parent.clone(), rules);
+                    }
+                }
+                let active_ignored = ignore_rules_by_directory.get(&parent).ok_or_else(|| {
+                    format!("cannot resolve ignore rules for {}", parent.display())
+                })?;
+                if is_ignored(&relative, active_ignored) {
+                    continue;
+                }
+                let sidecar_path = root.join(&relative_path);
+                let metadata = fs::symlink_metadata(&sidecar_path).map_err(|error| {
+                    format!("cannot inspect {}: {error}", sidecar_path.display())
+                })?;
+                if !metadata.is_file()
+                    || metadata.file_type().is_symlink()
+                    || (!include_hidden && metadata_has_hidden_attribute(&metadata))
+                {
+                    continue;
+                }
+                unity_sidecars.push(PackFileRecord {
+                    relative,
+                    path: relative_path,
+                    size: metadata.len(),
+                    modified: metadata.modified().ok(),
+                    kind: Kind::Other,
+                });
             }
         }
-        let active_ignored = ignore_rules_by_directory
-            .get(&parent)
-            .ok_or_else(|| format!("cannot resolve ignore rules for {}", parent.display()))?;
-        if is_ignored(&relative, active_ignored) {
-            continue;
-        }
-        let sidecar_path = root.join(&relative_path);
-        let metadata = fs::symlink_metadata(&sidecar_path)
-            .map_err(|error| format!("cannot inspect {}: {error}", sidecar_path.display()))?;
-        if !metadata.is_file()
-            || metadata.file_type().is_symlink()
-            || (!include_hidden && metadata_has_hidden_attribute(&metadata))
-        {
-            continue;
-        }
-        unity_sidecars.push(PackFileRecord {
-            relative,
-            path: relative_path,
-            size: metadata.len(),
-            modified: metadata.modified().ok(),
-            kind: Kind::Other,
-        });
+        group_start = group_end;
     }
     records.extend(unity_sidecars);
     let mut portable_names = HashMap::<String, (usize, usize, bool)>::with_capacity(records.len());
