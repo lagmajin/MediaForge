@@ -926,6 +926,28 @@ fn print_scan_filter_preview(
     );
 }
 
+fn largest_records(records: &[FileRecord], limit: usize) -> Vec<&FileRecord> {
+    let mut ordered = records
+        .iter()
+        .map(|record| {
+            (
+                (
+                    std::cmp::Reverse(record.size),
+                    record.relative.to_lowercase(),
+                    record.relative.clone(),
+                ),
+                record,
+            )
+        })
+        .collect::<Vec<_>>();
+    if limit < ordered.len() {
+        ordered.select_nth_unstable_by(limit, |left, right| left.0.cmp(&right.0));
+        ordered.truncate(limit);
+    }
+    ordered.sort_unstable_by(|left, right| left.0.cmp(&right.0));
+    ordered.into_iter().map(|(_, record)| record).collect()
+}
+
 fn print_json(
     root: &Path,
     records: &[FileRecord],
@@ -962,14 +984,7 @@ fn print_json(
             size_group.1.push(&record.relative);
         }
     }
-    let mut largest: Vec<_> = records.iter().collect();
-    largest.sort_by_cached_key(|record| {
-        (
-            std::cmp::Reverse(record.size),
-            record.relative.to_lowercase(),
-            record.relative.clone(),
-        )
-    });
+    let largest = largest_records(records, largest_limit);
     let mut groups: Vec<_> = by_size
         .into_iter()
         .filter(|(_, (count, _))| *count > 1)
@@ -1054,12 +1069,8 @@ fn print_json(
         println!("    {}: {}{}", json_string(extension), bytes, comma);
     }
     println!("  }},\n  \"largest\": [");
-    for (index, record) in largest.iter().take(largest_limit).enumerate() {
-        let comma = if index + 1 == largest.len().min(largest_limit) {
-            ""
-        } else {
-            ","
-        };
+    for (index, record) in largest.iter().enumerate() {
+        let comma = if index + 1 == largest.len() { "" } else { "," };
         println!(
             "    {{\"path\": {}, \"size_bytes\": {}, \"size\": {}, \"type\": {}}}{}",
             json_string(&record.relative),
@@ -1109,14 +1120,7 @@ fn print_report(
         entry.1 += u128::from(record.size);
         *by_size.entry(record.size).or_default() += 1;
     }
-    let mut largest: Vec<_> = records.iter().collect();
-    largest.sort_by_cached_key(|record| {
-        (
-            std::cmp::Reverse(record.size),
-            record.relative.to_lowercase(),
-            record.relative.clone(),
-        )
-    });
+    let largest = largest_records(records, largest_limit);
     let candidate_groups = by_size.values().filter(|count| **count > 1).count();
     println!("MediaForge scan: {}", root.display());
     println!("{} files · {}", records.len(), human_size_wide(total_bytes));
@@ -1140,7 +1144,7 @@ fn print_report(
         );
     }
     println!("\nLargest files");
-    for record in largest.iter().take(largest_limit) {
+    for record in &largest {
         println!("  {:>10}  {}", human_size(record.size), record.relative);
     }
     println!("\nSame-size candidate groups: {candidate_groups} (not content-verified)");
