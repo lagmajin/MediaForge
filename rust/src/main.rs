@@ -1208,6 +1208,134 @@ fn remove_organize_manifests(root: &Path) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos", not(windows)))]
+fn move_file_with_hard_link(from: &Path, to: &Path) -> io::Result<()> {
+    fs::hard_link(from, to)?;
+    if let Err(error) = fs::remove_file(from) {
+        match fs::remove_file(to) {
+            Ok(()) => Err(error),
+            Err(rollback_error) => Err(io::Error::other(format!(
+                "could not remove source ({error}) or roll back destination ({rollback_error})"
+            ))),
+        }
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn move_file_no_replace(from: &Path, to: &Path) -> io::Result<()> {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+
+    const AT_FDCWD: i32 = -100;
+    const RENAME_NOREPLACE: u32 = 1;
+
+    unsafe extern "C" {
+        fn renameat2(
+            olddirfd: i32,
+            oldpath: *const std::ffi::c_char,
+            newdirfd: i32,
+            newpath: *const std::ffi::c_char,
+            flags: u32,
+        ) -> i32;
+    }
+
+    let source = CString::new(from.as_os_str().as_bytes())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "source path contains NUL"))?;
+    let destination = CString::new(to.as_os_str().as_bytes()).map_err(|_| {
+        io::Error::new(io::ErrorKind::InvalidInput, "destination path contains NUL")
+    })?;
+    let result = unsafe {
+        renameat2(
+            AT_FDCWD,
+            source.as_ptr(),
+            AT_FDCWD,
+            destination.as_ptr(),
+            RENAME_NOREPLACE,
+        )
+    };
+    if result == 0 {
+        Ok(())
+    } else {
+        let error = io::Error::last_os_error();
+        if matches!(error.raw_os_error(), Some(22 | 38 | 95)) {
+            move_file_with_hard_link(from, to)
+        } else {
+            Err(error)
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn move_file_no_replace(from: &Path, to: &Path) -> io::Result<()> {
+    use std::os::unix::ffi::OsStrExt;
+
+    const RENAME_EXCL: u32 = 0x00000004;
+
+    unsafe extern "C" {
+        fn renamex_np(
+            oldpath: *const std::ffi::c_char,
+            newpath: *const std::ffi::c_char,
+            flags: u32,
+        ) -> i32;
+    }
+
+    let source = std::ffi::CString::new(from.as_os_str().as_bytes())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "source path contains NUL"))?;
+    let destination = std::ffi::CString::new(to.as_os_str().as_bytes()).map_err(|_| {
+        io::Error::new(io::ErrorKind::InvalidInput, "destination path contains NUL")
+    })?;
+    let result = unsafe { renamex_np(source.as_ptr(), destination.as_ptr(), RENAME_EXCL) };
+    if result == 0 {
+        Ok(())
+    } else {
+        let error = io::Error::last_os_error();
+        if error.kind() == io::ErrorKind::Unsupported {
+            move_file_with_hard_link(from, to)
+        } else {
+            Err(error)
+        }
+    }
+}
+
+#[cfg(windows)]
+fn move_file_no_replace(from: &Path, to: &Path) -> io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+
+    const MOVEFILE_WRITE_THROUGH: u32 = 0x8;
+
+    unsafe extern "system" {
+        fn MoveFileExW(
+            existing_file_name: *const u16,
+            new_file_name: *const u16,
+            flags: u32,
+        ) -> i32;
+    }
+
+    let from = from
+        .as_os_str()
+        .encode_wide()
+        .chain(Some(0))
+        .collect::<Vec<_>>();
+    let to = to
+        .as_os_str()
+        .encode_wide()
+        .chain(Some(0))
+        .collect::<Vec<_>>();
+    let result = unsafe { MoveFileExW(from.as_ptr(), to.as_ptr(), MOVEFILE_WRITE_THROUGH) };
+    if result == 0 {
+        Err(io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+fn move_file_no_replace(from: &Path, to: &Path) -> io::Result<()> {
+    move_file_with_hard_link(from, to)
+}
+
 fn read_manifest_u32(cursor: &mut Cursor<&[u8]>) -> Result<u32, String> {
     let mut bytes = [0; 4];
     cursor
@@ -1375,7 +1503,9 @@ fn run_organize(args: &[String]) -> Result<(), String> {
         let parent = to
             .parent()
             .ok_or_else(|| "destination has no parent directory".to_owned())?;
-        if let Err(error) = fs::create_dir_all(parent).and_then(|()| fs::rename(&from, &to)) {
+        if let Err(error) =
+            fs::create_dir_all(parent).and_then(|()| move_file_no_replace(&from, &to))
+        {
             return Err(format!(
                 "moved {moved} file(s) before failure: {error}; recovery manifest remains at {}",
                 root.join(ORGANIZE_MANIFEST).display()
@@ -1429,7 +1559,9 @@ fn run_undo(args: &[String]) -> Result<(), String> {
             let parent = from
                 .parent()
                 .ok_or_else(|| "source has no parent directory".to_owned())?;
-            if let Err(error) = fs::create_dir_all(parent).and_then(|()| fs::rename(&to, &from)) {
+            if let Err(error) =
+                fs::create_dir_all(parent).and_then(|()| move_file_no_replace(&to, &from))
+            {
                 eprintln!("mediaforge: could not restore {}: {error}", movement.from);
                 conflicts += 1;
             } else {
