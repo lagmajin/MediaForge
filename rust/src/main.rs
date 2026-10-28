@@ -5682,7 +5682,7 @@ fn fraction_ceil_scaled(fraction: &str, multiplier: u128) -> u128 {
 
 fn print_help() {
     println!(
-        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge doctor [--json] [--strict]\n  mediaforge scan-config <init|validate|show> [FILE] [--json]\n  mediaforge scan [PATH] [--json|--csv] [--compact] [--csv-info] [--show-filters] [--include-hidden] [--strict] [--no-same-size] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--modified-since UNIX_SECONDS] [--modified-until UNIX_SECONDS] [--modified-within DURATION] [--path-contains TEXT ...] [--exclude-path-contains TEXT ...] [--extension EXTENSIONS ...] [--largest N] [--sort path|size|modified] [--settings FILE]\n  mediaforge dupes [PATH] [--json] [--compact] [--summary] [--include-hidden] [--exclude-path-contains TEXT ...] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--top-groups N] [--jobs N]\n  mediaforge probe <FILE> [--compact] [--summary]\n  mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--type video|audio] [--min-size SIZE] [--max-size SIZE] [--jobs N] [--summary] [--compare] [--compare-summary] [--csv]\n  mediaforge storyboard <VIDEO> --output <IMAGE> [--interval SECONDS] [--columns N] [--rows N] [--width PIXELS]\n  mediaforge scene-detect-dir <PATH> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--summary] [--fps RATE] [--extension EXTENSIONS] [--include-hidden] [--jobs N]\n  mediaforge scene-detect <VIDEO> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--summary] [--format jsonl|csv] [--fps RATE]\n  mediaforge proxy <VIDEO> --output <FILE.mp4> [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge proxy-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET] [--jobs N] [--skip-existing] [--json] [--summary]\n  mediaforge proxy-config init [FILE] [--profile fast|balanced|quality] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge extract-audio <VIDEO> --output <FILE> [--format mp3|wav|flac] [--bitrate RATE] [--stream N]\n  mediaforge extract-audio-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--format mp3|wav|flac] [--bitrate RATE] [--stream N] [--jobs N] [--skip-existing] [--json] [--summary]\n  mediaforge snapshot [PATH] (--output FILE [--overwrite] | --diff FILE [--update]) [--json|--csv] [--compact] [--summary] [--include-hidden] [--include-generated] [--hash] [--jobs N] [--fail-on-change]\n  mediaforge project [PATH] [--json] [--compact] [--no-cache-sizes] [--no-editor-files]\n  mediaforge unity-meta [PROJECT_PATH] [--json] [--compact] [--summary] [--sidecars-only] [--include-hidden]\n  mediaforge gitignore [PATH] [--apply] [--json] [--compact]\n  mediaforge organize [PATH] [--by type|extension|size] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--compact] [--summary] [--apply]\n  mediaforge rename [PATH] [--replace OLD NEW] [--prefix TEXT] [--suffix TEXT] [--extension-case keep|lower|upper] [--extension EXTENSIONS] [--include-hidden] [--json] [--compact] [--summary] [--apply]
+        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge doctor [--json] [--strict]\n  mediaforge scan-config <init|validate|show> [FILE] [--json]\n  mediaforge scan [PATH] [--json|--csv] [--compact] [--csv-info] [--show-filters] [--include-hidden] [--strict] [--no-same-size] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--modified-since UNIX_SECONDS] [--modified-until UNIX_SECONDS] [--modified-within DURATION] [--path-contains TEXT ...] [--exclude-path-contains TEXT ...] [--extension EXTENSIONS ...] [--largest N] [--sort path|size|modified] [--settings FILE]\n  mediaforge dupes [PATH] [--json] [--compact] [--summary] [--include-hidden] [--exclude-path-contains TEXT ...] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--top-groups N] [--jobs N]\n  mediaforge probe <FILE> [--compact] [--summary]\n  mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--type video|audio] [--min-size SIZE] [--max-size SIZE] [--jobs N] [--summary] [--compare] [--compare-summary] [--csv]\n  mediaforge storyboard <VIDEO> --output <IMAGE> [--interval SECONDS] [--columns N] [--rows N] [--width PIXELS]\n  mediaforge storyboard-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--format jpg|jpeg|png|webp] [--interval SECONDS] [--columns N] [--rows N] [--width PIXELS] [--include-hidden] [--jobs N] [--skip-existing] [--json] [--summary]\n  mediaforge scene-detect-dir <PATH> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--summary] [--fps RATE] [--extension EXTENSIONS] [--include-hidden] [--jobs N]\n  mediaforge scene-detect <VIDEO> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--summary] [--format jsonl|csv] [--fps RATE]\n  mediaforge proxy <VIDEO> --output <FILE.mp4> [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge proxy-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET] [--jobs N] [--skip-existing] [--json] [--summary]\n  mediaforge proxy-config init [FILE] [--profile fast|balanced|quality] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge extract-audio <VIDEO> --output <FILE> [--format mp3|wav|flac] [--bitrate RATE] [--stream N]\n  mediaforge extract-audio-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--format mp3|wav|flac] [--bitrate RATE] [--stream N] [--jobs N] [--skip-existing] [--json] [--summary]\n  mediaforge snapshot [PATH] (--output FILE [--overwrite] | --diff FILE [--update]) [--json|--csv] [--compact] [--summary] [--include-hidden] [--include-generated] [--hash] [--jobs N] [--fail-on-change]\n  mediaforge project [PATH] [--json] [--compact] [--no-cache-sizes] [--no-editor-files]\n  mediaforge unity-meta [PROJECT_PATH] [--json] [--compact] [--summary] [--sidecars-only] [--include-hidden]\n  mediaforge gitignore [PATH] [--apply] [--json] [--compact]\n  mediaforge organize [PATH] [--by type|extension|size] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--compact] [--summary] [--apply]\n  mediaforge rename [PATH] [--replace OLD NEW] [--prefix TEXT] [--suffix TEXT] [--extension-case keep|lower|upper] [--extension EXTENSIONS] [--include-hidden] [--json] [--compact] [--summary] [--apply]
   mediaforge sequence [PATH] [--prefix NAME] [--start N] [--padding N] [--extension EXTENSIONS] [--include-hidden] [--natural] [--json] [--compact] [--summary] [--apply]\n  mediaforge undo [PATH] [--json] [--compact]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--exclude-path-contains TEXT ...] [--include-hidden] [--include-generated] [--dry-run] [--json] [--compact] [--list]\n  mediaforge --version\n  mediaforge --help"
     );
 }
@@ -6614,6 +6614,66 @@ fn run_storyboard(args: &[String]) -> Result<(), String> {
         ));
     }
 
+    let temporary_size = create_storyboard_image(&input, &output, interval, columns, rows, width)?;
+    println!(
+        "Created storyboard {} ({}; up to {cells} frames)",
+        output.display(),
+        human_size(temporary_size)
+    );
+    Ok(())
+}
+
+fn create_storyboard_image(
+    input: &Path,
+    output: &Path,
+    interval: u64,
+    columns: u32,
+    rows: u32,
+    width: u32,
+) -> Result<u64, String> {
+    let input = fs::canonicalize(input)
+        .map_err(|error| format!("cannot access video {}: {error}", input.display()))?;
+    if !fs::metadata(&input)
+        .map_err(|error| format!("cannot inspect video {}: {error}", input.display()))?
+        .is_file()
+    {
+        return Err(format!("expected a video file: {}", input.display()));
+    }
+    let output_name = output
+        .file_name()
+        .ok_or_else(|| "output must name an image file".to_owned())?;
+    let extension = output
+        .extension()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| "output must use a .jpg, .png, or .webp extension".to_owned())?
+        .to_ascii_lowercase();
+    if !matches!(extension.as_str(), "jpg" | "jpeg" | "png" | "webp") {
+        return Err("storyboard output must use a .jpg, .png, or .webp extension".to_owned());
+    }
+    let parent = output
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let parent = fs::canonicalize(parent).map_err(|error| {
+        format!(
+            "cannot access output directory {}: {error}",
+            parent.display()
+        )
+    })?;
+    let output = parent.join(output_name);
+    if output == input {
+        return Err("storyboard output must differ from the input video".to_owned());
+    }
+    if entry_state(&output)
+        .map_err(|error| format!("cannot inspect output {}: {error}", output.display()))?
+        != EntryState::Missing
+    {
+        return Err(format!(
+            "output already exists; refusing to overwrite: {}",
+            output.display()
+        ));
+    }
+
     let stem = output
         .file_stem()
         .and_then(|value| value.to_str())
@@ -6638,7 +6698,7 @@ fn run_storyboard(args: &[String]) -> Result<(), String> {
             } else {
                 format!("could not start ffmpeg: {error}")
             };
-            return Err(message);
+            return Err(remove_temp_with_context(&temporary, message));
         }
     };
     if !status.success() {
@@ -6671,11 +6731,388 @@ fn run_storyboard(args: &[String]) -> Result<(), String> {
             format!("could not publish storyboard {}: {error}", output.display()),
         )
     })?;
-    println!(
-        "Created storyboard {} ({}; up to {cells} frames)",
-        output.display(),
-        human_size(temporary_size)
-    );
+    Ok(temporary_size)
+}
+
+fn run_storyboard_dir(args: &[String]) -> Result<(), String> {
+    const MAX_STORYBOARD_JOBS: usize = 16;
+    let mut input_root = None;
+    let mut output_root = None;
+    let mut interval = 10_u64;
+    let mut columns = 5_u32;
+    let mut rows = 5_u32;
+    let mut width = 320_u32;
+    let mut extension = "jpg".to_owned();
+    let mut extensions = None;
+    let mut include_hidden = false;
+    let mut skip_existing = false;
+    let mut json = false;
+    let mut summary_only = false;
+    let mut jobs = std::thread::available_parallelism()
+        .map(usize::from)
+        .unwrap_or(1)
+        .min(4);
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--output-dir" => {
+                output_root =
+                    Some(PathBuf::from(iter.next().ok_or_else(|| {
+                        "--output-dir requires a directory".to_owned()
+                    })?));
+            }
+            "--interval" => {
+                let value = iter
+                    .next()
+                    .ok_or_else(|| "--interval requires seconds".to_owned())?;
+                interval = value
+                    .parse::<u64>()
+                    .map_err(|_| format!("invalid interval '{value}'; use a positive integer"))?;
+            }
+            "--columns" => {
+                let value = iter
+                    .next()
+                    .ok_or_else(|| "--columns requires a positive integer".to_owned())?;
+                columns = value
+                    .parse::<u32>()
+                    .map_err(|_| format!("invalid column count '{value}'"))?;
+            }
+            "--rows" => {
+                let value = iter
+                    .next()
+                    .ok_or_else(|| "--rows requires a positive integer".to_owned())?;
+                rows = value
+                    .parse::<u32>()
+                    .map_err(|_| format!("invalid row count '{value}'"))?;
+            }
+            "--width" => {
+                let value = iter
+                    .next()
+                    .ok_or_else(|| "--width requires pixels".to_owned())?;
+                width = value
+                    .parse::<u32>()
+                    .map_err(|_| format!("invalid thumbnail width '{value}'"))?;
+            }
+            "--format" => {
+                extension = iter
+                    .next()
+                    .ok_or_else(|| "--format requires jpg, png, or webp".to_owned())?
+                    .to_ascii_lowercase();
+            }
+            "--extension" => {
+                let value = iter.next().ok_or_else(|| {
+                    "--extension requires a comma-separated extension list".to_owned()
+                })?;
+                extensions = Some(parse_extensions(value)?);
+            }
+            "--jobs" => {
+                let value = iter
+                    .next()
+                    .ok_or_else(|| "--jobs requires a positive integer".to_owned())?;
+                jobs = value
+                    .parse::<usize>()
+                    .map_err(|_| format!("invalid worker count '{value}'"))?;
+                if jobs == 0 || jobs > MAX_STORYBOARD_JOBS {
+                    return Err(format!(
+                        "--jobs must be between 1 and {MAX_STORYBOARD_JOBS}"
+                    ));
+                }
+            }
+            "--include-hidden" => include_hidden = true,
+            "--skip-existing" => skip_existing = true,
+            "--json" => json = true,
+            "--summary" => summary_only = true,
+            "--help" | "-h" => {
+                println!(
+                    "Usage: mediaforge storyboard-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--format jpg|jpeg|png|webp] [--interval SECONDS] [--columns N] [--rows N] [--width PIXELS] [--include-hidden] [--jobs N] [--skip-existing] [--json] [--summary]\n\nCreate one contact sheet for each video while preserving relative folders. Defaults: JPG, 10-second interval, 5 columns, 5 rows, 320-pixel thumbnails. Existing outputs are never overwritten; --skip-existing skips regular output files. --jobs controls concurrent FFmpeg processes (1–16; default 4). --summary requires --json and emits only failures plus final counts."
+                );
+                return Ok(());
+            }
+            value if value.starts_with('-') => return Err(format!("unknown option: {value}")),
+            value => {
+                if input_root.is_some() {
+                    return Err("storyboard-dir accepts one input directory".into());
+                }
+                input_root = Some(PathBuf::from(value));
+            }
+        }
+    }
+    if interval == 0 {
+        return Err("--interval must be greater than zero".to_owned());
+    }
+    if columns == 0 || rows == 0 || width < 16 {
+        return Err(
+            "--columns and --rows must be positive, and --width must be at least 16".into(),
+        );
+    }
+    let cells = columns
+        .checked_mul(rows)
+        .ok_or_else(|| "storyboard grid is too large".to_owned())?;
+    if cells > 100 || width > 640 {
+        return Err("storyboard is limited to 100 frames and 640 pixels per thumbnail".into());
+    }
+    if !matches!(extension.as_str(), "jpg" | "jpeg" | "png" | "webp") {
+        return Err("--format must be jpg, png, or webp".to_owned());
+    }
+    if summary_only && !json {
+        return Err("--summary can only be used with --json".to_owned());
+    }
+    let input_root =
+        input_root.ok_or_else(|| "storyboard-dir requires an input directory".to_owned())?;
+    let output_root =
+        output_root.ok_or_else(|| "storyboard-dir requires --output-dir <DIR>".to_owned())?;
+    let root = fs::canonicalize(&input_root)
+        .map_err(|error| format!("cannot access {}: {error}", input_root.display()))?;
+    if !is_real_directory(&root) {
+        return Err(format!("expected a real directory: {}", root.display()));
+    }
+    let output_root = fs::canonicalize(&output_root).map_err(|error| {
+        format!(
+            "cannot access output directory {}: {error}",
+            output_root.display()
+        )
+    })?;
+    if !is_real_directory(&output_root) {
+        return Err(format!(
+            "expected a real output directory: {}",
+            output_root.display()
+        ));
+    }
+    if root == output_root || root.starts_with(&output_root) {
+        return Err("output directory must differ from and not contain the input directory".into());
+    }
+    let output_inside_root = output_root.starts_with(&root);
+    let ignored = ignored_by_git(&root)?;
+    let kinds = [Kind::Video];
+    let filters = StrictWalkFilters {
+        kinds: Some(&kinds),
+        extensions: extensions.as_ref(),
+        excluded_subtree: output_inside_root.then_some(output_root.as_path()),
+        omit_extension: true,
+        omit_modified_time: true,
+        store_relative_path: true,
+        ..StrictWalkFilters::default()
+    };
+    let mut records = Vec::<FilePathRecord>::new();
+    walk_strict_paths(
+        &root,
+        &root,
+        include_hidden,
+        SKIP_DIRS,
+        &ignored,
+        &filters,
+        &mut records,
+    )?;
+    records.sort_unstable_by(|left, right| left.relative.cmp(&right.relative));
+    if records.is_empty() {
+        if json {
+            println!("{{\"type\":\"summary\",\"succeeded\":0,\"skipped\":0,\"failed\":0}}");
+        } else {
+            println!("No video assets found.");
+        }
+        return Ok(());
+    }
+    let total = records.len();
+    let mut plans = records
+        .iter()
+        .map(|record| {
+            let plan = (|| -> Result<PathBuf, String> {
+                let stem = record
+                    .path
+                    .file_stem()
+                    .and_then(|value| value.to_str())
+                    .ok_or_else(|| "cannot create a storyboard name from this path".to_owned())?;
+                let mut relative = record.path.clone();
+                relative.set_file_name(format!("{stem}-storyboard.{extension}"));
+                Ok(output_root.join(relative))
+            })();
+            match plan {
+                Ok(path) => (Some(path), Ok(())),
+                Err(error) => (None, Err(error)),
+            }
+        })
+        .collect::<Vec<_>>();
+    mark_output_path_collisions(&mut plans, "storyboard");
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let completed = std::sync::atomic::AtomicUsize::new(0);
+    let output_failed = std::sync::atomic::AtomicBool::new(false);
+    let succeeded_count = std::sync::atomic::AtomicUsize::new(0);
+    let skipped_count = std::sync::atomic::AtomicUsize::new(0);
+    let failed_count = std::sync::atomic::AtomicUsize::new(0);
+    let stream_error = std::sync::Mutex::new(None::<String>);
+    let progress_output = std::sync::Mutex::new(());
+    let outcomes = (!json).then(|| {
+        (0..total)
+            .map(|_| std::sync::atomic::AtomicU8::new(0))
+            .collect::<Vec<_>>()
+    });
+    let errors = std::sync::Mutex::new(Vec::<(usize, String)>::new());
+    std::thread::scope(|scope| {
+        for _ in 0..jobs.min(total) {
+            scope.spawn(|| {
+                loop {
+                    if output_failed.load(std::sync::atomic::Ordering::Acquire) {
+                        break;
+                    }
+                    let index = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    if index >= total {
+                        break;
+                    }
+                    let record = &records[index];
+                    let (output, plan) = &plans[index];
+                    if !json {
+                        println!("Storyboarding {}/{}: {}", index + 1, total, record.relative);
+                    }
+                    let result = plan.clone().and_then(|()| {
+                        let output = output
+                            .as_ref()
+                            .expect("successful storyboard plan has output");
+                        let state = entry_state(output).map_err(|error| {
+                            format!("cannot inspect output {}: {error}", output.display())
+                        })?;
+                        if state == EntryState::Other {
+                            return Err(format!(
+                                "output path is occupied by a non-file: {}",
+                                output.display()
+                            ));
+                        }
+                        if skip_existing && state == EntryState::File {
+                            return Ok(false);
+                        }
+                        if let Some(parent) = output.parent() {
+                            fs::create_dir_all(parent).map_err(|error| {
+                                format!(
+                                    "could not create storyboard directory {}: {error}",
+                                    parent.display()
+                                )
+                            })?;
+                        }
+                        create_storyboard_image(
+                            &root.join(&record.path),
+                            output,
+                            interval,
+                            columns,
+                            rows,
+                            width,
+                        )
+                        .map(|_| true)
+                    });
+                    if json {
+                        let _guard = progress_output
+                            .lock()
+                            .expect("storyboard progress output lock poisoned");
+                        let current =
+                            completed.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                        if (!summary_only || result.is_err())
+                            && let Err(error) = print_batch_result_json(
+                                current,
+                                total,
+                                &record.relative,
+                                output.as_deref(),
+                                &result,
+                            )
+                        {
+                            output_failed.store(true, std::sync::atomic::Ordering::Release);
+                            stream_error
+                                .lock()
+                                .expect("storyboard output error lock poisoned")
+                                .get_or_insert(error);
+                            break;
+                        }
+                        match &result {
+                            Ok(true) => {
+                                succeeded_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            }
+                            Ok(false) => {
+                                skipped_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            }
+                            Err(_) => {
+                                failed_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            }
+                        }
+                    } else {
+                        match result {
+                            Ok(true) => outcomes.as_ref().expect("storyboard outcomes allocated")
+                                [index]
+                                .store(1, std::sync::atomic::Ordering::Relaxed),
+                            Ok(false) => outcomes.as_ref().expect("storyboard outcomes allocated")
+                                [index]
+                                .store(2, std::sync::atomic::Ordering::Relaxed),
+                            Err(error) => {
+                                outcomes.as_ref().expect("storyboard outcomes allocated")[index]
+                                    .store(3, std::sync::atomic::Ordering::Relaxed);
+                                errors
+                                    .lock()
+                                    .expect("storyboard error lock poisoned")
+                                    .push((index, error));
+                            }
+                        }
+                    }
+                }
+            });
+        }
+    });
+    if let Some(error) = stream_error
+        .into_inner()
+        .map_err(|_| "storyboard output error lock poisoned".to_owned())?
+    {
+        return Err(error);
+    }
+    let (succeeded, skipped, failed) = if json {
+        (
+            succeeded_count.load(std::sync::atomic::Ordering::Relaxed),
+            skipped_count.load(std::sync::atomic::Ordering::Relaxed),
+            failed_count.load(std::sync::atomic::Ordering::Relaxed),
+        )
+    } else {
+        let mut errors = errors
+            .into_inner()
+            .map_err(|_| "storyboard errors could not be collected".to_owned())?;
+        errors.sort_unstable_by_key(|(index, _)| *index);
+        let mut errors = errors.into_iter().peekable();
+        let mut succeeded = 0;
+        let mut skipped = 0;
+        let mut failed = 0;
+        for (index, outcome) in outcomes
+            .as_ref()
+            .expect("storyboard outcomes allocated")
+            .iter()
+            .enumerate()
+        {
+            match outcome.load(std::sync::atomic::Ordering::Relaxed) {
+                1 => {
+                    succeeded += 1;
+                    if let Some(output) = &plans[index].0 {
+                        println!("Created storyboard {}", output.display());
+                    }
+                }
+                2 => {
+                    skipped += 1;
+                }
+                3 => {
+                    failed += 1;
+                    let (error_index, error) =
+                        errors.next().expect("failed storyboard has an error");
+                    debug_assert_eq!(error_index, index);
+                    eprintln!("mediaforge: {}: {error}", records[index].relative);
+                }
+                _ => unreachable!("storyboard outcome is recorded before workers finish"),
+            }
+        }
+        (succeeded, skipped, failed)
+    };
+    if json {
+        println!(
+            "{{\"type\":\"summary\",\"succeeded\":{succeeded},\"skipped\":{skipped},\"failed\":{failed}}}"
+        );
+    } else {
+        println!(
+            "Storyboard batch finished: {succeeded} succeeded, {skipped} skipped, {failed} failed."
+        );
+    }
+    if failed > 0 {
+        return Err(format!("storyboard generation failed for {failed} file(s)"));
+    }
     Ok(())
 }
 
@@ -13654,6 +14091,7 @@ fn run() -> Result<(), String> {
         Some("probe") => run_probe(&args[1..]),
         Some("probe-dir") => run_probe_dir(&args[1..]),
         Some("storyboard") => run_storyboard(&args[1..]),
+        Some("storyboard-dir") => run_storyboard_dir(&args[1..]),
         Some("scene-detect") => run_scene_detect(&args[1..]),
         Some("scene-detect-dir") => run_scene_detect_dir(&args[1..]),
         Some("proxy") => run_proxy(&args[1..]),
