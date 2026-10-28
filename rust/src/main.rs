@@ -1012,6 +1012,7 @@ const ORGANIZE_MANIFEST: &str = ".mediaforge-undo";
 const ORGANIZE_MAGIC: &[u8; 8] = b"MFORG002";
 const ORGANIZE_MAGIC_V1: &[u8; 8] = b"MFORG001";
 const ORGANIZE_MANIFEST_TEMP: &str = ".mediaforge-undo.tmp";
+const ORGANIZE_COMPLETE_MARKER: &str = ".mediaforge-undo.complete";
 const TAR_BLOCK_SIZE: usize = 512;
 const TAR_OCTAL_MAX: u64 = 0o77777777777;
 
@@ -1112,10 +1113,14 @@ fn reject_symlink_components(root: &Path, relative: &Path) -> Result<(), String>
 fn write_organize_manifest(root: &Path, moves: &[PlannedMove]) -> Result<(), String> {
     let manifest = root.join(ORGANIZE_MANIFEST);
     let temporary = root.join(ORGANIZE_MANIFEST_TEMP);
+    let complete = root.join(ORGANIZE_COMPLETE_MARKER);
     if entry_state(&manifest).map_err(|error| format!("cannot inspect undo manifest: {error}"))?
         != EntryState::Missing
         || entry_state(&temporary)
             .map_err(|error| format!("cannot inspect temporary undo manifest: {error}"))?
+            != EntryState::Missing
+        || entry_state(&complete)
+            .map_err(|error| format!("cannot inspect undo completion marker: {error}"))?
             != EntryState::Missing
     {
         return Err(format!(
@@ -1215,7 +1220,11 @@ fn read_organize_manifest(root: &Path) -> Result<Vec<PlannedMove>, String> {
 }
 
 fn remove_organize_manifests(root: &Path) -> Result<(), String> {
-    for name in [ORGANIZE_MANIFEST_TEMP, ORGANIZE_MANIFEST] {
+    for name in [
+        ORGANIZE_COMPLETE_MARKER,
+        ORGANIZE_MANIFEST_TEMP,
+        ORGANIZE_MANIFEST,
+    ] {
         let path = root.join(name);
         match fs::remove_file(&path) {
             Ok(()) => {}
@@ -1229,6 +1238,28 @@ fn remove_organize_manifests(root: &Path) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+fn organize_is_complete(root: &Path) -> Result<bool, String> {
+    let path = root.join(ORGANIZE_COMPLETE_MARKER);
+    match entry_state(&path)
+        .map_err(|error| format!("cannot inspect undo completion marker: {error}"))?
+    {
+        EntryState::Missing => Ok(false),
+        EntryState::Other => Err("undo completion marker is not a regular file".to_owned()),
+        EntryState::File => Ok(true),
+    }
+}
+
+fn write_organize_complete_marker(root: &Path) -> Result<(), String> {
+    let path = root.join(ORGANIZE_COMPLETE_MARKER);
+    let file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .map_err(|error| format!("cannot create undo completion marker: {error}"))?;
+    file.sync_all()
+        .map_err(|error| format!("could not persist undo completion marker: {error}"))
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos", not(windows)))]
@@ -1542,6 +1573,12 @@ fn run_organize(args: &[String]) -> Result<(), String> {
         }
         moved += 1;
     }
+    if let Err(error) = write_organize_complete_marker(&root) {
+        return Err(format!(
+            "moved {moved} file(s), but could not mark organization complete: {error}; recovery manifest remains at {}",
+            root.join(ORGANIZE_MANIFEST).display()
+        ));
+    }
     println!(
         "Moved {moved} file(s). Undo manifest: {}",
         root.join(ORGANIZE_MANIFEST).display()
@@ -1575,6 +1612,7 @@ fn run_undo(args: &[String]) -> Result<(), String> {
         return Err(format!("expected a directory: {}", root.display()));
     }
     let moves = read_organize_manifest(&root)?;
+    let organize_complete = organize_is_complete(&root)?;
     let mut restored = 0usize;
     let mut conflicts = 0usize;
     for movement in moves.iter().rev() {
@@ -1607,6 +1645,15 @@ fn run_undo(args: &[String]) -> Result<(), String> {
         } else if from_state == EntryState::Missing && to_state == EntryState::Missing {
             eprintln!(
                 "mediaforge: missing both source and organized file: {}",
+                movement.from
+            );
+            conflicts += 1;
+        } else if organize_complete
+            && from_state == EntryState::File
+            && to_state == EntryState::Missing
+        {
+            eprintln!(
+                "mediaforge: conflict; organized file is missing but the original path is occupied: {}",
                 movement.from
             );
             conflicts += 1;
