@@ -1304,6 +1304,586 @@ fn run_scan(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+const SNAPSHOT_MAGIC: &[u8; 8] = b"MFSP\x01\0\0\0";
+const SNAPSHOT_SKIP_DIRS: &[&str] = &[
+    ".git",
+    ".hg",
+    ".svn",
+    "node_modules",
+    "__pycache__",
+    ".venv",
+    "venv",
+    "Library",
+    "Temp",
+    "Obj",
+    "Intermediate",
+    "DerivedDataCache",
+    "Binaries",
+    ".godot",
+    ".import",
+];
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct SnapshotEntry {
+    size: u64,
+    modified_ns: Option<i128>,
+}
+
+fn snapshot_entry(record: &FileRecord) -> SnapshotEntry {
+    let modified_ns =
+        record.modified.map(
+            |modified| match modified.duration_since(std::time::UNIX_EPOCH) {
+                Ok(duration) => i128::try_from(duration.as_nanos()).unwrap_or(i128::MAX),
+                Err(error) => -i128::try_from(error.duration().as_nanos()).unwrap_or(i128::MAX),
+            },
+        );
+    SnapshotEntry {
+        size: record.size,
+        modified_ns,
+    }
+}
+
+fn snapshot_path_is_valid(path: &str) -> bool {
+    !path.is_empty()
+        && !path.contains('\0')
+        && !path.starts_with('/')
+        && !path.contains('\\')
+        && !path
+            .split('/')
+            .next()
+            .is_some_and(|component| component.contains(':'))
+        && path
+            .split('/')
+            .all(|component| !component.is_empty() && component != "." && component != "..")
+}
+
+fn read_snapshot_manifest(
+    path: &Path,
+) -> Result<(bool, bool, BTreeMap<String, SnapshotEntry>), String> {
+    const MAX_ENTRIES: u64 = 10_000_000;
+    const MAX_PATH_BYTES: usize = 1024 * 1024;
+    let file = File::open(path)
+        .map_err(|error| format!("cannot open snapshot {}: {error}", path.display()))?;
+    let mut reader = BufReader::new(file);
+    let mut magic = [0; SNAPSHOT_MAGIC.len()];
+    reader
+        .read_exact(&mut magic)
+        .map_err(|error| format!("cannot read snapshot header: {error}"))?;
+    if &magic != SNAPSHOT_MAGIC {
+        return Err("unrecognized or unsupported snapshot format".to_owned());
+    }
+    let mut flags = [0];
+    reader
+        .read_exact(&mut flags)
+        .map_err(|error| format!("truncated snapshot options: {error}"))?;
+    if flags[0] & !0b11 != 0 {
+        return Err("snapshot contains unsupported option flags".to_owned());
+    }
+    let mut count_bytes = [0; 8];
+    reader
+        .read_exact(&mut count_bytes)
+        .map_err(|error| format!("truncated snapshot count: {error}"))?;
+    let count = u64::from_le_bytes(count_bytes);
+    if count > MAX_ENTRIES {
+        return Err(format!("snapshot contains too many entries ({count})"));
+    }
+    let mut entries = BTreeMap::new();
+    for _ in 0..count {
+        let mut length_bytes = [0; 4];
+        reader
+            .read_exact(&mut length_bytes)
+            .map_err(|error| format!("truncated snapshot path length: {error}"))?;
+        let length = u32::from_le_bytes(length_bytes) as usize;
+        if length == 0 || length > MAX_PATH_BYTES {
+            return Err("snapshot contains an invalid path length".to_owned());
+        }
+        let mut path_bytes = vec![0; length];
+        reader
+            .read_exact(&mut path_bytes)
+            .map_err(|error| format!("truncated snapshot path: {error}"))?;
+        let relative = String::from_utf8(path_bytes)
+            .map_err(|error| format!("snapshot path is not UTF-8: {error}"))?;
+        if !snapshot_path_is_valid(&relative) {
+            return Err(format!(
+                "snapshot contains an unsafe relative path: {relative:?}"
+            ));
+        }
+        let mut size_bytes = [0; 8];
+        reader
+            .read_exact(&mut size_bytes)
+            .map_err(|error| format!("truncated snapshot size: {error}"))?;
+        let mut time_flag = [0];
+        reader
+            .read_exact(&mut time_flag)
+            .map_err(|error| format!("truncated snapshot timestamp: {error}"))?;
+        let modified_ns = match time_flag[0] {
+            0 => None,
+            1 => {
+                let mut time_bytes = [0; 16];
+                reader
+                    .read_exact(&mut time_bytes)
+                    .map_err(|error| format!("truncated snapshot timestamp: {error}"))?;
+                Some(i128::from_le_bytes(time_bytes))
+            }
+            _ => return Err("snapshot contains an invalid timestamp flag".to_owned()),
+        };
+        if entries
+            .insert(
+                relative.clone(),
+                SnapshotEntry {
+                    size: u64::from_le_bytes(size_bytes),
+                    modified_ns,
+                },
+            )
+            .is_some()
+        {
+            return Err(format!("snapshot contains a duplicate path: {relative}"));
+        }
+    }
+    let mut trailing = [0];
+    if reader
+        .read(&mut trailing)
+        .map_err(|error| format!("could not finish reading snapshot: {error}"))?
+        != 0
+    {
+        return Err("snapshot contains trailing data".to_owned());
+    }
+    Ok((flags[0] & 1 != 0, flags[0] & 2 != 0, entries))
+}
+
+fn snapshot_temp_file(parent: &Path) -> Result<(PathBuf, File), String> {
+    let mut attempt = 0_u64;
+    loop {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let candidate = parent.join(format!(
+            ".mediaforge-snapshot-{}-{nonce}-{attempt}.tmp",
+            std::process::id()
+        ));
+        attempt = attempt
+            .checked_add(1)
+            .ok_or_else(|| "could not allocate a temporary snapshot name".to_owned())?;
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&candidate)
+        {
+            Ok(file) => return Ok((candidate, file)),
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(error) => {
+                return Err(format!(
+                    "cannot create a temporary snapshot in {}: {error}",
+                    parent.display()
+                ));
+            }
+        }
+    }
+}
+
+fn write_snapshot_manifest(
+    output: &Path,
+    records: &[FileRecord],
+    include_hidden: bool,
+    include_generated: bool,
+    overwrite: bool,
+) -> Result<(), String> {
+    const MAX_ENTRIES: usize = 10_000_000;
+    const MAX_PATH_BYTES: usize = 1024 * 1024;
+    if records.len() > MAX_ENTRIES {
+        return Err(format!(
+            "snapshot contains too many entries ({})",
+            records.len()
+        ));
+    }
+    for record in records {
+        if !snapshot_path_is_valid(&record.relative) || record.relative.len() > MAX_PATH_BYTES {
+            return Err(format!(
+                "cannot store invalid or oversized snapshot path: {:?}",
+                record.relative
+            ));
+        }
+    }
+    if let Some(duplicate) = records
+        .windows(2)
+        .find(|pair| pair[0].relative == pair[1].relative)
+    {
+        return Err(format!(
+            "multiple files resolve to the same portable path: {}",
+            duplicate[0].relative
+        ));
+    }
+    let parent = output
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let parent = fs::canonicalize(parent).map_err(|error| {
+        format!(
+            "cannot access snapshot directory {}: {error}",
+            parent.display()
+        )
+    })?;
+    let file_name = output
+        .file_name()
+        .ok_or_else(|| "snapshot output must name a file".to_owned())?;
+    let output = parent.join(file_name);
+    match entry_state(&output)
+        .map_err(|error| format!("cannot inspect snapshot output: {error}"))?
+    {
+        EntryState::File if !overwrite => {
+            return Err(format!(
+                "snapshot already exists at {}; pass --overwrite to replace it",
+                output.display()
+            ));
+        }
+        EntryState::Other => {
+            return Err(format!(
+                "snapshot output is not a regular file: {}",
+                output.display()
+            ));
+        }
+        _ => {}
+    }
+    let (temporary, file) = snapshot_temp_file(&parent)?;
+    let write_result = (|| -> Result<(), String> {
+        let mut writer = BufWriter::with_capacity(64 * 1024, file);
+        writer
+            .write_all(SNAPSHOT_MAGIC)
+            .map_err(|error| format!("could not write snapshot header: {error}"))?;
+        let flags = u8::from(include_hidden) | (u8::from(include_generated) << 1);
+        writer
+            .write_all(&[flags])
+            .and_then(|()| writer.write_all(&(records.len() as u64).to_le_bytes()))
+            .map_err(|error| format!("could not write snapshot options: {error}"))?;
+        for record in records {
+            let path = record.relative.as_bytes();
+            let length = u32::try_from(path.len())
+                .map_err(|_| format!("snapshot path is too long: {}", record.relative))?;
+            writer
+                .write_all(&length.to_le_bytes())
+                .and_then(|()| writer.write_all(path))
+                .and_then(|()| writer.write_all(&record.size.to_le_bytes()))
+                .map_err(|error| format!("could not write snapshot entry: {error}"))?;
+            match snapshot_entry(record).modified_ns {
+                Some(value) => writer
+                    .write_all(&[1])
+                    .and_then(|()| writer.write_all(&value.to_le_bytes())),
+                None => writer.write_all(&[0]),
+            }
+            .map_err(|error| format!("could not write snapshot timestamp: {error}"))?;
+        }
+        writer
+            .flush()
+            .and_then(|()| writer.get_ref().sync_all())
+            .map_err(|error| format!("could not finalize snapshot data: {error}"))?;
+        Ok(())
+    })();
+    if let Err(error) = write_result {
+        let cleanup = fs::remove_file(&temporary);
+        return Err(match cleanup {
+            Ok(()) => error,
+            Err(cleanup_error) if cleanup_error.kind() == io::ErrorKind::NotFound => error,
+            Err(cleanup_error) => format!(
+                "{error}; temporary snapshot remains at {}: {cleanup_error}",
+                temporary.display()
+            ),
+        });
+    }
+    let publish = if overwrite {
+        move_file_replace(&temporary, &output)
+    } else {
+        move_file_no_replace(&temporary, &output)
+    };
+    if let Err(error) = publish {
+        let cleanup = fs::remove_file(&temporary);
+        return Err(match cleanup {
+            Ok(()) => format!("could not publish snapshot {}: {error}", output.display()),
+            Err(cleanup_error) if cleanup_error.kind() == io::ErrorKind::NotFound => {
+                format!("could not publish snapshot {}: {error}", output.display())
+            }
+            Err(cleanup_error) => format!(
+                "could not publish snapshot {}: {error}; temporary file remains at {}: {cleanup_error}",
+                output.display(),
+                temporary.display()
+            ),
+        });
+    }
+    Ok(())
+}
+
+fn move_file_replace(from: &Path, to: &Path) -> io::Result<()> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        const MOVEFILE_REPLACE_EXISTING: u32 = 0x1;
+        const MOVEFILE_WRITE_THROUGH: u32 = 0x8;
+        unsafe extern "system" {
+            fn MoveFileExW(
+                existing_file_name: *const u16,
+                new_file_name: *const u16,
+                flags: u32,
+            ) -> i32;
+        }
+        let from = from
+            .as_os_str()
+            .encode_wide()
+            .chain(Some(0))
+            .collect::<Vec<_>>();
+        let to = to
+            .as_os_str()
+            .encode_wide()
+            .chain(Some(0))
+            .collect::<Vec<_>>();
+        let result = unsafe {
+            MoveFileExW(
+                from.as_ptr(),
+                to.as_ptr(),
+                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+            )
+        };
+        if result == 0 {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(())
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        fs::rename(from, to)
+    }
+}
+
+fn read_json_timestamp(value: Option<i128>) -> String {
+    value.map_or("null".to_owned(), |value| value.to_string())
+}
+
+fn run_snapshot(args: &[String]) -> Result<(), String> {
+    let mut path = None;
+    let mut output = None;
+    let mut baseline = None;
+    let mut json = false;
+    let mut overwrite = false;
+    let mut fail_on_change = false;
+    let mut include_hidden = None;
+    let mut include_generated = None;
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--output" | "--save" => {
+                output = Some(PathBuf::from(
+                    iter.next()
+                        .ok_or_else(|| "--output requires a file path".to_owned())?,
+                ));
+            }
+            "--diff" => {
+                baseline =
+                    Some(PathBuf::from(iter.next().ok_or_else(|| {
+                        "--diff requires a snapshot file".to_owned()
+                    })?));
+            }
+            "--json" => json = true,
+            "--overwrite" => overwrite = true,
+            "--fail-on-change" => fail_on_change = true,
+            "--include-hidden" => include_hidden = Some(true),
+            "--include-generated" => include_generated = Some(true),
+            "--help" | "-h" => {
+                println!(
+                    "Usage: mediaforge snapshot [PATH] (--output FILE [--overwrite] | --diff FILE) [--json] [--include-hidden] [--include-generated] [--fail-on-change]\n\nSave or compare a fast project snapshot using relative paths, file sizes, and modification times without hashing file contents. Unity/Unreal/Godot generated cache directories and hidden files are skipped by default. Snapshot files store inclusion settings and can be compared on another supported OS. --fail-on-change applies only to --diff."
+                );
+                return Ok(());
+            }
+            value if value.starts_with('-') => return Err(format!("unknown option: {value}")),
+            value => {
+                if path.is_some() {
+                    return Err("snapshot accepts one directory path".to_owned());
+                }
+                path = Some(PathBuf::from(value));
+            }
+        }
+    }
+    if output.is_some() == baseline.is_some() {
+        return Err("choose exactly one of --output FILE or --diff FILE".to_owned());
+    }
+    if overwrite && baseline.is_some() {
+        return Err("--overwrite can only be used with --output".to_owned());
+    }
+    if fail_on_change && baseline.is_none() {
+        return Err("--fail-on-change can only be used with --diff".to_owned());
+    }
+    let path = path.unwrap_or_else(|| PathBuf::from("."));
+    let root = fs::canonicalize(&path)
+        .map_err(|error| format!("cannot access {}: {error}", path.display()))?;
+    if !root.is_dir() {
+        return Err(format!("expected a directory: {}", root.display()));
+    }
+
+    let mut old_entries = BTreeMap::new();
+    let mut excluded = None;
+    let (use_hidden, use_generated) = if let Some(baseline) = &baseline {
+        let baseline = fs::canonicalize(baseline)
+            .map_err(|error| format!("cannot access snapshot {}: {error}", baseline.display()))?;
+        if !is_real_file(&baseline) {
+            return Err(format!(
+                "snapshot is not a regular file: {}",
+                baseline.display()
+            ));
+        }
+        let (saved_hidden, saved_generated, entries) = read_snapshot_manifest(&baseline)?;
+        if include_hidden.is_some_and(|value| value != saved_hidden)
+            || include_generated.is_some_and(|value| value != saved_generated)
+        {
+            return Err(
+                "snapshot options differ from the baseline; rerun without inclusion overrides or create a matching baseline".to_owned(),
+            );
+        }
+        excluded = Some(baseline);
+        old_entries = entries;
+        (saved_hidden, saved_generated)
+    } else {
+        (
+            include_hidden.unwrap_or(false),
+            include_generated.unwrap_or(false),
+        )
+    };
+    let output_abs = if let Some(output) = &output {
+        let parent = output
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or(Path::new("."));
+        let parent = fs::canonicalize(parent).map_err(|error| {
+            format!(
+                "cannot access snapshot directory {}: {error}",
+                parent.display()
+            )
+        })?;
+        let file_name = output
+            .file_name()
+            .ok_or_else(|| "snapshot output must name a file".to_owned())?;
+        Some(parent.join(file_name))
+    } else {
+        None
+    };
+    if let Some(output) = &output_abs {
+        excluded = Some(output.clone());
+    }
+    let ignored = ignored_by_git(&root)?;
+    let skip_dirs = if use_generated {
+        SKIP_DIRS
+    } else {
+        SNAPSHOT_SKIP_DIRS
+    };
+    let mut records = Vec::new();
+    walk_strict(&root, &root, use_hidden, skip_dirs, &ignored, &mut records)?;
+    if let Some(excluded) = excluded {
+        records.retain(|record| record.path != excluded);
+    }
+    records.sort_by(|left, right| left.relative.cmp(&right.relative));
+    if let Some(output) = output_abs {
+        write_snapshot_manifest(&output, &records, use_hidden, use_generated, overwrite)?;
+        let total_bytes = records
+            .iter()
+            .map(|record| u128::from(record.size))
+            .sum::<u128>();
+        if json {
+            println!(
+                "{{\"type\":\"snapshot\",\"root\":{},\"output\":{},\"files\":{},\"bytes\":{total_bytes},\"include_hidden\":{use_hidden},\"include_generated\":{use_generated}}}",
+                json_string(&root.to_string_lossy()),
+                json_string(&output.to_string_lossy()),
+                records.len()
+            );
+        } else {
+            println!(
+                "Saved snapshot {} ({} files, {})",
+                output.display(),
+                records.len(),
+                human_size_wide(total_bytes)
+            );
+        }
+        return Ok(());
+    }
+
+    let mut current_entries = BTreeMap::new();
+    for record in &records {
+        current_entries.insert(record.relative.clone(), snapshot_entry(record));
+    }
+    let mut added = 0_usize;
+    let mut removed = 0_usize;
+    let mut modified = 0_usize;
+    let mut unchanged = 0_usize;
+    for (relative, current) in &current_entries {
+        match old_entries.get(relative) {
+            None => added += 1,
+            Some(previous) if previous == current => unchanged += 1,
+            Some(_) => modified += 1,
+        }
+    }
+    for relative in old_entries.keys() {
+        if !current_entries.contains_key(relative) {
+            removed += 1;
+        }
+    }
+    let change_count = added + removed + modified;
+    if json {
+        for (relative, current) in &current_entries {
+            let old = old_entries.get(relative);
+            let kind = match old {
+                None => "added",
+                Some(previous) if previous != current => "modified",
+                Some(_) => continue,
+            };
+            println!(
+                "{{\"type\":{kind:?},\"path\":{},\"old_size_bytes\":{},\"new_size_bytes\":{},\"old_modified_unix_ns\":{},\"new_modified_unix_ns\":{}}}",
+                json_string(relative),
+                old.map_or("null".to_owned(), |value| value.size.to_string()),
+                current.size,
+                read_json_timestamp(old.and_then(|value| value.modified_ns)),
+                read_json_timestamp(current.modified_ns)
+            );
+        }
+        for (relative, old) in &old_entries {
+            if current_entries.contains_key(relative) {
+                continue;
+            }
+            println!(
+                "{{\"type\":\"removed\",\"path\":{},\"old_size_bytes\":{},\"new_size_bytes\":null,\"old_modified_unix_ns\":{},\"new_modified_unix_ns\":null}}",
+                json_string(relative),
+                old.size,
+                read_json_timestamp(old.modified_ns)
+            );
+        }
+        println!(
+            "{{\"type\":\"summary\",\"files\":{},\"added\":{added},\"removed\":{removed},\"modified\":{modified},\"unchanged\":{unchanged}}}",
+            records.len()
+        );
+    } else {
+        println!("Snapshot diff: {}", root.display());
+        println!(
+            "Added: {added} · Removed: {removed} · Modified: {modified} · Unchanged: {unchanged}"
+        );
+        for (relative, current) in &current_entries {
+            match old_entries.get(relative) {
+                None => println!("  added    {:>10}  {relative}", human_size(current.size)),
+                Some(previous) if previous != current => println!(
+                    "  modified {:>10} -> {:<10} {relative}",
+                    human_size(previous.size),
+                    human_size(current.size)
+                ),
+                Some(_) => {}
+            }
+        }
+        for (relative, previous) in &old_entries {
+            if !current_entries.contains_key(relative) {
+                println!("  removed  {:>10}  {relative}", human_size(previous.size));
+            }
+        }
+    }
+    if fail_on_change && change_count > 0 {
+        return Err(format!("snapshot found {change_count} change(s)"));
+    }
+    Ok(())
+}
+
 fn parse_size(value: &str) -> Result<u64, String> {
     let normalized = value.trim().to_ascii_lowercase();
     let split = normalized
@@ -1380,7 +1960,7 @@ fn fraction_ceil_scaled(fraction: &str, multiplier: u128) -> u128 {
 
 fn print_help() {
     println!(
-        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json|--csv] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS] [--largest N]\n  mediaforge dupes [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--top-groups N]\n  mediaforge probe <FILE> [--compact] [--summary]\n  mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--type video|audio] [--min-size SIZE] [--max-size SIZE] [--jobs N] [--summary] [--compare] [--csv]\n  mediaforge storyboard <VIDEO> --output <IMAGE> [--interval SECONDS] [--columns N] [--rows N] [--width PIXELS]\n  mediaforge scene-detect-dir <PATH> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--fps RATE] [--extension EXTENSIONS] [--include-hidden] [--jobs N]\n  mediaforge scene-detect <VIDEO> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--format jsonl|csv] [--fps RATE]\n  mediaforge proxy <VIDEO> --output <FILE.mp4> [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge proxy-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET] [--jobs N] [--skip-existing] [--json]\n  mediaforge proxy-config init [FILE] [--profile fast|balanced|quality] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge extract-audio <VIDEO> --output <FILE> [--format mp3|wav|flac] [--bitrate RATE] [--stream N]\n  mediaforge extract-audio-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--format mp3|wav|flac] [--bitrate RATE] [--stream N] [--jobs N] [--skip-existing] [--json]\n  mediaforge project [PATH] [--json]\n  mediaforge unity-meta [PROJECT_PATH] [--json] [--include-hidden]\n  mediaforge gitignore [PATH] [--apply]\n  mediaforge organize [PATH] [--by type|extension|size] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--apply]\n  mediaforge sequence [PATH] [--prefix NAME] [--start N] [--padding N] [--extension EXTENSIONS] [--include-hidden] [--natural] [--json] [--apply]\n  mediaforge undo [PATH] [--json]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--include-hidden] [--include-generated] [--dry-run] [--json] [--list]\n  mediaforge --version\n  mediaforge --help"
+        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json|--csv] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS] [--largest N]\n  mediaforge dupes [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--top-groups N]\n  mediaforge probe <FILE> [--compact] [--summary]\n  mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--type video|audio] [--min-size SIZE] [--max-size SIZE] [--jobs N] [--summary] [--compare] [--csv]\n  mediaforge storyboard <VIDEO> --output <IMAGE> [--interval SECONDS] [--columns N] [--rows N] [--width PIXELS]\n  mediaforge scene-detect-dir <PATH> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--fps RATE] [--extension EXTENSIONS] [--include-hidden] [--jobs N]\n  mediaforge scene-detect <VIDEO> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--format jsonl|csv] [--fps RATE]\n  mediaforge proxy <VIDEO> --output <FILE.mp4> [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge proxy-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET] [--jobs N] [--skip-existing] [--json]\n  mediaforge proxy-config init [FILE] [--profile fast|balanced|quality] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge extract-audio <VIDEO> --output <FILE> [--format mp3|wav|flac] [--bitrate RATE] [--stream N]\n  mediaforge extract-audio-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--format mp3|wav|flac] [--bitrate RATE] [--stream N] [--jobs N] [--skip-existing] [--json]\n  mediaforge snapshot [PATH] (--output FILE [--overwrite] | --diff FILE) [--json] [--include-hidden] [--include-generated] [--fail-on-change]\n  mediaforge project [PATH] [--json]\n  mediaforge unity-meta [PROJECT_PATH] [--json] [--include-hidden]\n  mediaforge gitignore [PATH] [--apply]\n  mediaforge organize [PATH] [--by type|extension|size] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--apply]\n  mediaforge sequence [PATH] [--prefix NAME] [--start N] [--padding N] [--extension EXTENSIONS] [--include-hidden] [--natural] [--json] [--apply]\n  mediaforge undo [PATH] [--json]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--include-hidden] [--include-generated] [--dry-run] [--json] [--list]\n  mediaforge --version\n  mediaforge --help"
     );
 }
 
@@ -7008,6 +7588,7 @@ fn run() -> Result<(), String> {
             Ok(())
         }
         Some("scan") => run_scan(&args[1..]),
+        Some("snapshot") => run_snapshot(&args[1..]),
         Some("dupes") => run_dupes(&args[1..]),
         Some("probe") => run_probe(&args[1..]),
         Some("probe-dir") => run_probe_dir(&args[1..]),

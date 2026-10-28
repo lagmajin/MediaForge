@@ -132,11 +132,15 @@ mediaforge dupes ./Media --type video --max-size 2G --top-groups 20
 mediaforge project ./Game
 mediaforge project ./Game --json
 mediaforge unity-meta ./Game --json
+mediaforge snapshot ./Game --output ./Game.mfs
+mediaforge snapshot ./Game --diff ./Game.mfs --json --fail-on-change
 ```
 
 The read-only inspector recognizes Unity, Unreal Engine, and Godot project markers. It reports missing expected folders and measures known build/cache folders (`Library`, `Intermediate`, `DerivedDataCache`, `.godot`, `.import`, and related folders) without deleting them. For Unreal projects, it also reports the top-level `EngineAssociation` value from each `.uproject` descriptor. For Godot, it reads the `[application]` `config/features` array from `project.godot`. Some folders, such as Unreal's `Saved`, can also contain backups or logs. It also lists Blender, DaVinci Resolve, Premiere Pro, After Effects, and Final Cut Pro XML project files found below the chosen folder; `.gitignore` rules apply, and hidden folders are included unless ignored.
 
 `unity-meta` checks every included file and folder under Unity's `Assets` directory for its matching `.meta` sidecar and reports orphaned `.meta` files. It honors `.gitignore` rules and skips hidden entries by default; `--include-hidden` includes them. The command is read-only, emits JSON with `--json`, and exits with an error status when it finds issues, so it can be used as a local pre-commit check.
+
+`snapshot` stores portable relative paths, file sizes, and modification times in a compact binary manifest, then compares a later scan to report added, removed, and changed files. It skips common Unity/Unreal/Godot generated caches by default, honors `.gitignore`, and records its inclusion settings in the manifest. The baseline can live inside the scanned directory; MediaForge excludes that manifest automatically. Metadata comparison does not hash file contents, so a rewrite that preserves both size and modification time is not detected. Use `--overwrite` to atomically replace a previous baseline after reviewing differences, and `--fail-on-change` to return a nonzero status when a diff contains changes.
 
 ## Generate engine-specific Git ignore patterns
 
