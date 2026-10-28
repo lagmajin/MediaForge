@@ -8241,47 +8241,51 @@ fn run_project(args: &[String]) -> Result<(), String> {
         Some(root_entries),
     )];
     while let Some((directory, active_ignored, preloaded_entries)) = pending.pop() {
-        let mut process_entry = |entry: fs::DirEntry,
-                                 file_type: fs::FileType|
-         -> Result<(), String> {
-            let path = entry.path();
-            if file_type.is_symlink() {
-                return Ok(());
-            }
-            if file_type.is_dir() {
-                let name = entry.file_name();
-                let lossy_name = name.to_string_lossy();
-                let relative = path
-                    .strip_prefix(&root)
-                    .unwrap_or(&path)
-                    .to_string_lossy()
-                    .replace('\\', "/");
-                if !directory_name_matches(&lossy_name, SKIP_DIRS)
-                    && !directory_name_matches(&lossy_name, PROJECT_ARTIFACT_DIRS)
-                    && !is_ignored_directory(&relative, &active_ignored)
-                {
+        let mut process_entry =
+            |entry: fs::DirEntry, file_type: fs::FileType| -> Result<(), String> {
+                let path = entry.path();
+                if file_type.is_symlink() {
+                    return Ok(());
+                }
+                if file_type.is_dir() {
+                    let name = entry.file_name();
+                    let lossy_name = name.to_string_lossy();
+                    if directory_name_matches(&lossy_name, SKIP_DIRS)
+                        || directory_name_matches(&lossy_name, PROJECT_ARTIFACT_DIRS)
+                    {
+                        return Ok(());
+                    }
+                    if !active_ignored.is_empty() {
+                        let relative = path
+                            .strip_prefix(&root)
+                            .unwrap_or(&path)
+                            .to_string_lossy()
+                            .replace('\\', "/");
+                        if is_ignored_directory(&relative, &active_ignored) {
+                            return Ok(());
+                        }
+                    }
                     let child_rules = extend_ignore_rules(&root, &path, active_ignored.as_ref())?;
                     let child_ignored = match child_rules {
                         Cow::Borrowed(_) => Arc::clone(&active_ignored),
                         Cow::Owned(rules) => Arc::from(rules),
                     };
                     pending.push((path, child_ignored, None));
+                } else if file_type.is_file() {
+                    let relative = path
+                        .strip_prefix(&root)
+                        .unwrap_or(&path)
+                        .to_string_lossy()
+                        .replace('\\', "/");
+                    if is_ignored(&relative, &active_ignored) {
+                        return Ok(());
+                    }
+                    if let Some(kind) = project_file_kind(&relative) {
+                        project_files.push((relative, kind));
+                    }
                 }
-            } else if file_type.is_file() {
-                let relative = path
-                    .strip_prefix(&root)
-                    .unwrap_or(&path)
-                    .to_string_lossy()
-                    .replace('\\', "/");
-                if is_ignored(&relative, &active_ignored) {
-                    return Ok(());
-                }
-                if let Some(kind) = project_file_kind(&relative) {
-                    project_files.push((relative, kind));
-                }
-            }
-            Ok(())
-        };
+                Ok(())
+            };
         if let Some(entries) = preloaded_entries {
             for (entry, file_type) in entries {
                 process_entry(entry, file_type)?;
