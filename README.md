@@ -66,7 +66,7 @@ Hidden folders and common generated/dependency directories (`.git`, `node_module
 
 ## Find exact duplicates
 
-`dupes` groups candidates by file size, then compares possible matches byte-for-byte in streaming chunks. It reports reclaimable space without loading entire video files into memory. It never deletes or modifies files.
+`dupes` groups candidates by file size, compares small samples from the beginning, middle, and end to skip obvious non-matches, then verifies remaining candidates byte-for-byte in streaming chunks. It reports reclaimable space without loading entire video files into memory. It never deletes or modifies files.
 
 ```sh
 mediaforge dupes ./Media

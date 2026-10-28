@@ -2,7 +2,7 @@ use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::env;
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, BufRead, BufReader, Cursor, Read, Write};
+use std::io::{self, BufRead, BufReader, Cursor, Read, Seek, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 use std::sync::Arc;
@@ -806,6 +806,32 @@ fn files_identical(left: &Path, right: &Path) -> io::Result<bool> {
     }
 }
 
+fn sample_matches(left: &Path, right: &Path, size: u64) -> io::Result<bool> {
+    const SAMPLE_SIZE: usize = 4096;
+    let mut left = fs::File::open(left)?;
+    let mut right = fs::File::open(right)?;
+    let mut offsets = vec![0_u64];
+    if size > SAMPLE_SIZE as u64 {
+        offsets.push(size / 2 - (SAMPLE_SIZE as u64 / 2));
+        offsets.push(size.saturating_sub(SAMPLE_SIZE as u64));
+    }
+    offsets.sort_unstable();
+    offsets.dedup();
+    let mut left_buffer = vec![0_u8; SAMPLE_SIZE];
+    let mut right_buffer = vec![0_u8; SAMPLE_SIZE];
+    for offset in offsets {
+        left.seek(io::SeekFrom::Start(offset))?;
+        right.seek(io::SeekFrom::Start(offset))?;
+        let count = (size - offset).min(SAMPLE_SIZE as u64) as usize;
+        left.read_exact(&mut left_buffer[..count])?;
+        right.read_exact(&mut right_buffer[..count])?;
+        if left_buffer[..count] != right_buffer[..count] {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
 fn run_dupes(args: &[String]) -> Result<(), String> {
     let mut json = false;
     let mut include_hidden = false;
@@ -862,6 +888,13 @@ fn run_dupes(args: &[String]) -> Result<(), String> {
             let mut matched = false;
             for group in &mut candidates {
                 let representative = root.join(&group[0]);
+                match sample_matches(&representative, &candidate, size) {
+                    Ok(false) => continue,
+                    Ok(true) => {}
+                    Err(error) => {
+                        return Err(format!("could not sample {}: {error}", candidate.display()));
+                    }
+                }
                 match files_identical(&representative, &candidate) {
                     Ok(true) => {
                         group.push(relative.clone());
