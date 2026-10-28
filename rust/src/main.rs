@@ -224,13 +224,14 @@ fn walk_with_skip_dirs_mode_counted(
     records: &mut Vec<FileRecord>,
     strict: bool,
     skipped_paths: &mut usize,
+    skipped_examples: &mut Vec<String>,
 ) -> Result<(), String> {
     let mut pending = vec![(current.to_path_buf(), Arc::<[IgnoreRule]>::from(ignored))];
     while let Some((directory, active_ignored)) = pending.pop() {
         let entries = match fs::read_dir(&directory) {
             Ok(entries) => entries,
             Err(_) if !strict => {
-                *skipped_paths = skipped_paths.saturating_add(1);
+                record_skipped_path(&directory, skipped_paths, skipped_examples);
                 continue;
             }
             Err(error) => {
@@ -244,7 +245,7 @@ fn walk_with_skip_dirs_mode_counted(
             .map(|entry| match entry {
                 Ok(entry) => Ok(entry),
                 Err(_) if !strict => {
-                    *skipped_paths = skipped_paths.saturating_add(1);
+                    record_skipped_path(&directory, skipped_paths, skipped_examples);
                     Err(None)
                 }
                 Err(error) => Err(Some(error)),
@@ -263,7 +264,7 @@ fn walk_with_skip_dirs_mode_counted(
             let file_type = match entry.file_type() {
                 Ok(file_type) => file_type,
                 Err(_) if !strict => {
-                    *skipped_paths = skipped_paths.saturating_add(1);
+                    record_skipped_path(&path, skipped_paths, skipped_examples);
                     continue;
                 }
                 Err(error) => return Err(format!("cannot inspect {}: {error}", path.display())),
@@ -296,7 +297,7 @@ fn walk_with_skip_dirs_mode_counted(
                 let metadata = match entry.metadata() {
                     Ok(metadata) => metadata,
                     Err(_) if !strict => {
-                        *skipped_paths = skipped_paths.saturating_add(1);
+                        record_skipped_path(&path, skipped_paths, skipped_examples);
                         continue;
                     }
                     Err(error) => {
@@ -320,6 +321,14 @@ fn walk_with_skip_dirs_mode_counted(
         }
     }
     Ok(())
+}
+
+fn record_skipped_path(path: &Path, count: &mut usize, examples: &mut Vec<String>) {
+    const MAX_EXAMPLES: usize = 100;
+    *count = count.saturating_add(1);
+    if examples.len() < MAX_EXAMPLES {
+        examples.push(path.to_string_lossy().into_owned());
+    }
 }
 
 fn walk_strict(
@@ -757,7 +766,13 @@ fn json_string(value: &str) -> String {
     out
 }
 
-fn print_json(root: &Path, records: &[FileRecord], largest_limit: usize, skipped_paths: usize) {
+fn print_json(
+    root: &Path,
+    records: &[FileRecord],
+    largest_limit: usize,
+    skipped_paths: usize,
+    skipped_examples: &[String],
+) {
     let mut by_type: BTreeMap<&str, (u64, u128)> = BTreeMap::new();
     let mut extensions: BTreeMap<&str, usize> = BTreeMap::new();
     let mut extension_bytes: BTreeMap<&str, u128> = BTreeMap::new();
@@ -790,6 +805,18 @@ fn print_json(root: &Path, records: &[FileRecord], largest_limit: usize, skipped
     println!("  \"files\": {},", records.len());
     println!("  \"incomplete\": {},", skipped_paths > 0);
     println!("  \"skipped_paths\": {skipped_paths},");
+    println!(
+        "  \"skipped_paths_truncated\": {},",
+        skipped_paths > skipped_examples.len()
+    );
+    println!(
+        "  \"skipped_path_examples\": [{}],",
+        skipped_examples
+            .iter()
+            .map(|path| json_string(path))
+            .collect::<Vec<_>>()
+            .join(",")
+    );
     println!("  \"largest_limit\": {largest_limit},");
     println!("  \"total_bytes\": {},", total_bytes);
     println!(
@@ -864,7 +891,13 @@ fn print_json(root: &Path, records: &[FileRecord], largest_limit: usize, skipped
     );
 }
 
-fn print_report(root: &Path, records: &[FileRecord], largest_limit: usize, skipped_paths: usize) {
+fn print_report(
+    root: &Path,
+    records: &[FileRecord],
+    largest_limit: usize,
+    skipped_paths: usize,
+    skipped_examples: &[String],
+) {
     let total_bytes: u128 = records.iter().map(|record| u128::from(record.size)).sum();
     let mut by_type: BTreeMap<&str, (u64, u128)> = BTreeMap::new();
     let mut by_size: HashMap<u64, usize> = HashMap::new();
@@ -885,6 +918,12 @@ fn print_report(root: &Path, records: &[FileRecord], largest_limit: usize, skipp
     println!("{} files · {}", records.len(), human_size_wide(total_bytes));
     if skipped_paths > 0 {
         println!("Warning: incomplete scan; skipped {skipped_paths} unreadable path(s).");
+        for path in skipped_examples {
+            println!("  skipped: {path}");
+        }
+        if skipped_paths > skipped_examples.len() {
+            println!("  ... and {} more", skipped_paths - skipped_examples.len());
+        }
     }
     println!("\nBy type");
     if by_type.is_empty() {
@@ -1248,7 +1287,7 @@ fn run_scan(args: &[String]) -> Result<(), String> {
             }
             "--help" | "-h" => {
                 println!(
-                    "Usage: mediaforge scan [PATH] [--json|--csv] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS] [--largest N]\n\nSummarize media and game assets in a folder. Permission and file-system errors are skipped; text/JSON report an incomplete-scan warning and CSV writes it to stderr. JSON includes incomplete and skipped_paths fields. --csv emits one row per matched file with path, type, extension, byte size, and modification time in Unix seconds; it always includes all matches. --largest controls how many biggest files are shown (default: 10 in text, 20 in JSON). Defaults to the current directory.\n\nTypes: video, audio, image, model, texture, project, other\nExtensions: comma-separated, case-insensitive (for example exr,tif); use none for files without an extension\nSizes: bytes, KiB/MiB/GiB, or K/M/G (for example 500M); fractional values round up to the next byte"
+                    "Usage: mediaforge scan [PATH] [--json|--csv] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS] [--largest N]\n\nSummarize media and game assets in a folder. Permission and file-system errors are skipped; text/JSON report an incomplete-scan warning and CSV writes it to stderr. JSON includes incomplete, skipped_paths, up to 100 skipped_path_examples, and skipped_paths_truncated fields. --csv emits one row per matched file with path, type, extension, byte size, and modification time in Unix seconds; it always includes all matches. --largest controls how many biggest files are shown (default: 10 in text, 20 in JSON). Defaults to the current directory.\n\nTypes: video, audio, image, model, texture, project, other\nExtensions: comma-separated, case-insensitive (for example exr,tif); use none for files without an extension\nSizes: bytes, KiB/MiB/GiB, or K/M/G (for example 500M); fractional values round up to the next byte"
                 );
                 return Ok(());
             }
@@ -1273,6 +1312,7 @@ fn run_scan(args: &[String]) -> Result<(), String> {
     let ignored = ignored_by_git(&root)?;
     let mut records = Vec::new();
     let mut skipped_paths = 0_usize;
+    let mut skipped_examples = Vec::new();
     walk_with_skip_dirs_mode_counted(
         &root,
         &root,
@@ -1282,6 +1322,7 @@ fn run_scan(args: &[String]) -> Result<(), String> {
         &mut records,
         false,
         &mut skipped_paths,
+        &mut skipped_examples,
     )?;
     if let Some(kind) = kind_filter {
         records.retain(|record| record.kind == kind);
@@ -1296,12 +1337,30 @@ fn run_scan(args: &[String]) -> Result<(), String> {
     if csv {
         if skipped_paths > 0 {
             eprintln!("Warning: incomplete scan; skipped {skipped_paths} unreadable path(s).");
+            for path in &skipped_examples {
+                eprintln!("  skipped: {path}");
+            }
+            if skipped_paths > skipped_examples.len() {
+                eprintln!("  ... and {} more", skipped_paths - skipped_examples.len());
+            }
         }
         print_csv(&records)?;
     } else if json {
-        print_json(&root, &records, largest_limit, skipped_paths);
+        print_json(
+            &root,
+            &records,
+            largest_limit,
+            skipped_paths,
+            &skipped_examples,
+        );
     } else {
-        print_report(&root, &records, largest_limit, skipped_paths);
+        print_report(
+            &root,
+            &records,
+            largest_limit,
+            skipped_paths,
+            &skipped_examples,
+        );
     }
     Ok(())
 }
