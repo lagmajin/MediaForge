@@ -7156,7 +7156,7 @@ fn run_gitignore(args: &[String]) -> Result<(), String> {
             "--json" => json = true,
             "--help" | "-h" => {
                 println!(
-                    "Usage: mediaforge gitignore [PATH] [--apply] [--json] [--json]\n\nPreview engine-specific generated-file patterns for .gitignore. Existing files are only appended to when --apply is supplied. --json emits the result and proposed or applied patterns as one object."
+                    "Usage: mediaforge gitignore [PATH] [--apply] [--json]\n\nPreview engine-specific generated-file patterns for .gitignore. Existing files are only appended to when --apply is supplied. --json emits the result and proposed or applied patterns as one object."
                 );
                 return Ok(());
             }
