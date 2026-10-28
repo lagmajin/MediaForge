@@ -270,6 +270,15 @@ fn is_dot_hidden(path: &Path) -> bool {
         .is_some_and(|name| name.to_string_lossy().starts_with('.'))
 }
 
+fn strip_ascii_case_insensitive_suffix<'a>(value: &'a str, suffix: &str) -> Option<&'a str> {
+    let suffix_start = value.len().checked_sub(suffix.len())?;
+    let prefix = value.get(..suffix_start)?;
+    value
+        .get(suffix_start..)?
+        .eq_ignore_ascii_case(suffix)
+        .then_some(prefix)
+}
+
 fn metadata_has_hidden_attribute(metadata: &fs::Metadata) -> bool {
     #[cfg(windows)]
     {
@@ -8465,14 +8474,7 @@ fn unity_meta_sidecar_exists_in_directory(
 
 fn unity_meta_target(path: &Path) -> Option<PathBuf> {
     let file_name = path.file_name()?.to_string_lossy();
-    let suffix_start = file_name.len().checked_sub(".meta".len())?;
-    if !file_name
-        .get(suffix_start..)
-        .is_some_and(|suffix| suffix.eq_ignore_ascii_case(".meta"))
-    {
-        return None;
-    }
-    let target_name = file_name.get(..suffix_start)?;
+    let target_name = strip_ascii_case_insensitive_suffix(&file_name, ".meta")?;
     (!target_name.is_empty()).then(|| path.with_file_name(target_name))
 }
 
@@ -10243,8 +10245,7 @@ fn run_rename(args: &[String]) -> Result<(), String> {
             skipped += 1;
             continue;
         }
-        if name_text.to_ascii_lowercase().ends_with(".meta") {
-            let asset_name = &name_text[..name_text.len() - ".meta".len()];
+        if let Some(asset_name) = strip_ascii_case_insensitive_suffix(name_text, ".meta") {
             let asset_path = root.join(asset_name);
             match fs::symlink_metadata(&asset_path) {
                 Ok(asset_metadata)
