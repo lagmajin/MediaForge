@@ -1229,7 +1229,15 @@ fn run_probe(args: &[String]) -> Result<(), String> {
     }
     let json = String::from_utf8(output.stdout)
         .map_err(|error| format!("ffprobe returned invalid UTF-8: {error}"))?;
-    println!("{json}");
+    let mut stdout = io::stdout().lock();
+    stdout
+        .write_all(json.as_bytes())
+        .map_err(|error| format!("could not write ffprobe output: {error}"))?;
+    if !json.ends_with('\n') {
+        stdout
+            .write_all(b"\n")
+            .map_err(|error| format!("could not finish ffprobe output: {error}"))?;
+    }
     Ok(())
 }
 
