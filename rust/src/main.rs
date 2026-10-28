@@ -5327,6 +5327,10 @@ fn unity_meta_sidecar(path: &Path) -> PathBuf {
     path.with_file_name(file_name)
 }
 
+fn unity_meta_sidecar_exists(path: &Path) -> bool {
+    is_real_file(&unity_meta_sidecar(path))
+}
+
 fn unity_meta_target(path: &Path) -> Option<PathBuf> {
     let file_name = path.file_name()?.to_string_lossy();
     if !file_name.to_ascii_lowercase().ends_with(".meta") {
@@ -5334,6 +5338,40 @@ fn unity_meta_target(path: &Path) -> Option<PathBuf> {
     }
     let target_name = &file_name[..file_name.len() - ".meta".len()];
     (!target_name.is_empty()).then(|| path.with_file_name(target_name))
+}
+
+fn unity_meta_guid(contents: &str) -> Result<Option<String>, ()> {
+    let mut guid = None;
+    for (index, raw_line) in contents.lines().enumerate() {
+        let line = if index == 0 {
+            raw_line.trim_start_matches('\u{feff}')
+        } else {
+            raw_line
+        };
+        if line.trim_start() != line {
+            continue;
+        }
+        let Some((key, value)) = line.split_once(':') else {
+            continue;
+        };
+        if key.trim() != "guid" {
+            continue;
+        }
+        if guid.is_some() {
+            return Err(());
+        }
+        let value = value.trim();
+        let value = match (value.starts_with('"'), value.ends_with('"')) {
+            (true, true) if value.len() >= 2 => &value[1..value.len() - 1],
+            (false, false) => value,
+            _ => return Err(()),
+        };
+        if value.len() != 32 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Err(());
+        }
+        guid = Some(value.to_ascii_lowercase());
+    }
+    Ok(guid)
 }
 
 fn run_unity_meta(args: &[String]) -> Result<(), String> {
@@ -5346,7 +5384,7 @@ fn run_unity_meta(args: &[String]) -> Result<(), String> {
             "--include-hidden" => include_hidden = true,
             "--help" | "-h" => {
                 println!(
-                    "Usage: mediaforge unity-meta [PROJECT_PATH] [--json] [--include-hidden]\n\nCheck Unity Assets for files or folders without matching .meta files and .meta files without a matching asset. Honors .gitignore by default, follows no symlinks, and never changes files. Exits with an error status when issues are found."
+                    "Usage: mediaforge unity-meta [PROJECT_PATH] [--json] [--include-hidden]\n\nCheck Unity Assets for missing or orphaned .meta files, missing or malformed GUIDs, and duplicate GUID collisions. Honors .gitignore by default, follows no symlinks, and never changes files. Exits with an error status when issues are found."
                 );
                 return Ok(());
             }
@@ -5378,8 +5416,28 @@ fn run_unity_meta(args: &[String]) -> Result<(), String> {
     let mut checked = 1_usize;
     let mut missing_meta = Vec::<String>::new();
     let mut orphan_meta = Vec::<String>::new();
-    if !unity_meta_sidecar(&assets).exists() {
+    let mut missing_guid = Vec::<String>::new();
+    let mut invalid_guid = Vec::<String>::new();
+    let mut guid_paths = BTreeMap::<String, Vec<String>>::new();
+    let assets_meta = unity_meta_sidecar(&assets);
+    if !is_real_file(&assets_meta) {
         missing_meta.push("Assets".to_owned());
+    } else {
+        checked = checked.saturating_add(1);
+        let contents = fs::read_to_string(&assets_meta).map_err(|error| {
+            format!(
+                "cannot read Unity metadata {}: {error}",
+                assets_meta.display()
+            )
+        })?;
+        match unity_meta_guid(&contents) {
+            Ok(Some(guid)) => guid_paths
+                .entry(guid)
+                .or_default()
+                .push("Assets.meta".to_owned()),
+            Ok(None) => missing_guid.push("Assets.meta".to_owned()),
+            Err(()) => invalid_guid.push("Assets.meta".to_owned()),
+        }
     }
     while let Some((directory, active_rules)) = pending.pop() {
         let mut entries = fs::read_dir(&directory)
@@ -5419,7 +5477,7 @@ fn run_unity_meta(args: &[String]) -> Result<(), String> {
                     continue;
                 }
                 checked = checked.saturating_add(1);
-                if !unity_meta_sidecar(&entry_path).exists() {
+                if !unity_meta_sidecar_exists(&entry_path) {
                     missing_meta.push(relative);
                 }
                 let child_rules = extend_ignore_rules(&root, &entry_path, &active_rules)?;
@@ -5436,12 +5494,24 @@ fn run_unity_meta(args: &[String]) -> Result<(), String> {
                 }
                 if let Some(target) = unity_meta_target(&entry_path) {
                     checked = checked.saturating_add(1);
-                    if !target.exists() {
+                    if !is_real_file(&target) && !is_real_directory(&target) {
                         orphan_meta.push(relative);
+                    } else {
+                        let contents = fs::read_to_string(&entry_path).map_err(|error| {
+                            format!(
+                                "cannot read Unity metadata {}: {error}",
+                                entry_path.display()
+                            )
+                        })?;
+                        match unity_meta_guid(&contents) {
+                            Ok(Some(guid)) => guid_paths.entry(guid).or_default().push(relative),
+                            Ok(None) => missing_guid.push(relative),
+                            Err(()) => invalid_guid.push(relative),
+                        }
                     }
                 } else {
                     checked = checked.saturating_add(1);
-                    if !unity_meta_sidecar(&entry_path).exists() {
+                    if !unity_meta_sidecar_exists(&entry_path) {
                         missing_meta.push(relative);
                     }
                 }
@@ -5450,13 +5520,32 @@ fn run_unity_meta(args: &[String]) -> Result<(), String> {
     }
     missing_meta.sort();
     orphan_meta.sort();
-    let issue_count = missing_meta.len() + orphan_meta.len();
+    missing_guid.sort();
+    invalid_guid.sort();
+    let mut duplicate_guids = guid_paths
+        .into_iter()
+        .filter(|(_, paths)| paths.len() > 1)
+        .collect::<Vec<_>>();
+    for (_, paths) in &mut duplicate_guids {
+        paths.sort();
+    }
+    let duplicate_guid_count = duplicate_guids
+        .iter()
+        .map(|(_, paths)| paths.len() - 1)
+        .sum::<usize>();
+    let issue_count = missing_meta.len()
+        + orphan_meta.len()
+        + missing_guid.len()
+        + invalid_guid.len()
+        + duplicate_guid_count;
     if json {
         println!(
-            "{{\"root\":{},\"checked\":{checked},\"missing_meta_count\":{},\"orphan_meta_count\":{},\"missing_meta\":[{}],\"orphan_meta\":[{}]}}",
+            "{{\"root\":{},\"checked\":{checked},\"missing_meta_count\":{},\"orphan_meta_count\":{},\"missing_guid_count\":{},\"invalid_guid_count\":{},\"duplicate_guid_count\":{duplicate_guid_count},\"missing_meta\":[{}],\"orphan_meta\":[{}],\"missing_guid\":[{}],\"invalid_guid\":[{}],\"duplicate_guids\":[{}]}}",
             json_string(&root.to_string_lossy()),
             missing_meta.len(),
             orphan_meta.len(),
+            missing_guid.len(),
+            invalid_guid.len(),
             missing_meta
                 .iter()
                 .map(|path| json_string(path))
@@ -5465,6 +5554,31 @@ fn run_unity_meta(args: &[String]) -> Result<(), String> {
             orphan_meta
                 .iter()
                 .map(|path| json_string(path))
+                .collect::<Vec<_>>()
+                .join(","),
+            missing_guid
+                .iter()
+                .map(|path| json_string(path))
+                .collect::<Vec<_>>()
+                .join(","),
+            invalid_guid
+                .iter()
+                .map(|path| json_string(path))
+                .collect::<Vec<_>>()
+                .join(","),
+            duplicate_guids
+                .iter()
+                .map(|(guid, paths)| {
+                    format!(
+                        "{{\"guid\":{},\"paths\":[{}]}}",
+                        json_string(guid),
+                        paths
+                            .iter()
+                            .map(|path| json_string(path))
+                            .collect::<Vec<_>>()
+                            .join(",")
+                    )
+                })
                 .collect::<Vec<_>>()
                 .join(",")
         );
@@ -5479,8 +5593,20 @@ fn run_unity_meta(args: &[String]) -> Result<(), String> {
         for path in &orphan_meta {
             println!("  orphan: {path}");
         }
+        println!("Missing GUIDs: {}", missing_guid.len());
+        for path in &missing_guid {
+            println!("  no guid: {path}");
+        }
+        println!("Malformed GUIDs: {}", invalid_guid.len());
+        for path in &invalid_guid {
+            println!("  invalid guid: {path}");
+        }
+        println!("Duplicate GUID collisions: {duplicate_guid_count}");
+        for (guid, paths) in &duplicate_guids {
+            println!("  {guid}: {}", paths.join(", "));
+        }
         if issue_count == 0 {
-            println!("Unity asset metadata is consistent.");
+            println!("Unity asset metadata and GUIDs are consistent.");
         }
     }
     if issue_count > 0 {
