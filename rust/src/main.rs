@@ -93,6 +93,10 @@ fn classify(path: &Path) -> Kind {
 }
 
 fn human_size(size: u64) -> String {
+    human_size_wide(u128::from(size))
+}
+
+fn human_size_wide(size: u128) -> String {
     const UNITS: [&str; 5] = ["B", "KiB", "MiB", "GiB", "TiB"];
     let mut value = size as f64;
     for (index, unit) in UNITS.iter().enumerate() {
@@ -419,14 +423,14 @@ fn json_string(value: &str) -> String {
 }
 
 fn print_json(root: &Path, records: &[FileRecord]) {
-    let mut by_type: BTreeMap<&str, (u64, u64)> = BTreeMap::new();
+    let mut by_type: BTreeMap<&str, (u64, u128)> = BTreeMap::new();
     let mut extensions: BTreeMap<&str, usize> = BTreeMap::new();
     let mut by_size: HashMap<u64, Vec<&str>> = HashMap::new();
-    let total_bytes: u64 = records.iter().map(|r| r.size).sum();
+    let total_bytes: u128 = records.iter().map(|record| u128::from(record.size)).sum();
     for record in records {
         let entry = by_type.entry(record.kind.as_str()).or_default();
         entry.0 += 1;
-        entry.1 += record.size;
+        entry.1 += u128::from(record.size);
         *extensions.entry(&record.extension).or_default() += 1;
         by_size
             .entry(record.size)
@@ -450,7 +454,7 @@ fn print_json(root: &Path, records: &[FileRecord]) {
     println!("  \"total_bytes\": {},", total_bytes);
     println!(
         "  \"total_size\": {},",
-        json_string(&human_size(total_bytes))
+        json_string(&human_size_wide(total_bytes))
     );
     println!("  \"by_type\": {{");
     for (index, (kind, (count, bytes))) in by_type.iter().enumerate() {
@@ -460,7 +464,7 @@ fn print_json(root: &Path, records: &[FileRecord]) {
             json_string(kind),
             count,
             bytes,
-            json_string(&human_size(*bytes)),
+            json_string(&human_size_wide(*bytes)),
             comma
         );
     }
@@ -512,13 +516,13 @@ fn print_json(root: &Path, records: &[FileRecord]) {
 }
 
 fn print_report(root: &Path, records: &[FileRecord]) {
-    let total_bytes: u64 = records.iter().map(|r| r.size).sum();
-    let mut by_type: BTreeMap<&str, (u64, u64)> = BTreeMap::new();
+    let total_bytes: u128 = records.iter().map(|record| u128::from(record.size)).sum();
+    let mut by_type: BTreeMap<&str, (u64, u128)> = BTreeMap::new();
     let mut by_size: HashMap<u64, usize> = HashMap::new();
     for record in records {
         let entry = by_type.entry(record.kind.as_str()).or_default();
         entry.0 += 1;
-        entry.1 += record.size;
+        entry.1 += u128::from(record.size);
         *by_size.entry(record.size).or_default() += 1;
     }
     let mut largest: Vec<_> = records.iter().collect();
@@ -529,13 +533,16 @@ fn print_report(root: &Path, records: &[FileRecord]) {
     });
     let candidate_groups = by_size.values().filter(|count| **count > 1).count();
     println!("MediaForge scan: {}", root.display());
-    println!("{} files · {}", records.len(), human_size(total_bytes));
+    println!("{} files · {}", records.len(), human_size_wide(total_bytes));
     println!("\nBy type");
     if by_type.is_empty() {
         println!("  No files found.");
     }
     for (kind, (count, bytes)) in by_type {
-        println!("  {kind:<9} {count:>6} files  {:>10}", human_size(bytes));
+        println!(
+            "  {kind:<9} {count:>6} files  {:>10}",
+            human_size_wide(bytes)
+        );
     }
     println!("\nLargest files");
     for record in largest.iter().take(10) {
@@ -652,9 +659,9 @@ fn run_dupes(args: &[String]) -> Result<(), String> {
     }
 
     let duplicate_files: usize = groups.iter().map(|(_, files)| files.len()).sum();
-    let reclaimable: u64 = groups
+    let reclaimable: u128 = groups
         .iter()
-        .map(|(size, files)| size.saturating_mul(files.len().saturating_sub(1) as u64))
+        .map(|(size, files)| u128::from(*size) * files.len().saturating_sub(1) as u128)
         .sum();
     if json {
         println!(
@@ -677,12 +684,12 @@ fn run_dupes(args: &[String]) -> Result<(), String> {
             "  ],\n  \"duplicate_files\": {},\n  \"reclaimable_bytes\": {},\n  \"reclaimable_size\": {}\n}}",
             duplicate_files,
             reclaimable,
-            json_string(&human_size(reclaimable))
+            json_string(&human_size_wide(reclaimable))
         );
     } else {
         println!(
             "Verified duplicate files: {duplicate_files} · potential reclaim: {}",
-            human_size(reclaimable)
+            human_size_wide(reclaimable)
         );
         if groups.is_empty() {
             println!("No byte-for-byte duplicate groups found.");
