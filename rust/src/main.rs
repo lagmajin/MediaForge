@@ -465,6 +465,15 @@ fn walk_with_skip_dirs_mode_counted(
             if file_type.is_symlink() {
                 return Ok(());
             }
+            if file_type.is_dir() {
+                let name = entry.file_name();
+                let name = name.to_string_lossy();
+                if directory_name_matches(&name, skip_dirs)
+                    || (!include_hidden && has_hidden_attribute(&path))
+                {
+                    return Ok(());
+                }
+            }
             let needs_relative_lower = !filters.exclude_path_contains_lower.is_empty()
                 || (!path_filter_satisfied && !filters.path_contains_lower.is_empty());
             let needs_relative_path =
@@ -483,13 +492,6 @@ fn walk_with_skip_dirs_mode_counted(
                 lowercase_scratch.as_str()
             });
             if file_type.is_dir() {
-                let name = entry.file_name();
-                let name = name.to_string_lossy();
-                if directory_name_matches(&name, skip_dirs)
-                    || (!include_hidden && has_hidden_attribute(&path))
-                {
-                    return Ok(());
-                }
                 if !active_ignored.is_empty()
                     && is_ignored_directory(
                         relative
