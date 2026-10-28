@@ -1009,7 +1009,8 @@ fn run_project(args: &[String]) -> Result<(), String> {
 }
 
 const ORGANIZE_MANIFEST: &str = ".mediaforge-undo";
-const ORGANIZE_MAGIC: &[u8; 8] = b"MFORG002";
+const ORGANIZE_MAGIC: &[u8; 8] = b"MFORG003";
+const ORGANIZE_MAGIC_V2: &[u8; 8] = b"MFORG002";
 const ORGANIZE_MAGIC_V1: &[u8; 8] = b"MFORG001";
 const ORGANIZE_MANIFEST_TEMP: &str = ".mediaforge-undo.tmp";
 const ORGANIZE_COMPLETE_MARKER: &str = ".mediaforge-undo.complete";
@@ -1163,7 +1164,7 @@ fn write_organize_manifest(root: &Path, moves: &[PlannedMove]) -> Result<(), Str
     Ok(())
 }
 
-fn read_organize_manifest(root: &Path) -> Result<Vec<PlannedMove>, String> {
+fn read_organize_manifest(root: &Path) -> Result<(Vec<PlannedMove>, bool), String> {
     let manifest = root.join(ORGANIZE_MANIFEST);
     let temporary = root.join(ORGANIZE_MANIFEST_TEMP);
     let path = match fs::symlink_metadata(&temporary) {
@@ -1184,10 +1185,12 @@ fn read_organize_manifest(root: &Path) -> Result<Vec<PlannedMove>, String> {
     cursor
         .read_exact(&mut magic)
         .map_err(|error| format!("invalid undo manifest header: {error}"))?;
-    let portable = if &magic == ORGANIZE_MAGIC {
-        true
+    let (portable, has_completion_state) = if &magic == ORGANIZE_MAGIC {
+        (true, true)
+    } else if &magic == ORGANIZE_MAGIC_V2 {
+        (true, false)
     } else if &magic == ORGANIZE_MAGIC_V1 {
-        false
+        (false, false)
     } else {
         return Err("unrecognized undo manifest format".to_owned());
     };
@@ -1216,7 +1219,7 @@ fn read_organize_manifest(root: &Path) -> Result<Vec<PlannedMove>, String> {
     if cursor.position() != bytes.len() as u64 {
         return Err("undo manifest contains trailing data".to_owned());
     }
-    Ok(moves)
+    Ok((moves, has_completion_state))
 }
 
 fn remove_organize_manifests(root: &Path) -> Result<(), String> {
@@ -1611,8 +1614,8 @@ fn run_undo(args: &[String]) -> Result<(), String> {
     if !root.is_dir() {
         return Err(format!("expected a directory: {}", root.display()));
     }
-    let moves = read_organize_manifest(&root)?;
-    let organize_complete = organize_is_complete(&root)?;
+    let (moves, has_completion_state) = read_organize_manifest(&root)?;
+    let organize_complete = !has_completion_state || organize_is_complete(&root)?;
     let mut restored = 0usize;
     let mut conflicts = 0usize;
     for movement in moves.iter().rev() {
