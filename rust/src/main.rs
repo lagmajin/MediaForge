@@ -984,10 +984,14 @@ fn json_top_level_string_field(contents: &str, field: &str) -> Option<String> {
 }
 
 fn parse_godot_string_array(value: &str) -> Vec<String> {
-    let Some((_, array)) = value.split_once('(') else {
+    let value = value.trim();
+    let array = value
+        .strip_prefix("PackedStringArray(")
+        .or_else(|| value.strip_prefix("PoolStringArray("));
+    let Some(array) = array else {
         return Vec::new();
     };
-    let mut chars = array.chars().peekable();
+    let mut chars = array.chars();
     let mut values = Vec::new();
     while let Some(character) = chars.next() {
         match character {
@@ -1030,7 +1034,13 @@ fn parse_godot_string_array(value: &str) -> Vec<String> {
 
 fn godot_project_features(contents: &str) -> Vec<String> {
     let mut section = "";
-    for line in contents.lines().map(str::trim) {
+    for (index, raw_line) in contents.lines().enumerate() {
+        let line = raw_line.trim();
+        let line = if index == 0 {
+            line.trim_start_matches('\u{feff}').trim_start()
+        } else {
+            line
+        };
         if line.starts_with('[') && line.ends_with(']') {
             section = &line[1..line.len() - 1];
             continue;
