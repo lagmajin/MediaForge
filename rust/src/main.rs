@@ -372,11 +372,11 @@ fn glob_matches(pattern: &str, value: &str) -> bool {
     matches(&pattern, &value, 0, 0, &mut memo)
 }
 
-fn rule_matches_path(rule: &IgnoreRule, relative: &str) -> bool {
+fn rule_matches_path(rule: &IgnoreRule, relative: &str, target_is_directory: bool) -> bool {
     let parts: Vec<_> = relative.split('/').collect();
     for end in 1..=parts.len() {
         let prefix = parts[..end].join("/");
-        let is_directory = end < parts.len();
+        let is_directory = end < parts.len() || target_is_directory;
         if rule.directory_only && !is_directory {
             continue;
         }
@@ -395,9 +395,17 @@ fn rule_matches_path(rule: &IgnoreRule, relative: &str) -> bool {
 }
 
 fn is_ignored(relative: &str, rules: &[IgnoreRule]) -> bool {
+    is_ignored_path(relative, false, rules)
+}
+
+fn is_ignored_directory(relative: &str, rules: &[IgnoreRule]) -> bool {
+    is_ignored_path(relative, true, rules)
+}
+
+fn is_ignored_path(relative: &str, is_directory: bool, rules: &[IgnoreRule]) -> bool {
     let mut ignored = false;
     for rule in rules {
-        if rule_matches_path(rule, relative) {
+        if rule_matches_path(rule, relative, is_directory) {
             ignored = !rule.negated;
         }
     }
@@ -1311,7 +1319,7 @@ fn run_project(args: &[String]) -> Result<(), String> {
                     .replace('\\', "/");
                 if !SKIP_DIRS.contains(&lossy_name.as_ref())
                     && !PROJECT_ARTIFACT_DIRS.contains(&lossy_name.as_ref())
-                    && !is_ignored(&relative, &ignored)
+                    && !is_ignored_directory(&relative, &ignored)
                 {
                     pending.push(path);
                 }
