@@ -1927,7 +1927,7 @@ fn sample_signature(path: &Path, size: u64) -> io::Result<u64> {
 
 fn sample_signatures(
     root: &Path,
-    paths: &[String],
+    paths: &[Option<String>],
     size: u64,
     jobs: usize,
 ) -> Vec<(usize, Result<u64, String>)> {
@@ -1936,6 +1936,9 @@ fn sample_signatures(
             .iter()
             .enumerate()
             .map(|(index, relative)| {
+                let relative = relative
+                    .as_ref()
+                    .expect("duplicate paths are present before sampling");
                 let path = root.join(relative);
                 (
                     index,
@@ -1954,7 +1957,7 @@ fn sample_signatures(
                     let mut results = Vec::new();
                     loop {
                         let index = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        let Some(relative) = paths.get(index) else {
+                        let Some(relative) = paths.get(index).and_then(Option::as_ref) else {
                             break;
                         };
                         let path = root.join(relative);
@@ -2147,12 +2150,12 @@ fn run_dupes(args: &[String]) -> Result<(), String> {
         &filters,
         &mut records,
     )?;
-    let mut by_size: BTreeMap<u64, Vec<String>> = BTreeMap::new();
+    let mut by_size: BTreeMap<u64, Vec<Option<String>>> = BTreeMap::new();
     for record in records {
         by_size
             .entry(record.size)
             .or_default()
-            .push(record.relative);
+            .push(Some(record.relative));
     }
 
     let retain_group_paths = !summary_only && top_groups != Some(0);
@@ -2161,10 +2164,9 @@ fn run_dupes(args: &[String]) -> Result<(), String> {
     let mut total_groups = 0_usize;
     let mut duplicate_files = 0_usize;
     let mut reclaimable = 0_u128;
-    for (size, paths) in by_size.into_iter().filter(|(_, paths)| paths.len() > 1) {
+    for (size, mut paths) in by_size.into_iter().filter(|(_, paths)| paths.len() > 1) {
         let mut by_sample: HashMap<u64, Vec<VerifiedDuplicateGroup>> = HashMap::new();
         let signatures = sample_signatures(&root, &paths, size, jobs);
-        let mut paths = paths.into_iter().map(Some).collect::<Vec<_>>();
         for (index, signature) in signatures {
             let relative = paths[index]
                 .take()
