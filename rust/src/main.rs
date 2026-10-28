@@ -4817,7 +4817,7 @@ fn summarize_probe_differences(
         "streams[0].channels",
         "streams[0].channel_layout",
     ];
-    let mut values = BTreeMap::<String, BTreeMap<String, Vec<String>>>::new();
+    let mut values = BTreeMap::<String, BTreeMap<String, Vec<usize>>>::new();
     let mut failures = Vec::new();
     let mut successful = 0_usize;
     for (index, success, json_line, probe) in results {
@@ -4842,7 +4842,7 @@ fn summarize_probe_differences(
                 .or_default()
                 .entry(value)
                 .or_default()
-                .push(records[*index].relative.clone());
+                .push(*index);
         }
     }
     let varying: Vec<_> = values
@@ -4870,11 +4870,11 @@ fn summarize_probe_differences(
                     output.write_all(b",")?;
                 }
                 write!(output, "{{\"value\":{value},\"files\":[")?;
-                for (path_index, path) in paths.iter().enumerate() {
+                for (path_index, record_index) in paths.iter().enumerate() {
                     if path_index > 0 {
                         output.write_all(b",")?;
                     }
-                    write_json_string(&mut output, path)?;
+                    write_json_string(&mut output, &records[*record_index].relative)?;
                 }
                 output.write_all(b"]}")?;
             }
