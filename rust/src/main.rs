@@ -10356,7 +10356,7 @@ fn run_pack(args: &[String]) -> Result<(), String> {
             .path
             .strip_prefix(&root)
             .map_err(|error| format!("cannot relativize {}: {error}", record.path.display()))?;
-        let mut components = Vec::new();
+        let mut archive_name = String::with_capacity(relative.as_os_str().len());
         for component in relative.components() {
             let std::path::Component::Normal(part) = component else {
                 return Err(format!("unsafe archive path: {}", relative.display()));
@@ -10365,12 +10365,14 @@ fn run_pack(args: &[String]) -> Result<(), String> {
                 format!("non-UTF-8 path cannot be packed: {}", relative.display())
             })?;
             validate_archive_component(part)?;
-            components.push(part);
+            if !archive_name.is_empty() {
+                archive_name.push('/');
+            }
+            archive_name.push_str(part);
         }
-        if components.is_empty() {
+        if archive_name.is_empty() {
             return Err("cannot archive the input directory itself".to_owned());
         }
-        let archive_name = components.join("/");
         if archive_name.len() > 1024 * 1024 {
             return Err(format!("archive path is too long: {archive_name}"));
         }
