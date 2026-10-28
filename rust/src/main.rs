@@ -1380,7 +1380,7 @@ fn fraction_ceil_scaled(fraction: &str, multiplier: u128) -> u128 {
 
 fn print_help() {
     println!(
-        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json|--csv] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS] [--largest N]\n  mediaforge dupes [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--top-groups N]\n  mediaforge probe <FILE> [--compact] [--summary]\n  mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--type video|audio] [--min-size SIZE] [--max-size SIZE] [--jobs N] [--summary] [--compare]\n  mediaforge storyboard <VIDEO> --output <IMAGE> [--interval SECONDS] [--columns N] [--rows N] [--width PIXELS]\n  mediaforge proxy <VIDEO> --output <FILE.mp4> [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge proxy-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET] [--jobs N] [--skip-existing] [--json]\n  mediaforge proxy-config init [FILE] [--profile fast|balanced|quality] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge extract-audio <VIDEO> --output <FILE> [--format mp3|wav|flac] [--bitrate RATE] [--stream N]\n  mediaforge extract-audio-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--format mp3|wav|flac] [--bitrate RATE] [--stream N] [--jobs N] [--skip-existing] [--json]\n  mediaforge project [PATH] [--json]\n  mediaforge gitignore [PATH] [--apply]\n  mediaforge organize [PATH] [--by type|extension] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--apply]\n  mediaforge sequence [PATH] [--prefix NAME] [--start N] [--padding N] [--extension EXTENSIONS] [--include-hidden] [--natural] [--json] [--apply]\n  mediaforge undo [PATH] [--json]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--include-hidden] [--include-generated] [--dry-run] [--json] [--list]\n  mediaforge --version\n  mediaforge --help"
+        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json|--csv] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS] [--largest N]\n  mediaforge dupes [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--top-groups N]\n  mediaforge probe <FILE> [--compact] [--summary]\n  mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--type video|audio] [--min-size SIZE] [--max-size SIZE] [--jobs N] [--summary] [--compare]\n  mediaforge storyboard <VIDEO> --output <IMAGE> [--interval SECONDS] [--columns N] [--rows N] [--width PIXELS]\n  mediaforge proxy <VIDEO> --output <FILE.mp4> [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge proxy-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET] [--jobs N] [--skip-existing] [--json]\n  mediaforge proxy-config init [FILE] [--profile fast|balanced|quality] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge extract-audio <VIDEO> --output <FILE> [--format mp3|wav|flac] [--bitrate RATE] [--stream N]\n  mediaforge extract-audio-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--format mp3|wav|flac] [--bitrate RATE] [--stream N] [--jobs N] [--skip-existing] [--json]\n  mediaforge project [PATH] [--json]\n  mediaforge gitignore [PATH] [--apply]\n  mediaforge organize [PATH] [--by type|extension|size] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--apply]\n  mediaforge sequence [PATH] [--prefix NAME] [--start N] [--padding N] [--extension EXTENSIONS] [--include-hidden] [--natural] [--json] [--apply]\n  mediaforge undo [PATH] [--json]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--include-hidden] [--include-generated] [--dry-run] [--json] [--list]\n  mediaforge --version\n  mediaforge --help"
     );
 }
 
@@ -4572,6 +4572,18 @@ fn write_organize_complete_marker(root: &Path) -> Result<(), String> {
         .map_err(|error| format!("could not persist undo completion marker: {error}"))
 }
 
+fn size_category(size: u64) -> &'static str {
+    const MIB: u64 = 1024 * 1024;
+    const GIB: u64 = 1024 * MIB;
+    match size {
+        size if size < MIB => "size-under-1MiB",
+        size if size < 64 * MIB => "size-1-64MiB",
+        size if size < 512 * MIB => "size-64-512MiB",
+        size if size < 2 * GIB => "size-512MiB-2GiB",
+        _ => "size-2GiB-plus",
+    }
+}
+
 #[cfg(any(target_os = "linux", target_os = "macos", not(windows)))]
 fn move_file_with_hard_link(from: &Path, to: &Path) -> io::Result<()> {
     fs::hard_link(from, to)?;
@@ -4736,9 +4748,9 @@ fn run_organize(args: &[String]) -> Result<(), String> {
             "--by" => {
                 by = iter
                     .next()
-                    .ok_or_else(|| "--by requires 'type' or 'extension'".to_owned())?;
-                if by != "type" && by != "extension" {
-                    return Err("--by must be 'type' or 'extension'".to_owned());
+                    .ok_or_else(|| "--by requires 'type', 'extension', or 'size'".to_owned())?;
+                if by != "type" && by != "extension" && by != "size" {
+                    return Err("--by must be 'type', 'extension', or 'size'".to_owned());
                 }
             }
             "--include-hidden" => include_hidden = true,
@@ -4769,7 +4781,7 @@ fn run_organize(args: &[String]) -> Result<(), String> {
             "--json" => json = true,
             "--help" | "-h" => {
                 println!(
-                    "Usage: mediaforge organize [PATH] [--by type|extension] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--apply]\n\nPreview an asset organization plan. --type and --extension select files; --min-size uses bytes or K/M/G/T binary units. Hidden files are skipped unless --include-hidden is set. Unity, Unreal, and Godot generated folders are skipped unless --include-generated is set. --json emits the plan and skipped count as JSON. Files are only moved with --apply; a manifest is written so the move can be undone."
+                    "Usage: mediaforge organize [PATH] [--by type|extension|size] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--apply]\n\nPreview an asset organization plan. --by size groups files into <1 MiB, 1–64 MiB, 64–512 MiB, 512 MiB–2 GiB, and >=2 GiB buckets. --type and --extension select files; --min-size uses bytes or K/M/G/T binary units. Hidden files are skipped unless --include-hidden is set. Unity, Unreal, and Godot generated folders are skipped unless --include-generated is set. --json emits the plan and skipped count as JSON. Files are only moved with --apply; a manifest is written so the move can be undone."
                 );
                 return Ok(());
             }
@@ -4839,12 +4851,12 @@ fn run_organize(args: &[String]) -> Result<(), String> {
             skipped += 1;
             continue;
         };
-        let category = if by == "type" {
-            record.kind.as_str().to_owned()
-        } else if record.extension == "[no extension]" {
-            "no-extension".to_owned()
-        } else {
-            record.extension.trim_start_matches('.').to_owned()
+        let category = match by {
+            "type" => record.kind.as_str().to_owned(),
+            "extension" if record.extension == "[no extension]" => "no-extension".to_owned(),
+            "extension" => record.extension.trim_start_matches('.').to_owned(),
+            "size" => size_category(record.size).to_owned(),
+            _ => unreachable!("organize grouping was validated"),
         };
         let mut components = relative.components();
         if components.next().and_then(|part| part.as_os_str().to_str()) == Some(category.as_str()) {

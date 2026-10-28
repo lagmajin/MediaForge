@@ -142,13 +142,14 @@ mediaforge organize ./Media --by type
 mediaforge organize ./Media --by extension
 mediaforge organize ./Media --by type --type video --min-size 500M --json
 mediaforge organize ./Media --by extension --include-hidden
+mediaforge organize ./Media --by size --type video --json
 mediaforge organize ./Game --by type --include-generated
 mediaforge organize ./Media --by type --apply
 mediaforge undo ./Media
 mediaforge undo ./Media --json
 ```
 
-Organization is a preview unless `--apply` is supplied. Use `--type`, `--extension`, and `--min-size` to limit which files are organized; for example, `--type video --min-size 500M` selects large video assets. Hidden files are skipped by default; pass `--include-hidden` to include them. Unity, Unreal, and Godot generated folders such as `Library`, `Intermediate`, `DerivedDataCache`, `.godot`, and `.import` are skipped by default; pass `--include-generated` to include them. Add `--json` to emit one machine-readable JSON object with the filtered move plan, counts, and inclusion settings; with `--apply`, the object reports the completed move count and undo manifest path. Moves preserve paths below the new type/extension folder, skip destination collisions, and refuse symlink paths. Before moving anything, MediaForge writes a `.mediaforge-undo` recovery manifest with portable `/` separators. `undo` restores files only when the original location is clear; it retains the manifest if a conflict needs manual handling. Add `--json` to get restored and conflict counts plus the manifest-retained state as JSON. Older manifests are still readable; ambiguous old records are handled conservatively and may need manual conflict resolution. It never deletes source files.
+Organization is a preview unless `--apply` is supplied. Use `--type`, `--extension`, and `--min-size` to limit which files are organized; for example, `--type video --min-size 500M` selects large video assets. `--by size` creates five buckets: under 1 MiB, 1–64 MiB, 64–512 MiB, 512 MiB–2 GiB, and 2 GiB or larger. Hidden files are skipped by default; pass `--include-hidden` to include them. Unity, Unreal, and Godot generated folders such as `Library`, `Intermediate`, `DerivedDataCache`, `.godot`, and `.import` are skipped by default; pass `--include-generated` to include them. Add `--json` to emit one machine-readable JSON object with the filtered move plan, counts, and inclusion settings; with `--apply`, the object reports the completed move count and undo manifest path. Moves preserve paths below the new type/extension/size folder, skip destination collisions, and refuse symlink paths. Before moving anything, MediaForge writes a `.mediaforge-undo` recovery manifest with portable `/` separators. `undo` restores files only when the original location is clear; it retains the manifest if a conflict needs manual handling. Add `--json` to get restored and conflict counts plus the manifest-retained state as JSON. Older manifests are still readable; ambiguous old records are handled conservatively and may need manual conflict resolution. It never deletes source files.
 
 ## Sequence media filenames
 
