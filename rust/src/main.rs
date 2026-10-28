@@ -961,17 +961,21 @@ fn print_json(
             .push(&record.relative);
     }
     let mut largest: Vec<_> = records.iter().collect();
-    largest.sort_by(|a, b| {
-        b.size
-            .cmp(&a.size)
-            .then_with(|| a.relative.to_lowercase().cmp(&b.relative.to_lowercase()))
-            .then_with(|| a.relative.cmp(&b.relative))
+    largest.sort_by_cached_key(|record| {
+        (
+            std::cmp::Reverse(record.size),
+            record.relative.to_lowercase(),
+            record.relative.clone(),
+        )
     });
     let mut groups: Vec<_> = by_size
         .into_iter()
         .filter(|(_, files)| files.len() > 1)
         .collect();
     groups.sort_by_key(|(size, _)| *size);
+    for (_, files) in &mut groups {
+        files.sort_by_cached_key(|file| (file.to_lowercase(), (*file).to_owned()));
+    }
     println!("{{");
     println!("  \"schema_version\": 1,");
     println!("  \"root\": {},", json_string(&root.to_string_lossy()));
@@ -1097,11 +1101,12 @@ fn print_report(
         *by_size.entry(record.size).or_default() += 1;
     }
     let mut largest: Vec<_> = records.iter().collect();
-    largest.sort_by(|a, b| {
-        b.size
-            .cmp(&a.size)
-            .then_with(|| a.relative.to_lowercase().cmp(&b.relative.to_lowercase()))
-            .then_with(|| a.relative.cmp(&b.relative))
+    largest.sort_by_cached_key(|record| {
+        (
+            std::cmp::Reverse(record.size),
+            record.relative.to_lowercase(),
+            record.relative.clone(),
+        )
     });
     let candidate_groups = by_size.values().filter(|count| **count > 1).count();
     println!("MediaForge scan: {}", root.display());
@@ -2190,24 +2195,24 @@ fn run_scan(args: &[String]) -> Result<(), String> {
     }
     if let Some(sort) = csv_sort {
         match sort {
-            ScanCsvSort::Size => records.sort_by(|a, b| {
-                b.size
-                    .cmp(&a.size)
-                    .then_with(|| a.relative.to_lowercase().cmp(&b.relative.to_lowercase()))
-                    .then_with(|| a.relative.cmp(&b.relative))
+            ScanCsvSort::Size => records.sort_by_cached_key(|record| {
+                (
+                    std::cmp::Reverse(record.size),
+                    record.relative.to_lowercase(),
+                    record.relative.clone(),
+                )
             }),
             ScanCsvSort::Path => records.sort_by(|a, b| a.relative.cmp(&b.relative)),
-            ScanCsvSort::Modified => records.sort_by(|a, b| {
-                let a_modified = a
-                    .modified
-                    .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok());
-                let b_modified = b
-                    .modified
-                    .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok());
-                b_modified
-                    .cmp(&a_modified)
-                    .then_with(|| a.relative.to_lowercase().cmp(&b.relative.to_lowercase()))
-                    .then_with(|| a.relative.cmp(&b.relative))
+            ScanCsvSort::Modified => records.sort_by_cached_key(|record| {
+                (
+                    std::cmp::Reverse(
+                        record
+                            .modified
+                            .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok()),
+                    ),
+                    record.relative.to_lowercase(),
+                    record.relative.clone(),
+                )
             }),
         }
     }
