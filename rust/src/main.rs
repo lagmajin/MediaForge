@@ -2499,8 +2499,47 @@ where
 
 struct VerifiedDuplicateGroup {
     representative: usize,
-    files: Option<Vec<usize>>,
+    files: Option<DuplicateFileIndices>,
     count: usize,
+}
+
+enum DuplicateFileIndices {
+    Compact(Vec<u32>),
+    Wide(Vec<usize>),
+}
+
+impl DuplicateFileIndices {
+    fn with_first(index: usize, compact: bool) -> Self {
+        if compact {
+            Self::Compact(vec![
+                u32::try_from(index).expect("compact duplicate path index"),
+            ])
+        } else {
+            Self::Wide(vec![index])
+        }
+    }
+
+    fn push(&mut self, index: usize) {
+        match self {
+            Self::Compact(indices) => {
+                indices.push(u32::try_from(index).expect("compact duplicate path index"));
+            }
+            Self::Wide(indices) => indices.push(index),
+        }
+    }
+
+    fn into_paths(self, paths: &[Cow<'_, str>]) -> Vec<String> {
+        match self {
+            Self::Compact(indices) => indices
+                .into_iter()
+                .map(|index| paths[index as usize].to_string())
+                .collect(),
+            Self::Wide(indices) => indices
+                .into_iter()
+                .map(|index| paths[index].to_string())
+                .collect(),
+        }
+    }
 }
 
 struct SampleSignatureBucket {
@@ -2788,6 +2827,7 @@ fn run_dupes(args: &[String]) -> Result<(), String> {
     let mut reclaimable = 0_u128;
     let mut comparison_buffers = (Vec::new(), Vec::new());
     for (size, paths) in duplicate_sizes {
+        let compact_indices = u32::try_from(paths.len()).is_ok();
         let mut by_sample: HashMap<u64, SampleSignatureBucket> = HashMap::new();
         for_each_sample_signature(&root, &paths, size, jobs, |index, signature| {
             let relative = paths[index].as_ref();
@@ -2821,9 +2861,10 @@ fn run_dupes(args: &[String]) -> Result<(), String> {
                     Ok(true) => {
                         group.count += 1;
                         if retain_group_paths {
-                            let files = group
-                                .files
-                                .get_or_insert_with(|| vec![group.representative]);
+                            let representative = group.representative;
+                            let files = group.files.get_or_insert_with(|| {
+                                DuplicateFileIndices::with_first(representative, compact_indices)
+                            });
                             files.push(index);
                         }
                         matched = true;
@@ -2871,10 +2912,7 @@ fn run_dupes(args: &[String]) -> Result<(), String> {
                             .is_lt()
                         });
                     if is_top_group {
-                        let files = file_indices
-                            .into_iter()
-                            .map(|index| paths[index].to_string())
-                            .collect();
+                        let files = file_indices.into_paths(&paths);
                         let candidate = DuplicateOutputGroup { size, files };
                         if top_group_heap.len() == limit {
                             top_group_heap.pop();
@@ -2882,10 +2920,7 @@ fn run_dupes(args: &[String]) -> Result<(), String> {
                         top_group_heap.push(candidate);
                     }
                 } else {
-                    let files = file_indices
-                        .into_iter()
-                        .map(|index| paths[index].to_string())
-                        .collect();
+                    let files = file_indices.into_paths(&paths);
                     groups.push((size, files));
                 }
             }
