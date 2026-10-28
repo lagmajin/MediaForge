@@ -984,6 +984,27 @@ fn append_json_string(out: &mut String, value: &str) {
     out.push('"');
 }
 
+fn write_json_string(output: &mut impl Write, value: &str) -> io::Result<()> {
+    output.write_all(b"\"")?;
+    for character in value.chars() {
+        match character {
+            '"' => output.write_all(b"\\\"")?,
+            '\\' => output.write_all(b"\\\\")?,
+            '\n' => output.write_all(b"\\n")?,
+            '\r' => output.write_all(b"\\r")?,
+            '\t' => output.write_all(b"\\t")?,
+            character if character <= '\u{1f}' => {
+                write!(output, "\\u{:04x}", character as u32)?;
+            }
+            character => {
+                let mut encoded = [0_u8; 4];
+                output.write_all(character.encode_utf8(&mut encoded).as_bytes())?;
+            }
+        }
+    }
+    output.write_all(b"\"")
+}
+
 fn json_string_array<'a>(values: impl IntoIterator<Item = &'a str>) -> String {
     let mut out = String::from("[");
     let mut first = true;
@@ -1188,7 +1209,7 @@ fn print_json(
     extension_filter: Option<&HashSet<String>>,
     include_hidden: bool,
     strict: bool,
-) {
+) -> Result<(), String> {
     let mut by_type: BTreeMap<&str, (u64, u128)> = BTreeMap::new();
     let mut extensions: BTreeMap<&str, usize> = BTreeMap::new();
     let mut extension_bytes: BTreeMap<&str, u128> = BTreeMap::new();
@@ -1306,15 +1327,27 @@ fn print_json(
     }
     if include_same_size {
         println!("  ],\n  \"same_size_candidates\": [");
+        let stdout = io::stdout();
+        let mut output = io::BufWriter::new(stdout.lock());
         for (index, (size, _, files)) in groups.iter().enumerate() {
             let comma = if index + 1 == groups.len() { "" } else { "," };
-            println!(
-                "    {{\"size_bytes\": {}, \"files\": {}}}{}",
-                size,
-                json_string_array(files.iter().copied()),
-                comma
-            );
+            write!(output, "    {{\"size_bytes\": {}, \"files\": [", size)
+                .map_err(|error| format!("could not write scan JSON: {error}"))?;
+            for (file_index, file) in files.iter().enumerate() {
+                if file_index > 0 {
+                    output
+                        .write_all(b", ")
+                        .map_err(|error| format!("could not write scan JSON: {error}"))?;
+                }
+                write_json_string(&mut output, file)
+                    .map_err(|error| format!("could not write scan JSON: {error}"))?;
+            }
+            writeln!(output, "]}}{}", comma)
+                .map_err(|error| format!("could not write scan JSON: {error}"))?;
         }
+        output
+            .flush()
+            .map_err(|error| format!("could not write scan JSON: {error}"))?;
         println!("  ],");
     } else {
         println!("  ],\n  \"same_size_candidates\": null,");
@@ -1323,6 +1356,7 @@ fn print_json(
     println!(
         "  \"note\": \"Same-size groups are candidates only; byte-for-byte duplicates are not verified.\"\n}}"
     );
+    Ok(())
 }
 
 fn print_report(
@@ -2602,7 +2636,7 @@ fn run_scan(args: &[String]) -> Result<(), String> {
             extension_filter.as_ref(),
             include_hidden,
             strict,
-        );
+        )?;
     } else {
         print_report(
             &root,
