@@ -2847,6 +2847,7 @@ fn pack_file(
     archive_name: &str,
     record: &FileRecord,
     index: usize,
+    copy_buffer: &mut [u8],
 ) -> Result<(), String> {
     let path_bytes = archive_name.as_bytes();
     let split = ustar_name(path_bytes);
@@ -2917,9 +2918,21 @@ fn pack_file(
 
     let mut input = File::open(&record.path)
         .map_err(|error| format!("cannot open {}: {error}", record.path.display()))?;
-    let mut limited = (&mut input).take(record.size);
-    let copied = io::copy(&mut limited, writer)
-        .map_err(|error| format!("could not archive {}: {error}", record.path.display()))?;
+    let mut remaining = record.size;
+    while remaining > 0 {
+        let requested = remaining.min(copy_buffer.len() as u64) as usize;
+        let count = input
+            .read(&mut copy_buffer[..requested])
+            .map_err(|error| format!("could not read {}: {error}", record.path.display()))?;
+        if count == 0 {
+            break;
+        }
+        writer
+            .write_all(&copy_buffer[..count])
+            .map_err(|error| format!("could not archive {}: {error}", record.path.display()))?;
+        remaining -= count as u64;
+    }
+    let copied = record.size - remaining;
     if copied != record.size {
         return Err(format!(
             "source changed while packing: {}",
@@ -3245,9 +3258,10 @@ fn run_pack(args: &[String]) -> Result<(), String> {
         }
     };
     let (temp_path, mut archive) = temp_path;
+    let mut copy_buffer = vec![0_u8; 256 * 1024];
     let write_result = (|| -> Result<(), String> {
         for (index, (record, name)) in entries.iter().enumerate() {
-            pack_file(&mut archive, name, record, index + 1)?;
+            pack_file(&mut archive, name, record, index + 1, &mut copy_buffer)?;
         }
         archive
             .write_all(&[0_u8; TAR_BLOCK_SIZE * 2])
