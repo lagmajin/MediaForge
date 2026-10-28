@@ -757,6 +757,7 @@ struct StrictWalkFilters<'a> {
     excluded_subtree: Option<&'a Path>,
     exclude_path_contains_lower: Option<&'a [String]>,
     omit_absolute_path: bool,
+    store_relative_path: bool,
     omit_modified_time: bool,
     omit_extension: bool,
 }
@@ -964,6 +965,12 @@ where
                     relative,
                     path: if filters.omit_absolute_path {
                         PathBuf::new()
+                    } else if filters.store_relative_path {
+                        path.strip_prefix(root)
+                            .map_err(|error| {
+                                format!("cannot relativize {}: {error}", path.display())
+                            })?
+                            .to_path_buf()
                     } else {
                         path
                     },
@@ -2803,6 +2810,7 @@ fn run_dupes(args: &[String]) -> Result<(), String> {
         excluded_subtree: None,
         exclude_path_contains_lower: Some(&exclude_path_contains_lower),
         omit_absolute_path: true,
+        store_relative_path: false,
         omit_modified_time: true,
         omit_extension: true,
     };
@@ -5316,6 +5324,7 @@ fn run_probe_dir(args: &[String]) -> Result<(), String> {
         excluded_subtree: None,
         exclude_path_contains_lower: None,
         omit_absolute_path: false,
+        store_relative_path: false,
         omit_modified_time: true,
         omit_extension: true,
     };
@@ -11289,12 +11298,14 @@ fn validate_archive_component(component: &str) -> Result<(), String> {
 }
 
 fn register_portable_archive_path(
-    paths: &mut HashMap<String, (String, bool)>,
+    paths: &mut HashMap<String, (usize, usize, bool)>,
+    records: &[FileRecord],
+    record_index: usize,
     relative: &Path,
     display_name: &str,
 ) -> Result<(), String> {
     let mut components = relative.components().peekable();
-    let mut actual_prefix = String::new();
+    let mut actual_prefix_len = 0;
     let mut portable_prefix = String::new();
     while let Some(component) = components.next() {
         let std::path::Component::Normal(component) = component else {
@@ -11304,32 +11315,38 @@ fn register_portable_archive_path(
             .to_str()
             .ok_or_else(|| format!("non-UTF-8 path cannot be packed: {}", relative.display()))?;
         validate_archive_component(component)?;
-        if !actual_prefix.is_empty() {
-            actual_prefix.push('/');
+        if !portable_prefix.is_empty() {
+            actual_prefix_len += 1;
             portable_prefix.push('/');
         }
-        actual_prefix.push_str(component);
+        actual_prefix_len += component.len();
         portable_prefix.push_str(&component.to_lowercase());
         let is_file = components.peek().is_none();
         match paths.get(&portable_prefix) {
-            Some((existing, true)) if !is_file => {
+            Some((existing_index, existing_len, true)) if !is_file => {
                 return Err(format!(
-                    "archive path uses a file as a directory on case-insensitive filesystems: {existing:?} and {display_name:?}"
+                    "archive path uses a file as a directory on case-insensitive filesystems: {:?} and {display_name:?}",
+                    &records[*existing_index].relative[..*existing_len]
                 ));
             }
-            Some((existing, false)) if is_file => {
+            Some((existing_index, existing_len, false)) if is_file => {
                 return Err(format!(
-                    "archive path uses a directory as a file on case-insensitive filesystems: {existing:?} and {display_name:?}"
+                    "archive path uses a directory as a file on case-insensitive filesystems: {:?} and {display_name:?}",
+                    &records[*existing_index].relative[..*existing_len]
                 ));
             }
-            Some((existing, true)) if is_file => {
+            Some((existing_index, existing_len, true)) if is_file => {
                 return Err(format!(
-                    "archive paths collide on case-insensitive filesystems: {existing:?} and {display_name:?}"
+                    "archive paths collide on case-insensitive filesystems: {:?} and {display_name:?}",
+                    &records[*existing_index].relative[..*existing_len]
                 ));
             }
             Some(_) => {}
             None => {
-                paths.insert(portable_prefix.clone(), (actual_prefix.clone(), is_file));
+                paths.insert(
+                    portable_prefix.clone(),
+                    (record_index, actual_prefix_len, is_file),
+                );
             }
         }
     }
@@ -11614,7 +11631,8 @@ fn run_pack(args: &[String]) -> Result<(), String> {
         max_size,
         excluded_subtree: None,
         exclude_path_contains_lower: Some(&exclude_path_contains_lower),
-        omit_absolute_path: true,
+        omit_absolute_path: false,
+        store_relative_path: true,
         omit_modified_time: false,
         omit_extension: true,
     };
@@ -11627,10 +11645,10 @@ fn run_pack(args: &[String]) -> Result<(), String> {
         &filters,
         &mut records,
     )?;
-    let mut portable_names = HashMap::<String, (String, bool)>::new();
+    let mut portable_names = HashMap::<String, (usize, usize, bool)>::new();
     let mut total_bytes = 0_u64;
-    for record in &records {
-        let relative = Path::new(&record.relative);
+    for (record_index, record) in records.iter().enumerate() {
+        let relative = record.path.as_path();
         let mut component_count = 0;
         for component in relative.components() {
             let std::path::Component::Normal(part) = component else {
@@ -11648,7 +11666,13 @@ fn run_pack(args: &[String]) -> Result<(), String> {
         if record.relative.len() > 1024 * 1024 {
             return Err(format!("archive path is too long: {}", record.relative));
         }
-        register_portable_archive_path(&mut portable_names, relative, &record.relative)?;
+        register_portable_archive_path(
+            &mut portable_names,
+            &records,
+            record_index,
+            relative,
+            &record.relative,
+        )?;
         total_bytes = total_bytes
             .checked_add(record.size)
             .ok_or_else(|| "total input size exceeds the supported range".to_owned())?;
@@ -11743,7 +11767,7 @@ fn run_pack(args: &[String]) -> Result<(), String> {
     let mut archive_bytes = 0_u64;
     let write_result = (|| -> Result<(), String> {
         for (index, record) in records.iter().enumerate() {
-            let source_path = root.join(&record.relative);
+            let source_path = root.join(&record.path);
             pack_file(
                 &mut archive,
                 &record.relative,
