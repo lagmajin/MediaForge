@@ -5682,7 +5682,7 @@ fn fraction_ceil_scaled(fraction: &str, multiplier: u128) -> u128 {
 
 fn print_help() {
     println!(
-        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge doctor [--json] [--strict]\n  mediaforge scan-config <init|validate|show> [FILE] [--json]\n  mediaforge scan [PATH] [--json|--csv] [--compact] [--csv-info] [--show-filters] [--include-hidden] [--strict] [--no-same-size] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--modified-since UNIX_SECONDS] [--modified-until UNIX_SECONDS] [--modified-within DURATION] [--path-contains TEXT ...] [--exclude-path-contains TEXT ...] [--extension EXTENSIONS ...] [--largest N] [--sort path|size|modified] [--settings FILE]\n  mediaforge dupes [PATH] [--json] [--compact] [--summary] [--include-hidden] [--exclude-path-contains TEXT ...] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--top-groups N] [--jobs N]\n  mediaforge probe <FILE> [--compact] [--summary]\n  mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--type video|audio] [--min-size SIZE] [--max-size SIZE] [--jobs N] [--summary] [--compare] [--csv]\n  mediaforge storyboard <VIDEO> --output <IMAGE> [--interval SECONDS] [--columns N] [--rows N] [--width PIXELS]\n  mediaforge scene-detect-dir <PATH> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--summary] [--fps RATE] [--extension EXTENSIONS] [--include-hidden] [--jobs N]\n  mediaforge scene-detect <VIDEO> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--format jsonl|csv] [--fps RATE]\n  mediaforge proxy <VIDEO> --output <FILE.mp4> [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge proxy-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET] [--jobs N] [--skip-existing] [--json]\n  mediaforge proxy-config init [FILE] [--profile fast|balanced|quality] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge extract-audio <VIDEO> --output <FILE> [--format mp3|wav|flac] [--bitrate RATE] [--stream N]\n  mediaforge extract-audio-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--format mp3|wav|flac] [--bitrate RATE] [--stream N] [--jobs N] [--skip-existing] [--json]\n  mediaforge snapshot [PATH] (--output FILE [--overwrite] | --diff FILE [--update]) [--json|--csv] [--compact] [--summary] [--include-hidden] [--include-generated] [--hash] [--jobs N] [--fail-on-change]\n  mediaforge project [PATH] [--json] [--compact] [--no-cache-sizes] [--no-editor-files]\n  mediaforge unity-meta [PROJECT_PATH] [--json] [--compact] [--summary] [--sidecars-only] [--include-hidden]\n  mediaforge gitignore [PATH] [--apply] [--json] [--compact]\n  mediaforge organize [PATH] [--by type|extension|size] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--compact] [--apply]\n  mediaforge rename [PATH] [--replace OLD NEW] [--prefix TEXT] [--suffix TEXT] [--extension-case keep|lower|upper] [--extension EXTENSIONS] [--include-hidden] [--json] [--compact] [--apply]
+        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge doctor [--json] [--strict]\n  mediaforge scan-config <init|validate|show> [FILE] [--json]\n  mediaforge scan [PATH] [--json|--csv] [--compact] [--csv-info] [--show-filters] [--include-hidden] [--strict] [--no-same-size] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--modified-since UNIX_SECONDS] [--modified-until UNIX_SECONDS] [--modified-within DURATION] [--path-contains TEXT ...] [--exclude-path-contains TEXT ...] [--extension EXTENSIONS ...] [--largest N] [--sort path|size|modified] [--settings FILE]\n  mediaforge dupes [PATH] [--json] [--compact] [--summary] [--include-hidden] [--exclude-path-contains TEXT ...] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--top-groups N] [--jobs N]\n  mediaforge probe <FILE> [--compact] [--summary]\n  mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--type video|audio] [--min-size SIZE] [--max-size SIZE] [--jobs N] [--summary] [--compare] [--csv]\n  mediaforge storyboard <VIDEO> --output <IMAGE> [--interval SECONDS] [--columns N] [--rows N] [--width PIXELS]\n  mediaforge scene-detect-dir <PATH> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--summary] [--fps RATE] [--extension EXTENSIONS] [--include-hidden] [--jobs N]\n  mediaforge scene-detect <VIDEO> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--format jsonl|csv] [--fps RATE]\n  mediaforge proxy <VIDEO> --output <FILE.mp4> [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge proxy-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET] [--jobs N] [--skip-existing] [--json] [--summary]\n  mediaforge proxy-config init [FILE] [--profile fast|balanced|quality] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge extract-audio <VIDEO> --output <FILE> [--format mp3|wav|flac] [--bitrate RATE] [--stream N]\n  mediaforge extract-audio-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--format mp3|wav|flac] [--bitrate RATE] [--stream N] [--jobs N] [--skip-existing] [--json] [--summary]\n  mediaforge snapshot [PATH] (--output FILE [--overwrite] | --diff FILE [--update]) [--json|--csv] [--compact] [--summary] [--include-hidden] [--include-generated] [--hash] [--jobs N] [--fail-on-change]\n  mediaforge project [PATH] [--json] [--compact] [--no-cache-sizes] [--no-editor-files]\n  mediaforge unity-meta [PROJECT_PATH] [--json] [--compact] [--summary] [--sidecars-only] [--include-hidden]\n  mediaforge gitignore [PATH] [--apply] [--json] [--compact]\n  mediaforge organize [PATH] [--by type|extension|size] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--compact] [--apply]\n  mediaforge rename [PATH] [--replace OLD NEW] [--prefix TEXT] [--suffix TEXT] [--extension-case keep|lower|upper] [--extension EXTENSIONS] [--include-hidden] [--json] [--compact] [--apply]
   mediaforge sequence [PATH] [--prefix NAME] [--start N] [--padding N] [--extension EXTENSIONS] [--include-hidden] [--natural] [--json] [--compact] [--apply]\n  mediaforge undo [PATH] [--json] [--compact]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--exclude-path-contains TEXT ...] [--include-hidden] [--include-generated] [--dry-run] [--json] [--compact] [--list]\n  mediaforge --version\n  mediaforge --help"
     );
 }
@@ -7946,6 +7946,7 @@ fn run_proxy_dir(args: &[String]) -> Result<(), String> {
         .min(4);
     let mut skip_existing = false;
     let mut json = false;
+    let mut summary_only = false;
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
         match arg.as_str() {
@@ -8020,9 +8021,10 @@ fn run_proxy_dir(args: &[String]) -> Result<(), String> {
                 }
             }
             "--skip-existing" => skip_existing = true,
+            "--summary" => summary_only = true,
             "--help" | "-h" => {
                 println!(
-                    "Usage: mediaforge proxy-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET] [--jobs N] [--skip-existing] [--json]\n\nCreate H.264/AAC proxies for video assets while preserving their relative folders. Automatically reads .mediaforge-proxy from the working directory when present. Explicit options override settings-file values. --jobs controls concurrent ffmpeg processes (1–16; default 4). Existing regular output files are never overwritten; --skip-existing skips those files. Other occupied output paths are errors. Failed files are reported after the remaining videos are processed. The output directory must already exist. --json emits one result record per file as each job completes, with completion counters and a final summary as JSON Lines."
+                    "Usage: mediaforge proxy-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET] [--jobs N] [--skip-existing] [--json] [--summary]\n\nCreate H.264/AAC proxies for video assets while preserving their relative folders. Automatically reads .mediaforge-proxy from the working directory when present. Explicit options override settings-file values. --jobs controls concurrent ffmpeg processes (1–16; default 4). Existing regular output files are never overwritten; --skip-existing skips those files. Other occupied output paths are errors. Failed files are reported after the remaining videos are processed. The output directory must already exist. --json emits one result record per file as each job completes, with completion counters and a final summary as JSON Lines. --summary requires --json and emits failed-file records plus the final counts, omitting succeeded and skipped file records."
                 );
                 return Ok(());
             }
@@ -8034,6 +8036,9 @@ fn run_proxy_dir(args: &[String]) -> Result<(), String> {
                 path = Some(PathBuf::from(value));
             }
         }
+    }
+    if summary_only && !json {
+        return Err("--summary can only be used with --json".to_owned());
     }
     let path = path.ok_or_else(|| "proxy-dir requires an input directory".to_owned())?;
     let output_root =
@@ -8194,13 +8199,15 @@ fn run_proxy_dir(args: &[String]) -> Result<(), String> {
                             .expect("proxy progress output lock poisoned");
                         let current =
                             completed.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-                        if let Err(error) = print_batch_result_json(
-                            current,
-                            total,
-                            &record.relative,
-                            output.as_deref(),
-                            &result,
-                        ) {
+                        if (!summary_only || result.is_err())
+                            && let Err(error) = print_batch_result_json(
+                                current,
+                                total,
+                                &record.relative,
+                                output.as_deref(),
+                                &result,
+                            )
+                        {
                             output_failed.store(true, std::sync::atomic::Ordering::Release);
                             stream_error
                                 .lock()
@@ -8527,6 +8534,7 @@ fn run_extract_audio_dir(args: &[String]) -> Result<(), String> {
         .min(4);
     let mut skip_existing = false;
     let mut json = false;
+    let mut summary_only = false;
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
         match arg.as_str() {
@@ -8582,9 +8590,10 @@ fn run_extract_audio_dir(args: &[String]) -> Result<(), String> {
             }
             "--skip-existing" => skip_existing = true,
             "--json" => json = true,
+            "--summary" => summary_only = true,
             "--help" | "-h" => {
                 println!(
-                    "Usage: mediaforge extract-audio-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--format mp3|wav|flac] [--bitrate RATE] [--stream N] [--jobs N] [--skip-existing] [--json]\n\nExtract audio from video and audio assets while preserving relative folders. Defaults to MP3 at 192k from the first audio stream. --jobs controls concurrent ffmpeg processes (1–16; default 4). Existing regular output files are never overwritten; --skip-existing skips those files. Other occupied output paths are errors. The output directory must already exist. --json emits one result record per file as each job completes, with completion counters and a final summary as JSON Lines."
+                    "Usage: mediaforge extract-audio-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--format mp3|wav|flac] [--bitrate RATE] [--stream N] [--jobs N] [--skip-existing] [--json] [--summary]\n\nExtract audio from video and audio assets while preserving relative folders. Defaults to MP3 at 192k from the first audio stream. --jobs controls concurrent ffmpeg processes (1–16; default 4). Existing regular output files are never overwritten; --skip-existing skips those files. Other occupied output paths are errors. The output directory must already exist. --json emits one result record per file as each job completes, with completion counters and a final summary as JSON Lines. --summary requires --json and emits failed-file records plus the final counts, omitting succeeded and skipped file records."
                 );
                 return Ok(());
             }
@@ -8596,6 +8605,9 @@ fn run_extract_audio_dir(args: &[String]) -> Result<(), String> {
                 path = Some(PathBuf::from(value));
             }
         }
+    }
+    if summary_only && !json {
+        return Err("--summary can only be used with --json".to_owned());
     }
     let path = path.ok_or_else(|| "extract-audio-dir requires an input directory".to_owned())?;
     let output_root =
@@ -8769,13 +8781,15 @@ fn run_extract_audio_dir(args: &[String]) -> Result<(), String> {
                             .expect("audio progress output lock poisoned");
                         let current =
                             completed.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-                        if let Err(error) = print_batch_result_json(
-                            current,
-                            total,
-                            &record.relative,
-                            output.as_deref(),
-                            &result,
-                        ) {
+                        if (!summary_only || result.is_err())
+                            && let Err(error) = print_batch_result_json(
+                                current,
+                                total,
+                                &record.relative,
+                                output.as_deref(),
+                                &result,
+                            )
+                        {
                             output_failed.store(true, std::sync::atomic::Ordering::Release);
                             stream_error
                                 .lock()
