@@ -1389,22 +1389,30 @@ fn append_json_string(out: &mut String, value: &str) {
 
 fn write_json_string(output: &mut impl Write, value: &str) -> io::Result<()> {
     output.write_all(b"\"")?;
-    for character in value.chars() {
-        match character {
-            '"' => output.write_all(b"\\\"")?,
-            '\\' => output.write_all(b"\\\\")?,
-            '\n' => output.write_all(b"\\n")?,
-            '\r' => output.write_all(b"\\r")?,
-            '\t' => output.write_all(b"\\t")?,
+    let mut segment_start = 0;
+    for (index, character) in value.char_indices() {
+        let escape = match character {
+            '"' => Some(&b"\\\""[..]),
+            '\\' => Some(&b"\\\\"[..]),
+            '\n' => Some(&b"\\n"[..]),
+            '\r' => Some(&b"\\r"[..]),
+            '\t' => Some(&b"\\t"[..]),
             character if character <= '\u{1f}' => {
+                output.write_all(&value.as_bytes()[segment_start..index])?;
                 write!(output, "\\u{:04x}", character as u32)?;
+                None
             }
-            character => {
-                let mut encoded = [0_u8; 4];
-                output.write_all(character.encode_utf8(&mut encoded).as_bytes())?;
-            }
+            _ => None,
+        };
+        if let Some(escape) = escape {
+            output.write_all(&value.as_bytes()[segment_start..index])?;
+            output.write_all(escape)?;
+        }
+        if character <= '\u{1f}' || matches!(character, '"' | '\\') {
+            segment_start = index + character.len_utf8();
         }
     }
+    output.write_all(&value.as_bytes()[segment_start..])?;
     output.write_all(b"\"")
 }
 
