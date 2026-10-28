@@ -111,6 +111,112 @@ struct ScanFileRecord {
     extension: String,
 }
 
+struct JsonLargestFile {
+    relative: String,
+    size: u64,
+    kind: Kind,
+}
+
+impl PartialEq for JsonLargestFile {
+    fn eq(&self, other: &Self) -> bool {
+        compare_largest_values(self.size, &self.relative, other.size, &other.relative).is_eq()
+    }
+}
+
+impl Eq for JsonLargestFile {}
+
+impl PartialOrd for JsonLargestFile {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for JsonLargestFile {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        compare_largest_values(self.size, &self.relative, other.size, &other.relative)
+    }
+}
+
+struct ScanJsonAccumulator {
+    file_count: usize,
+    total_bytes: u128,
+    by_type: BTreeMap<String, (u64, u128)>,
+    extensions: BTreeMap<String, (usize, u128)>,
+    size_counts: HashMap<u64, u8>,
+    candidate_group_count: usize,
+    largest_limit: usize,
+    largest: BinaryHeap<JsonLargestFile>,
+}
+
+impl ScanJsonAccumulator {
+    fn new(largest_limit: usize) -> Self {
+        Self {
+            file_count: 0,
+            total_bytes: 0,
+            by_type: BTreeMap::new(),
+            extensions: BTreeMap::new(),
+            size_counts: HashMap::new(),
+            candidate_group_count: 0,
+            largest_limit,
+            largest: BinaryHeap::with_capacity(largest_limit.min(1024)),
+        }
+    }
+
+    fn add(&mut self, record: &ScanFileRecord) {
+        self.file_count = self.file_count.saturating_add(1);
+        self.total_bytes += u128::from(record.size);
+        let by_type = self
+            .by_type
+            .entry(record.kind.as_str().to_owned())
+            .or_default();
+        by_type.0 += 1;
+        by_type.1 += u128::from(record.size);
+        let extension = self.extensions.entry(record.extension.clone()).or_default();
+        extension.0 += 1;
+        extension.1 += u128::from(record.size);
+        let size_count = self.size_counts.entry(record.size).or_default();
+        if *size_count == 1 {
+            self.candidate_group_count = self.candidate_group_count.saturating_add(1);
+        }
+        *size_count = size_count.saturating_add(1);
+
+        if self.largest_limit == 0 {
+            return;
+        }
+        let should_keep = self.largest.len() < self.largest_limit
+            || self.largest.peek().is_some_and(|smallest| {
+                compare_largest_values(
+                    record.size,
+                    &record.relative,
+                    smallest.size,
+                    &smallest.relative,
+                )
+                .is_lt()
+            });
+        if should_keep {
+            if self.largest.len() == self.largest_limit {
+                self.largest.pop();
+            }
+            self.largest.push(JsonLargestFile {
+                relative: record.relative.clone(),
+                size: record.size,
+                kind: record.kind,
+            });
+        }
+    }
+
+    fn largest_sorted(&mut self) -> Vec<JsonLargestFile> {
+        let mut largest = self.largest.drain().collect::<Vec<_>>();
+        largest.sort_unstable();
+        largest
+    }
+}
+
+enum ScanRecordConsumer<'a> {
+    Csv(&'a mut dyn Write),
+    Json(&'a mut ScanJsonAccumulator),
+}
+
 struct FilePathRecord {
     relative: String,
     path: PathBuf,
@@ -574,7 +680,7 @@ struct ScanWalkConfig<'a> {
     ignored: &'a [IgnoreRule],
     filters: &'a ScanTraversalFilters<'a>,
     strict: bool,
-    record_writer: Option<&'a mut dyn Write>,
+    record_consumer: Option<ScanRecordConsumer<'a>>,
 }
 
 struct ScanWalkResult {
@@ -592,7 +698,7 @@ fn walk_with_skip_dirs_mode_counted(config: ScanWalkConfig<'_>) -> Result<ScanWa
         ignored,
         filters,
         strict,
-        mut record_writer,
+        mut record_consumer,
     } = config;
     let mut records = Vec::new();
     let mut file_count = 0_usize;
@@ -815,11 +921,11 @@ fn walk_with_skip_dirs_mode_counted(config: ScanWalkConfig<'_>) -> Result<ScanWa
                     extension,
                 };
                 file_count = file_count.saturating_add(1);
-                if let Some(writer) = record_writer.as_deref_mut() {
-                    write_csv_record(writer, &record)
-                        .map_err(|error| format!("could not write CSV output: {error}"))?;
-                } else {
-                    records.push(record);
+                match record_consumer.as_mut() {
+                    Some(ScanRecordConsumer::Csv(writer)) => write_csv_record(*writer, &record)
+                        .map_err(|error| format!("could not write CSV output: {error}"))?,
+                    Some(ScanRecordConsumer::Json(summary)) => summary.add(&record),
+                    None => records.push(record),
                 }
             }
             Ok(())
@@ -2069,10 +2175,19 @@ fn compare_paths_case_insensitive(left: &str, right: &str) -> std::cmp::Ordering
     case_insensitive.then_with(|| left.cmp(right))
 }
 
+fn compare_largest_values(
+    left_size: u64,
+    left_path: &str,
+    right_size: u64,
+    right_path: &str,
+) -> std::cmp::Ordering {
+    std::cmp::Reverse(left_size)
+        .cmp(&std::cmp::Reverse(right_size))
+        .then_with(|| compare_paths_case_insensitive(left_path, right_path))
+}
+
 fn compare_largest_records(left: &ScanFileRecord, right: &ScanFileRecord) -> std::cmp::Ordering {
-    std::cmp::Reverse(left.size)
-        .cmp(&std::cmp::Reverse(right.size))
-        .then_with(|| compare_paths_case_insensitive(&left.relative, &right.relative))
+    compare_largest_values(left.size, &left.relative, right.size, &right.relative)
 }
 
 struct LargestRecord<'a>(&'a ScanFileRecord);
@@ -2287,6 +2402,110 @@ fn print_json(
         write_scan_json_line!("  ],\n  \"same_size_candidates\": null,");
     }
     write_scan_json_line!("  \"same_size_candidate_groups\": {candidate_group_count},");
+    write_scan_json_line!(
+        "  \"note\": \"Same-size groups are candidates only; byte-for-byte duplicates are not verified.\"\n}}"
+    );
+    output
+        .flush()
+        .map_err(|error| format!("could not write scan JSON: {error}"))?;
+    Ok(())
+}
+
+fn print_json_summary(
+    root: &Path,
+    summary: &mut ScanJsonAccumulator,
+    skipped_paths: usize,
+    skipped_examples: &[String],
+    filters: ScanFilterOptions<'_>,
+) -> Result<(), String> {
+    let largest = summary.largest_sorted();
+    let stdout = io::stdout();
+    let mut output = io::BufWriter::with_capacity(64 * 1024, stdout.lock());
+    macro_rules! write_scan_json_line {
+        ($($argument:tt)*) => {
+            writeln!(output, $($argument)*)
+                .map_err(|error| format!("could not write scan JSON: {error}"))?;
+        };
+    }
+    write_scan_json_line!("{{");
+    write_scan_json_line!("  \"schema_version\": 1,");
+    write_scan_json_line!("  \"root\": {},", json_string(&root.to_string_lossy()));
+    write_scan_json_line!("  \"files\": {},", summary.file_count);
+    write_scan_json_line!("  \"incomplete\": {},", skipped_paths > 0);
+    write_scan_json_line!("  \"skipped_paths\": {skipped_paths},");
+    write_scan_json_line!(
+        "  \"skipped_paths_truncated\": {},",
+        skipped_paths > skipped_examples.len()
+    );
+    write_scan_json_line!(
+        "  \"skipped_path_examples\": [{}],",
+        skipped_examples
+            .iter()
+            .map(|path| json_string(path))
+            .collect::<Vec<_>>()
+            .join(",")
+    );
+    write_scan_json_line!("  \"filters\": {},", scan_filters_json(filters));
+    write_scan_json_line!("  \"largest_limit\": {},", summary.largest_limit);
+    write_scan_json_line!("  \"same_size_candidates_included\": false,");
+    write_scan_json_line!("  \"total_bytes\": {},", summary.total_bytes);
+    write_scan_json_line!(
+        "  \"total_size\": {},",
+        json_string(&human_size_wide(summary.total_bytes))
+    );
+    write_scan_json_line!("  \"by_type\": {{");
+    for (index, (kind, (count, bytes))) in summary.by_type.iter().enumerate() {
+        let comma = if index + 1 == summary.by_type.len() {
+            ""
+        } else {
+            ","
+        };
+        write_scan_json_line!(
+            "    {}: {{\"files\": {}, \"bytes\": {}, \"size\": {}}}{}",
+            json_string(kind),
+            count,
+            bytes,
+            json_string(&human_size_wide(*bytes)),
+            comma
+        );
+    }
+    write_scan_json_line!("  }},\n  \"extensions\": {{");
+    let mut ext_sorted: Vec<_> = summary.extensions.iter().collect();
+    ext_sorted.sort_unstable_by(|a, b| b.1.0.cmp(&a.1.0).then_with(|| a.0.cmp(b.0)));
+    for (index, (extension, (count, _))) in ext_sorted.iter().enumerate() {
+        let comma = if index + 1 == ext_sorted.len() {
+            ""
+        } else {
+            ","
+        };
+        write_scan_json_line!("    {}: {}{}", json_string(extension), count, comma);
+    }
+    write_scan_json_line!("  }},\n  \"extension_bytes\": {{");
+    for (index, (extension, (_, bytes))) in summary.extensions.iter().enumerate() {
+        let comma = if index + 1 == summary.extensions.len() {
+            ""
+        } else {
+            ","
+        };
+        write_scan_json_line!("    {}: {}{}", json_string(extension), bytes, comma);
+    }
+    write_scan_json_line!("  }},\n  \"largest\": [");
+    for (index, record) in largest.iter().enumerate() {
+        let comma = if index + 1 == largest.len() { "" } else { "," };
+        write_scan_json_line!(
+            "    {{\"path\": {}, \"size_bytes\": {}, \"size\": {}, \"type\": {}}}{}",
+            json_string(&record.relative),
+            record.size,
+            json_string(&human_size(record.size)),
+            json_string(record.kind.as_str()),
+            comma
+        );
+    }
+    write_scan_json_line!("  ],\n  \"same_size_candidates\": null,");
+    write_scan_json_line!(
+        "  \"same_size_candidate_groups\": {},",
+        summary.candidate_group_count
+    );
     write_scan_json_line!(
         "  \"note\": \"Same-size groups are candidates only; byte-for-byte duplicates are not verified.\"\n}}"
     );
@@ -3806,9 +4025,16 @@ fn run_scan(args: &[String]) -> Result<(), String> {
     let stdout = io::stdout();
     let mut streaming_csv =
         stream_csv.then(|| io::BufWriter::with_capacity(64 * 1024, stdout.lock()));
+    let mut json_summary =
+        (json && !include_same_size).then(|| ScanJsonAccumulator::new(largest_limit));
     if let Some(output) = streaming_csv.as_mut() {
         write_csv_header(output).map_err(|error| format!("could not write CSV output: {error}"))?;
     }
+    let record_consumer = if let Some(output) = streaming_csv.as_mut() {
+        Some(ScanRecordConsumer::Csv(output as &mut dyn Write))
+    } else {
+        json_summary.as_mut().map(ScanRecordConsumer::Json)
+    };
     let ScanWalkResult {
         mut records,
         file_count,
@@ -3821,9 +4047,7 @@ fn run_scan(args: &[String]) -> Result<(), String> {
         ignored: &ignored,
         filters: &traversal_filters,
         strict,
-        record_writer: streaming_csv
-            .as_mut()
-            .map(|output| output as &mut dyn Write),
+        record_consumer,
     })?;
     skipped_examples.sort_unstable_by(|left, right| compare_paths_case_insensitive(left, right));
     if let Some(sort) = csv_sort {
@@ -3885,27 +4109,32 @@ fn run_scan(args: &[String]) -> Result<(), String> {
             print_csv(&records)?;
         }
     } else if json {
-        print_json(
-            &root,
-            &records,
-            largest_limit,
-            include_same_size,
-            skipped_paths,
-            &skipped_examples,
-            ScanFilterOptions {
-                kind: kind_filter,
-                min_size,
-                max_size,
-                modified_since,
-                modified_until,
-                modified_within,
-                path_contains: &path_contains,
-                exclude_path_contains: &exclude_path_contains,
-                extensions: extension_filter.as_ref(),
-                include_hidden,
-                strict,
-            },
-        )?;
+        let filters = ScanFilterOptions {
+            kind: kind_filter,
+            min_size,
+            max_size,
+            modified_since,
+            modified_until,
+            modified_within,
+            path_contains: &path_contains,
+            exclude_path_contains: &exclude_path_contains,
+            extensions: extension_filter.as_ref(),
+            include_hidden,
+            strict,
+        };
+        if let Some(summary) = json_summary.as_mut() {
+            print_json_summary(&root, summary, skipped_paths, &skipped_examples, filters)?;
+        } else {
+            print_json(
+                &root,
+                &records,
+                largest_limit,
+                include_same_size,
+                skipped_paths,
+                &skipped_examples,
+                filters,
+            )?;
+        }
     } else {
         print_report(
             &root,
