@@ -28,7 +28,7 @@ cargo build --release
 ./target/release/mediaforge scan ./Media
 ```
 
-On Windows, run `target\release\mediaforge.exe scan .\Media`. The Python reference covers the basic `scan` command and mirrors its JSON report fields; Rust adds asset-type and size filters plus the project workflows. Rust scans are fully offline once the toolchain is installed. Both skip Git-ignored path entries without glob syntax, plus built-in generated/dependency directories. Full Git ignore glob and negation semantics are not implemented yet.
+On Windows, run `target\release\mediaforge.exe scan .\Media`. The Python reference covers the basic `scan` command and mirrors its JSON report fields; Rust adds asset-type and size filters plus the project workflows. Rust scans are fully offline once the toolchain is installed. Rust reads nested `.gitignore` files and supports wildcard, character-class, anchoring, directory-only, and negation patterns. The Python reference only skips simple ignored path names. Rust does not yet load Git's global exclude sources or reproduce every Git ignore edge case. Both implementations also skip built-in generated/dependency directories.
 
 ## Inspect media metadata
 
