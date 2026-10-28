@@ -1985,6 +1985,25 @@ struct VerifiedDuplicateGroup {
     count: usize,
 }
 
+struct DuplicateSizeBucket {
+    first: Option<String>,
+    duplicates: Option<Vec<Option<String>>>,
+}
+
+impl DuplicateSizeBucket {
+    fn push(&mut self, path: String) {
+        if let Some(paths) = &mut self.duplicates {
+            paths.push(Some(path));
+        } else {
+            let first = self
+                .first
+                .take()
+                .expect("single-file size bucket has its first path");
+            self.duplicates = Some(vec![Some(first), Some(path)]);
+        }
+    }
+}
+
 struct DuplicateOutputGroup {
     size: u64,
     files: Vec<String>,
@@ -2148,13 +2167,25 @@ fn run_dupes(args: &[String]) -> Result<(), String> {
         &filters,
         &mut records,
     )?;
-    let mut by_size: BTreeMap<u64, Vec<Option<String>>> = BTreeMap::new();
+    let mut by_size = HashMap::<u64, DuplicateSizeBucket>::new();
     for record in records {
-        by_size
-            .entry(record.size)
-            .or_default()
-            .push(Some(record.relative));
+        match by_size.entry(record.size) {
+            std::collections::hash_map::Entry::Occupied(mut entry) => {
+                entry.get_mut().push(record.relative);
+            }
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                entry.insert(DuplicateSizeBucket {
+                    first: Some(record.relative),
+                    duplicates: None,
+                });
+            }
+        }
     }
+    let mut duplicate_sizes = by_size
+        .into_iter()
+        .filter_map(|(size, bucket)| bucket.duplicates.map(|paths| (size, paths)))
+        .collect::<Vec<_>>();
+    duplicate_sizes.sort_unstable_by_key(|(size, _)| *size);
 
     let retain_group_paths = !summary_only && top_groups != Some(0);
     let mut groups: Vec<(u64, Vec<String>)> = Vec::new();
@@ -2162,7 +2193,7 @@ fn run_dupes(args: &[String]) -> Result<(), String> {
     let mut total_groups = 0_usize;
     let mut duplicate_files = 0_usize;
     let mut reclaimable = 0_u128;
-    for (size, mut paths) in by_size.into_iter().filter(|(_, paths)| paths.len() > 1) {
+    for (size, mut paths) in duplicate_sizes {
         let mut by_sample: HashMap<u64, Vec<VerifiedDuplicateGroup>> = HashMap::new();
         let signatures = sample_signatures(&root, &paths, size, jobs);
         for (index, signature) in signatures.into_iter().enumerate() {
