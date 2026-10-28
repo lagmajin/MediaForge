@@ -8687,7 +8687,7 @@ fn run_unity_meta(args: &[String]) -> Result<(), String> {
         }
     }
     while let Some((directory, active_rules)) = pending.pop() {
-        let mut entries = fs::read_dir(&directory)
+        let entries = fs::read_dir(&directory)
             .map_err(|error| {
                 format!(
                     "cannot read Unity asset directory {}: {error}",
@@ -8700,7 +8700,7 @@ fn run_unity_meta(args: &[String]) -> Result<(), String> {
                 })
             })
             .collect::<Result<Vec<_>, _>>()?;
-        sort_entries(&mut entries);
+        // Each output list is sorted after traversal, so per-directory sorting is redundant.
         let mut sibling_types = HashMap::with_capacity(entries.len());
         let mut entry_types = Vec::with_capacity(entries.len());
         for entry in &entries {
