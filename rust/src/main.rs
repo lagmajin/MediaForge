@@ -1840,17 +1840,25 @@ fn files_identical(left: &Path, right: &Path) -> io::Result<bool> {
 fn sample_signature(path: &Path, size: u64) -> io::Result<u64> {
     const SAMPLE_SIZE: usize = 4096;
     let mut file = fs::File::open(path)?;
-    let mut offsets = vec![0_u64];
+    let mut offsets = [0_u64; 3];
+    let mut offset_count = 1;
     if size > SAMPLE_SIZE as u64 {
-        offsets.push(size / 2 - (SAMPLE_SIZE as u64 / 2));
-        offsets.push(size.saturating_sub(SAMPLE_SIZE as u64));
+        offsets[1] = size / 2 - (SAMPLE_SIZE as u64 / 2);
+        offsets[2] = size.saturating_sub(SAMPLE_SIZE as u64);
+        offset_count = 3;
     }
-    offsets.sort_unstable();
-    offsets.dedup();
-    let mut buffer = vec![0_u8; SAMPLE_SIZE];
+    offsets[..offset_count].sort_unstable();
+    let mut unique_count = 0;
+    for index in 0..offset_count {
+        if unique_count == 0 || offsets[index] != offsets[unique_count - 1] {
+            offsets[unique_count] = offsets[index];
+            unique_count += 1;
+        }
+    }
+    let mut buffer = [0_u8; SAMPLE_SIZE];
     let mut hasher = DefaultHasher::new();
     size.hash(&mut hasher);
-    for offset in offsets {
+    for offset in offsets[..unique_count].iter().copied() {
         file.seek(io::SeekFrom::Start(offset))?;
         let count = (size - offset).min(SAMPLE_SIZE as u64) as usize;
         file.read_exact(&mut buffer[..count])?;
