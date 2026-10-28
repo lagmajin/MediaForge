@@ -807,6 +807,7 @@ fn print_json(
         .collect();
     groups.sort_by_key(|(size, _)| *size);
     println!("{{");
+    println!("  \"schema_version\": 1,");
     println!("  \"root\": {},", json_string(&root.to_string_lossy()));
     println!("  \"files\": {},", records.len());
     println!("  \"incomplete\": {},", skipped_paths > 0);
@@ -1320,7 +1321,7 @@ fn run_scan(args: &[String]) -> Result<(), String> {
             }
             "--help" | "-h" => {
                 println!(
-                    "Usage: mediaforge scan [PATH] [--json|--csv] [--include-hidden] [--strict] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--largest N]\n\nSummarize media and game assets in a folder. --min-size and --max-size select an inclusive size range. Permission and file-system errors are skipped by default; text/JSON report incomplete scans and CSV writes warnings to stderr. JSON includes incomplete, skipped_paths, up to 100 skipped_path_examples, skipped_paths_truncated, and the applied filters. Use --strict to fail on the first traversal error instead. --csv emits one row per matched file with path, type, extension, byte size, and modification time in Unix seconds; it always includes all matches. --largest controls how many biggest files are shown (default: 10 in text, 20 in JSON). Defaults to the current directory.\n\nTypes: video, audio, image, model, texture, project, other\nExtensions: comma-separated, case-insensitive (for example exr,tif); use none to select files without an extension\nSizes: bytes, KiB/MiB/GiB, or K/M/G (for example 500M); fractional values round up to the next byte"
+                    "Usage: mediaforge scan [PATH] [--json|--csv] [--include-hidden] [--strict] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--largest N]\n\nSummarize media and game assets in a folder. --min-size and --max-size select an inclusive byte range; fractional size values are rounded up to whole bytes. Permission and file-system errors are skipped by default; text/JSON report incomplete scans and CSV writes warnings to stderr. JSON uses schema_version 1 and includes incomplete, skipped_paths, up to 100 skipped_path_examples, skipped_paths_truncated, and the applied filters. Use --strict to fail on the first traversal error instead. --csv emits one row per matched file with path, type, extension, byte size, and modification time in Unix seconds; it always includes all matches. --largest controls how many biggest files are shown (default: 10 in text, 20 in JSON). Defaults to the current directory.\n\nTypes: video, audio, image, model, texture, project, other\nExtensions: comma-separated, case-insensitive (for example exr,tif); use none to select files without an extension\nSizes: bytes, KiB/MiB/GiB, or K/M/G (for example 500M); fractional values round up to the next byte"
                 );
                 return Ok(());
             }
