@@ -34,7 +34,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("binary", type=Path, help="Path to the compiled mediaforge executable")
     parser.add_argument("--files", type=int, default=5000, help="Number of synthetic files (default: 5000)")
-    parser.add_argument("--repeats", type=int, default=7, help="Runs per implementation (default: 7)")
+    parser.add_argument("--repeats", type=int, default=8, help="Runs per implementation (default: 8)")
     args = parser.parse_args()
     if args.files < 1 or args.repeats < 1:
         parser.error("--files and --repeats must be positive")
@@ -57,16 +57,20 @@ def main() -> int:
         }
         reports: dict[str, dict] = {}
         durations: dict[str, list[float]] = {name: [] for name in commands}
+        position_durations: dict[str, dict[str, list[float]]] = {
+            name: {"first": [], "second": []} for name in commands
+        }
         for name, command in commands.items():
             reports[name], _ = run_command(command, repo, env)
 
         names = list(commands)
         for repeat in range(args.repeats):
             order = names if repeat % 2 == 0 else list(reversed(names))
-            for name in order:
+            for position, name in enumerate(order):
                 report, elapsed = run_command(commands[name], repo, env)
                 reports[name] = report
                 durations[name].append(elapsed)
+                position_durations[name]["first" if position == 0 else "second"].append(elapsed)
 
         compared_fields = (
             "files",
@@ -86,9 +90,21 @@ def main() -> int:
         print(f"Warm-up runs: 1 per implementation; measured runs: {args.repeats}; generated files: {args.files}")
         for name in commands:
             values = ", ".join(f"{value * 1000:.2f}" for value in durations[name])
-            print(f"{name:>6}: median {medians[name] * 1000:.2f} ms; runs [{values}] ms")
-        print(f"Rust/Python median speed ratio: {medians['Python'] / medians['Rust']:.2f}x")
-        print("Implementations were warmed once and run in alternating order with a warm filesystem cache; use results as a comparative sample, not a hardware-independent guarantee.")
+            first = position_durations[name]["first"]
+            second = position_durations[name]["second"]
+            print(
+                f"{name:>6}: overall median {medians[name] * 1000:.2f} ms; "
+                f"first median {statistics.median(first) * 1000:.2f} ms ({len(first)} runs); "
+                f"second median {statistics.median(second) * 1000:.2f} ms ({len(second)} runs); "
+                f"all [{values}] ms"
+            )
+        for position in ("first", "second"):
+            rust = position_durations["Rust"][position]
+            python = position_durations["Python"][position]
+            if rust and python:
+                ratio = statistics.median(python) / statistics.median(rust)
+                print(f"Same-position Python/Rust median ratio ({position}): {ratio:.2f}x")
+        print("The implementations alternate order on one shared tree, so filesystem-cache and process-start effects can be substantial. Compare the same-position ratios and run lists; these are local samples, not hardware-independent guarantees.")
     return 0
 
 
