@@ -9291,7 +9291,7 @@ fn run_doctor(args: &[String]) -> Result<(), String> {
             "--json" => json = true,
             "--help" | "-h" => {
                 println!(
-                    "Usage: mediaforge doctor [--json]\n\nCheck whether ffmpeg and ffprobe are available on PATH. This does not verify optional codec support."
+                    "Usage: mediaforge doctor [--json]\n\nCheck whether ffmpeg and ffprobe are available on PATH, and whether FFmpeg includes the H.264/AAC, MP3, WAV, and FLAC encoders used by MediaForge."
                 );
                 return Ok(());
             }
