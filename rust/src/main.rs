@@ -924,30 +924,50 @@ fn run_project(args: &[String]) -> Result<(), String> {
             vec!["Library", "Temp", "Obj"],
         ));
     }
-    let unity_version = fs::read_to_string(root.join("ProjectSettings/ProjectVersion.txt"))
-        .ok()
-        .and_then(|contents| {
-            contents.lines().find_map(|line| {
-                line.trim()
-                    .strip_prefix("m_EditorVersion:")
-                    .map(str::trim)
-                    .filter(|version| !version.is_empty())
-                    .map(str::to_owned)
-            })
-        });
-    let unreal_files: Vec<_> = fs::read_dir(&root)
-        .into_iter()
-        .flatten()
-        .filter_map(Result::ok)
-        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_file()))
-        .filter(|entry| {
-            entry
+    let unity_version_path = root.join("ProjectSettings/ProjectVersion.txt");
+    let unity_version_contents = match fs::read_to_string(&unity_version_path) {
+        Ok(contents) => Some(contents),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+        Err(error) => {
+            return Err(format!(
+                "cannot read Unity version file {}: {error}",
+                unity_version_path.display()
+            ));
+        }
+    };
+    let unity_version = unity_version_contents.and_then(|contents| {
+        contents.lines().find_map(|line| {
+            line.trim()
+                .strip_prefix("m_EditorVersion:")
+                .map(str::trim)
+                .filter(|version| !version.is_empty())
+                .map(str::to_owned)
+        })
+    });
+    let root_entries = fs::read_dir(&root)
+        .map_err(|error| format!("cannot read project directory {}: {error}", root.display()))?
+        .map(|entry| {
+            entry.map_err(|error| format!("cannot read entry in {}: {error}", root.display()))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut unreal_files = Vec::new();
+    for entry in &root_entries {
+        let file_type = entry.file_type().map_err(|error| {
+            format!(
+                "cannot inspect project entry {}: {error}",
+                entry.path().display()
+            )
+        })?;
+        if file_type.is_file()
+            && entry
                 .path()
                 .extension()
                 .is_some_and(|extension| extension.eq_ignore_ascii_case("uproject"))
-        })
-        .map(|entry| entry.file_name().to_string_lossy().into_owned())
-        .collect();
+        {
+            unreal_files.push(entry.file_name().to_string_lossy().into_owned());
+        }
+    }
+    unreal_files.sort_by_key(|name: &String| name.to_lowercase());
     if !unreal_files.is_empty() {
         engines.push((
             "Unreal Engine",
@@ -963,16 +983,25 @@ fn run_project(args: &[String]) -> Result<(), String> {
     let ignored = ignored_by_git(&root)?;
     let mut pending = vec![root.clone()];
     while let Some(directory) = pending.pop() {
-        let entries = match fs::read_dir(&directory) {
-            Ok(entries) => entries,
-            Err(_) => continue,
-        };
-        for entry in entries.filter_map(Result::ok) {
+        let mut entries = fs::read_dir(&directory)
+            .map_err(|error| {
+                format!(
+                    "cannot read project directory {}: {error}",
+                    directory.display()
+                )
+            })?
+            .map(|entry| {
+                entry.map_err(|error| {
+                    format!("cannot read entry in {}: {error}", directory.display())
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        entries.sort_by_key(|entry| entry.file_name().to_string_lossy().to_lowercase());
+        for entry in entries {
             let path = entry.path();
-            let file_type = match entry.file_type() {
-                Ok(file_type) => file_type,
-                Err(_) => continue,
-            };
+            let file_type = entry.file_type().map_err(|error| {
+                format!("cannot inspect project entry {}: {error}", path.display())
+            })?;
             if file_type.is_symlink() {
                 continue;
             }
