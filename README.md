@@ -213,7 +213,7 @@ mediaforge rename ./Assets --suffix _final --apply
 mediaforge undo ./Assets
 ```
 
-`rename` previews filename transformations for regular files directly inside the directory. Repeated `--replace OLD NEW` rules run in order against the filename stem; `--prefix` and `--suffix` wrap the transformed stem, while `--extension-case lower|upper` normalizes the extension. `--extension` filters inputs, hidden files are skipped unless requested, and Git-ignored files are excluded. Existing destinations are skipped to prevent overwrites. Use `--apply` to rename; the shared recovery manifest lets `undo` restore original names.
+`rename` previews filename transformations for regular files directly inside the directory. Repeated `--replace OLD NEW` rules run in order against the filename stem; `--prefix` and `--suffix` wrap the transformed stem, while `--extension-case lower|upper` normalizes the extension. When a matching `<asset>.meta` sidecar exists, it is included in the same plan and moved before its asset so Unity keeps the asset's GUID and references. `--extension` filters assets, hidden files are skipped unless requested, and Git-ignored files are excluded. Existing destinations are skipped to prevent overwrites. Use `--apply` to rename; the shared recovery manifest lets `undo` restore original names.
 
 ## Pack a project for handoff
 

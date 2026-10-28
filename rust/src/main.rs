@@ -8471,7 +8471,7 @@ fn run_rename(args: &[String]) -> Result<(), String> {
             "--json" => json = true,
             "--help" | "-h" => {
                 println!(
-                    "Usage: mediaforge rename [PATH] [--replace OLD NEW] [--prefix TEXT] [--suffix TEXT] [--extension-case keep|lower|upper] [--extension EXTENSIONS] [--include-hidden] [--json] [--apply]\n\nPreview filename changes for files directly inside PATH. Repeated --replace rules run in order; prefix and suffix apply to the filename stem. Extensions are preserved unless --extension-case changes their case. The default is preview; --apply renames files and records an undo manifest for 'mediaforge undo PATH'."
+                    "Usage: mediaforge rename [PATH] [--replace OLD NEW] [--prefix TEXT] [--suffix TEXT] [--extension-case keep|lower|upper] [--extension EXTENSIONS] [--include-hidden] [--json] [--apply]\n\nPreview filename changes for files directly inside PATH. Repeated --replace rules run in order; prefix and suffix apply to the filename stem. Matching .meta sidecars are included and moved before their assets to preserve Unity GUIDs. Extensions are preserved unless --extension-case changes their case. The default is preview; --apply renames files and records an undo manifest for 'mediaforge undo PATH'."
                 );
                 return Ok(());
             }
@@ -8538,6 +8538,29 @@ fn run_rename(args: &[String]) -> Result<(), String> {
             skipped += 1;
             continue;
         }
+        if name_text.to_ascii_lowercase().ends_with(".meta") {
+            let asset_name = &name_text[..name_text.len() - ".meta".len()];
+            let asset_path = root.join(asset_name);
+            match fs::symlink_metadata(&asset_path) {
+                Ok(asset_metadata)
+                    if !asset_metadata.file_type().is_symlink()
+                        && (asset_metadata.is_file() || asset_metadata.is_dir()) =>
+                {
+                    if asset_metadata.is_dir() {
+                        skipped += 1;
+                    }
+                    continue;
+                }
+                Ok(_) => {}
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    return Err(format!(
+                        "cannot inspect Unity asset {}: {error}",
+                        asset_path.display()
+                    ));
+                }
+            }
+        }
         let metadata = fs::symlink_metadata(&source)
             .map_err(|error| format!("cannot inspect {}: {error}", source.display()))?;
         if (!include_hidden && metadata_has_hidden_attribute(&metadata))
@@ -8578,7 +8601,25 @@ fn run_rename(args: &[String]) -> Result<(), String> {
             _ => original_extension,
         };
         let target_name = format!("{new_stem}{new_extension}");
-        if validate_archive_component(&target_name).is_err() {
+        let sidecar_name = format!("{name_text}.meta");
+        let sidecar = root.join(&sidecar_name);
+        let sidecar_state = entry_state(&sidecar)
+            .map_err(|error| format!("cannot inspect sidecar {}: {error}", sidecar.display()))?;
+        if sidecar_state == EntryState::Other {
+            skipped += 1;
+            collision_count += 1;
+            if collision_examples.len() < 100 {
+                collision_examples.push((name_text.to_owned(), "sidecar_not_regular".to_owned()));
+            }
+            continue;
+        }
+        let sidecar_target_name = format!("{target_name}.meta");
+        if validate_archive_component(&target_name).is_err()
+            || target_name.encode_utf16().count() > 255
+            || (sidecar_state == EntryState::File
+                && (validate_archive_component(&sidecar_target_name).is_err()
+                    || sidecar_target_name.encode_utf16().count() > 255))
+        {
             skipped += 1;
             collision_count += 1;
             if collision_examples.len() < 100 {
@@ -8596,7 +8637,10 @@ fn run_rename(args: &[String]) -> Result<(), String> {
         if from_text == to_text {
             continue;
         }
-        if !planned_targets.insert(target_name.to_lowercase()) {
+        let sidecar_target_key = sidecar_target_name.to_lowercase();
+        if planned_targets.contains(&target_name.to_lowercase())
+            || (sidecar_state == EntryState::File && planned_targets.contains(&sidecar_target_key))
+        {
             skipped += 1;
             collision_count += 1;
             if collision_examples.len() < 100 {
@@ -8623,6 +8667,63 @@ fn run_rename(args: &[String]) -> Result<(), String> {
                 collision_examples.push((from_text, "destination_exists".to_owned()));
             }
             continue;
+        }
+        let sidecar_target = root.join(&sidecar_target_name);
+        let sidecar_case_only = if sidecar_state == EntryState::File {
+            let target_state = entry_state(&sidecar_target).map_err(|error| {
+                format!(
+                    "cannot inspect sidecar target {}: {error}",
+                    sidecar_target.display()
+                )
+            })?;
+            target_state == EntryState::File
+                && sidecar_name.to_lowercase() == sidecar_target_name.to_lowercase()
+                && paths_resolve_same_file(&sidecar, &sidecar_target).map_err(|error| {
+                    format!(
+                        "cannot compare {} and {}: {error}",
+                        sidecar.display(),
+                        sidecar_target.display()
+                    )
+                })?
+        } else {
+            true
+        };
+        let sidecar_target_state = if sidecar_state == EntryState::File {
+            entry_state(&sidecar_target).map_err(|error| {
+                format!(
+                    "cannot inspect sidecar target {}: {error}",
+                    sidecar_target.display()
+                )
+            })?
+        } else {
+            EntryState::Missing
+        };
+        if sidecar_state == EntryState::File
+            && sidecar_target_state != EntryState::Missing
+            && !sidecar_case_only
+        {
+            skipped += 1;
+            collision_count += 1;
+            if collision_examples.len() < 100 {
+                collision_examples.push((sidecar_name, "sidecar_destination_exists".to_owned()));
+            }
+            continue;
+        }
+        planned_targets.insert(target_name.to_lowercase());
+        if sidecar_state == EntryState::File {
+            planned_targets.insert(sidecar_target_key);
+        }
+        if sidecar_state == EntryState::File {
+            let sidecar_from = portable_relative_path(Path::new(&sidecar_name))
+                .ok_or_else(|| format!("sidecar path is not portable: {sidecar_name}"))?;
+            let sidecar_to =
+                portable_relative_path(Path::new(&sidecar_target_name)).ok_or_else(|| {
+                    format!("sidecar target path is not portable: {sidecar_target_name}")
+                })?;
+            moves.push(PlannedMove {
+                from: sidecar_from,
+                to: sidecar_to,
+            });
         }
         moves.push(PlannedMove {
             from: from_text,
