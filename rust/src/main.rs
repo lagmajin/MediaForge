@@ -2267,6 +2267,7 @@ fn validate_archive_component(component: &str) -> Result<(), String> {
         .split('.')
         .next()
         .unwrap_or(component)
+        .trim_end_matches(|character| character == ' ' || character == '.')
         .to_ascii_uppercase();
     let reserved = matches!(device_name.as_str(), "CON" | "PRN" | "AUX" | "NUL")
         || ["COM", "LPT"].iter().any(|prefix| {
@@ -2376,6 +2377,7 @@ fn run_pack(args: &[String]) -> Result<(), String> {
         records.retain(|record| types.contains(&record.kind));
     }
     let mut entries = Vec::<(&FileRecord, String)>::with_capacity(records.len());
+    let mut portable_names = HashMap::<String, String>::new();
     let mut total_bytes = 0_u64;
     for record in &records {
         let relative = record
@@ -2400,6 +2402,13 @@ fn run_pack(args: &[String]) -> Result<(), String> {
         if archive_name.len() > 1024 * 1024 {
             return Err(format!("archive path is too long: {archive_name}"));
         }
+        let portable_key = archive_name.to_lowercase();
+        if let Some(existing) = portable_names.get(&portable_key) {
+            return Err(format!(
+                "archive paths collide on case-insensitive filesystems: {existing:?} and {archive_name:?}"
+            ));
+        }
+        portable_names.insert(portable_key, archive_name.clone());
         entries.push((record, archive_name));
         total_bytes = total_bytes
             .checked_add(record.size)
