@@ -148,67 +148,61 @@ fn walk_with_skip_dirs(
     ignored: &[IgnoreRule],
     records: &mut Vec<FileRecord>,
 ) -> Result<(), String> {
-    let Ok(entries) = fs::read_dir(current) else {
-        return Ok(());
-    };
-    let mut entries: Vec<_> = entries.filter_map(Result::ok).collect();
-    sort_entries(&mut entries);
-    for entry in entries {
-        let path = entry.path();
-        let name = entry.file_name().to_string_lossy().into_owned();
-        let Ok(file_type) = entry.file_type() else {
+    let mut pending = vec![(current.to_path_buf(), Arc::<[IgnoreRule]>::from(ignored))];
+    while let Some((directory, active_ignored)) = pending.pop() {
+        let Ok(entries) = fs::read_dir(&directory) else {
             continue;
         };
-        if file_type.is_symlink() {
-            continue;
-        }
-        if file_type.is_dir() {
-            let relative = path
-                .strip_prefix(root)
-                .unwrap_or(&path)
-                .to_string_lossy()
-                .replace('\\', "/");
-            if skip_dirs.contains(&name.as_str())
-                || (!include_hidden && is_hidden(&name))
-                || is_ignored_directory(&relative, ignored)
-            {
-                continue;
-            }
-            let child_ignored = extend_ignore_rules(root, &path, ignored)?;
-            walk_with_skip_dirs(
-                root,
-                &path,
-                include_hidden,
-                skip_dirs,
-                child_ignored.as_ref(),
-                records,
-            )?;
-        } else if file_type.is_file() && (include_hidden || !is_hidden(&name)) {
-            let relative = path
-                .strip_prefix(root)
-                .unwrap_or(&path)
-                .to_string_lossy()
-                .replace('\\', "/");
-            if is_ignored(&relative, ignored) {
-                continue;
-            }
-            let Ok(metadata) = entry.metadata() else {
+        let mut entries: Vec<_> = entries.filter_map(Result::ok).collect();
+        sort_entries(&mut entries);
+        for entry in entries {
+            let path = entry.path();
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let Ok(file_type) = entry.file_type() else {
                 continue;
             };
-            let extension = path
-                .extension()
-                .and_then(|s| s.to_str())
-                .map(|s| format!(".{}", s.to_ascii_lowercase()))
-                .unwrap_or_else(|| "[no extension]".to_owned());
-            let kind = classify(&path);
-            records.push(FileRecord {
-                relative,
-                path,
-                size: metadata.len(),
-                modified: metadata.modified().ok(),
-                kind,
-                extension,
-            });
+            if file_type.is_symlink() {
+                continue;
+            }
+            let relative = path
+                .strip_prefix(root)
+                .unwrap_or(&path)
+                .to_string_lossy()
+                .replace('\\', "/");
+            if file_type.is_dir() {
+                if skip_dirs.contains(&name.as_str())
+                    || (!include_hidden && is_hidden(&name))
+                    || is_ignored_directory(&relative, &active_ignored)
+                {
+                    continue;
+                }
+                let child_rules = extend_ignore_rules(root, &path, active_ignored.as_ref())?;
+                let child_ignored = match child_rules {
+                    Cow::Borrowed(_) => Arc::clone(&active_ignored),
+                    Cow::Owned(rules) => Arc::from(rules),
+                };
+                pending.push((path, child_ignored));
+            } else if file_type.is_file()
+                && (include_hidden || !is_hidden(&name))
+                && !is_ignored(&relative, &active_ignored)
+            {
+                let Ok(metadata) = entry.metadata() else {
+                    continue;
+                };
+                let extension = path
+                    .extension()
+                    .and_then(|s| s.to_str())
+                    .map(|s| format!(".{}", s.to_ascii_lowercase()))
+                    .unwrap_or_else(|| "[no extension]".to_owned());
+                records.push(FileRecord {
+                    relative,
+                    kind: classify(&path),
+                    modified: metadata.modified().ok(),
+                    size: metadata.len(),
+                    extension,
+                    path,
+                });
+            }
         }
     }
     Ok(())
@@ -2461,6 +2455,7 @@ fn run_organize(args: &[String]) -> Result<(), String> {
     let ignored = ignored_by_git(&root)?;
     let mut records = Vec::new();
     walk(&root, &root, false, &ignored, &mut records)?;
+    records.sort_by(|left, right| left.relative.cmp(&right.relative));
     let mut moves = Vec::<PlannedMove>::new();
     let mut skipped = 0usize;
     let mut destinations = HashSet::<PathBuf>::new();
