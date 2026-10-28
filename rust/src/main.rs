@@ -9202,6 +9202,34 @@ fn tool_version(executable: &str) -> Result<String, String> {
         .to_owned())
 }
 
+fn ffmpeg_encoders() -> Result<HashSet<String>, String> {
+    let output = Command::new("ffmpeg")
+        .args(["-hide_banner", "-encoders"])
+        .output()
+        .map_err(|error| format!("unavailable: {error}"))?;
+    if !output.status.success() {
+        let detail = String::from_utf8_lossy(&output.stderr);
+        return Err(format!(
+            "failed: {}",
+            detail.lines().next().unwrap_or("command failed").trim()
+        ));
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    Ok(stdout
+        .lines()
+        .filter_map(|line| {
+            let mut fields = line.split_whitespace();
+            let flags = fields.next()?;
+            let name = fields.next()?;
+            (flags.len() == 6
+                && flags
+                    .chars()
+                    .all(|flag| flag.is_ascii_alphanumeric() || flag == '.'))
+            .then(|| name.to_owned())
+        })
+        .collect())
+}
+
 fn run_doctor(args: &[String]) -> Result<(), String> {
     let mut json = false;
     for arg in args {
@@ -9219,6 +9247,9 @@ fn run_doctor(args: &[String]) -> Result<(), String> {
     let ffmpeg = tool_version("ffmpeg");
     let ffprobe = tool_version("ffprobe");
     let ready = ffmpeg.is_ok() && ffprobe.is_ok();
+    let encoders = ffmpeg_encoders();
+    let has_encoder = |name: &str| encoders.as_ref().is_ok_and(|set| set.contains(name));
+    let proxy_ready = ffmpeg.is_ok() && has_encoder("libx264") && has_encoder("aac");
     if json {
         let tool_json = |result: &Result<String, String>| match result {
             Ok(version) => format!(
@@ -9228,9 +9259,17 @@ fn run_doctor(args: &[String]) -> Result<(), String> {
             Err(error) => format!("{{\"available\":false,\"error\":{}}}", json_string(error)),
         };
         println!(
-            "{{\"schema_version\":1,\"type\":\"doctor\",\"media_tools_ready\":{ready},\"ffmpeg\":{},\"ffprobe\":{}}}",
+            "{{\"schema_version\":1,\"type\":\"doctor\",\"media_tools_ready\":{ready},\"proxy_ready\":{proxy_ready},\"audio_encoders\":{{\"mp3\":{},\"wav\":{},\"flac\":{}}},\"ffmpeg\":{},\"ffprobe\":{},\"ffmpeg_encoder_check_error\":{}}}",
+            has_encoder("libmp3lame"),
+            has_encoder("pcm_s16le"),
+            has_encoder("flac"),
             tool_json(&ffmpeg),
-            tool_json(&ffprobe)
+            tool_json(&ffprobe),
+            encoders
+                .as_ref()
+                .err()
+                .map(|error| json_string(error))
+                .unwrap_or_else(|| "null".to_owned())
         );
     } else {
         println!("MediaForge {VERSION} · {}", env::consts::OS);
@@ -9248,7 +9287,28 @@ fn run_doctor(args: &[String]) -> Result<(), String> {
                 "missing a required executable"
             }
         );
-        println!("Note: this checks executable availability, not optional codec support.");
+        println!(
+            "Proxy encoders (H.264/AAC): {}",
+            if proxy_ready { "available" } else { "missing" }
+        );
+        println!(
+            "Audio encoders (MP3/WAV/FLAC): {}/{}/{}",
+            if has_encoder("libmp3lame") {
+                "available"
+            } else {
+                "missing"
+            },
+            if has_encoder("pcm_s16le") {
+                "available"
+            } else {
+                "missing"
+            },
+            if has_encoder("flac") {
+                "available"
+            } else {
+                "missing"
+            }
+        );
     }
     Ok(())
 }
