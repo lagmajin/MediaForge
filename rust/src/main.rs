@@ -2080,9 +2080,14 @@ fn run_dupes(args: &[String]) -> Result<(), String> {
                 }
             }
             if !matched {
+                let (representative, files) = if summary_only {
+                    (relative, None)
+                } else {
+                    (relative.clone(), Some(vec![relative]))
+                };
                 candidates.push(VerifiedDuplicateGroup {
-                    representative: relative.clone(),
-                    files: (!summary_only).then(|| vec![relative]),
+                    representative,
+                    files,
                     count: 1,
                 });
             }
