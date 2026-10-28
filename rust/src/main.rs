@@ -9464,22 +9464,25 @@ fn run_gitignore(args: &[String]) -> Result<(), String> {
         .collect();
 
     let emit_json = |result: &str, added: &[&str]| {
-        println!(
-            "{{\"schema_version\":1,\"type\":\"gitignore\",\"root\":{},\"target\":{},\"engines\":[{}],\"result\":{},\"patterns_added\":[{}]}}",
-            json_string(&root.to_string_lossy()),
-            json_string(&gitignore.to_string_lossy()),
-            engines
-                .iter()
-                .map(|engine| json_string(engine))
-                .collect::<Vec<_>>()
-                .join(","),
-            json_string(result),
-            added
-                .iter()
-                .map(|pattern| json_string(pattern))
-                .collect::<Vec<_>>()
-                .join(",")
-        );
+        write_json_stdout("gitignore JSON", |output| {
+            writeln!(
+                output,
+                "{{\"schema_version\":1,\"type\":\"gitignore\",\"root\":{},\"target\":{},\"engines\":[{}],\"result\":{},\"patterns_added\":[{}]}}",
+                json_string(&root.to_string_lossy()),
+                json_string(&gitignore.to_string_lossy()),
+                engines
+                    .iter()
+                    .map(|engine| json_string(engine))
+                    .collect::<Vec<_>>()
+                    .join(","),
+                json_string(result),
+                added
+                    .iter()
+                    .map(|pattern| json_string(pattern))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            )
+        })
     };
     if !json {
         println!("Project engines: {}", engines.join(", "));
@@ -9487,7 +9490,7 @@ fn run_gitignore(args: &[String]) -> Result<(), String> {
     }
     if missing.is_empty() {
         if json {
-            emit_json("already_current", &[]);
+            emit_json("already_current", &[])?;
         } else {
             println!("All recommended patterns are already present.");
         }
@@ -9495,7 +9498,7 @@ fn run_gitignore(args: &[String]) -> Result<(), String> {
     }
     if !apply {
         if json {
-            emit_json("preview", &missing);
+            emit_json("preview", &missing)?;
         } else {
             println!("{} new pattern(s):", missing.len());
             for pattern in &missing {
@@ -9539,7 +9542,7 @@ fn run_gitignore(args: &[String]) -> Result<(), String> {
         .collect();
     if to_add.is_empty() {
         if json {
-            emit_json("already_current", &[]);
+            emit_json("already_current", &[])?;
         } else {
             println!("No changes needed; the patterns were added by another process.");
         }
@@ -9590,7 +9593,7 @@ fn run_gitignore(args: &[String]) -> Result<(), String> {
         EntryState::Other => unreachable!(),
     }
     if json {
-        emit_json("applied", &to_add);
+        emit_json("applied", &to_add)?;
     } else {
         for pattern in &to_add {
             println!("  {pattern}");
