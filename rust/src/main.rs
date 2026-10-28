@@ -419,20 +419,35 @@ fn natural_name_cmp(left: &str, right: &str) -> std::cmp::Ordering {
         .then_with(|| left.cmp(right))
 }
 
-fn walk_with_skip_dirs_mode_counted(
-    root: &Path,
-    current: &Path,
+struct ScanWalkConfig<'a> {
+    root: &'a Path,
     include_hidden: bool,
-    skip_dirs: &[&str],
-    ignored: &[IgnoreRule],
-    filters: &ScanTraversalFilters<'_>,
-    records: &mut Vec<FileRecord>,
+    skip_dirs: &'a [&'a str],
+    ignored: &'a [IgnoreRule],
+    filters: &'a ScanTraversalFilters<'a>,
     strict: bool,
-    skipped_paths: &mut usize,
-    skipped_examples: &mut Vec<String>,
-) -> Result<(), String> {
+}
+
+struct ScanWalkResult {
+    records: Vec<FileRecord>,
+    skipped_paths: usize,
+    skipped_examples: Vec<String>,
+}
+
+fn walk_with_skip_dirs_mode_counted(config: ScanWalkConfig<'_>) -> Result<ScanWalkResult, String> {
+    let ScanWalkConfig {
+        root,
+        include_hidden,
+        skip_dirs,
+        ignored,
+        filters,
+        strict,
+    } = config;
+    let mut records = Vec::new();
+    let mut skipped_paths = 0_usize;
+    let mut skipped_examples = Vec::new();
     let mut pending = vec![(
-        current.to_path_buf(),
+        root.to_path_buf(),
         Arc::<[IgnoreRule]>::from(ignored),
         filters.path_contains_lower.is_empty(),
     )];
@@ -441,7 +456,7 @@ fn walk_with_skip_dirs_mode_counted(
         let entries = match fs::read_dir(&directory) {
             Ok(entries) => entries,
             Err(_) if !strict => {
-                record_skipped_path(&directory, skipped_paths, skipped_examples);
+                record_skipped_path(&directory, &mut skipped_paths, &mut skipped_examples);
                 continue;
             }
             Err(error) => {
@@ -633,7 +648,7 @@ fn walk_with_skip_dirs_mode_counted(
                 .map(|entry| match entry {
                     Ok(entry) => Ok(entry),
                     Err(_) if !strict => {
-                        record_skipped_path(&directory, skipped_paths, skipped_examples);
+                        record_skipped_path(&directory, &mut skipped_paths, &mut skipped_examples);
                         Err(None)
                     }
                     Err(error) => Err(Some(error)),
@@ -656,7 +671,7 @@ fn walk_with_skip_dirs_mode_counted(
                 let entry = match entry {
                     Ok(entry) => entry,
                     Err(_) if !strict => {
-                        record_skipped_path(&directory, skipped_paths, skipped_examples);
+                        record_skipped_path(&directory, &mut skipped_paths, &mut skipped_examples);
                         continue;
                     }
                     Err(error) => {
@@ -671,10 +686,14 @@ fn walk_with_skip_dirs_mode_counted(
         }
         drop(process_entry);
         for path in skipped_entries {
-            record_skipped_path(&path, skipped_paths, skipped_examples);
+            record_skipped_path(&path, &mut skipped_paths, &mut skipped_examples);
         }
     }
-    Ok(())
+    Ok(ScanWalkResult {
+        records,
+        skipped_paths,
+        skipped_examples,
+    })
 }
 
 fn record_skipped_path(path: &Path, count: &mut usize, examples: &mut Vec<String>) {
@@ -3255,9 +3274,6 @@ fn run_scan(args: &[String]) -> Result<(), String> {
         return Err(format!("expected a directory: {}", root.display()));
     }
     let ignored = ignored_by_git(&root)?;
-    let mut records = Vec::new();
-    let mut skipped_paths = 0_usize;
-    let mut skipped_examples = Vec::new();
     let path_contains_lower = path_contains
         .iter()
         .map(|value| value.to_lowercase())
@@ -3278,18 +3294,18 @@ fn run_scan(args: &[String]) -> Result<(), String> {
         exclude_path_contains_lower: &exclude_path_contains_lower,
         sort_entries_per_directory: csv_sort.is_none(),
     };
-    walk_with_skip_dirs_mode_counted(
-        &root,
-        &root,
+    let ScanWalkResult {
+        mut records,
+        skipped_paths,
+        skipped_examples,
+    } = walk_with_skip_dirs_mode_counted(ScanWalkConfig {
+        root: &root,
         include_hidden,
-        SKIP_DIRS,
-        &ignored,
-        &traversal_filters,
-        &mut records,
+        skip_dirs: SKIP_DIRS,
+        ignored: &ignored,
+        filters: &traversal_filters,
         strict,
-        &mut skipped_paths,
-        &mut skipped_examples,
-    )?;
+    })?;
     if let Some(sort) = csv_sort {
         match sort {
             ScanCsvSort::Size => records.sort_unstable_by(|left, right| {
