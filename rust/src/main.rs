@@ -274,8 +274,11 @@ fn human_size_wide(size: u128) -> String {
 }
 
 fn is_dot_hidden(path: &Path) -> bool {
-    path.file_name()
-        .is_some_and(|name| name.to_string_lossy().starts_with('.'))
+    path.file_name().is_some_and(is_dot_hidden_name)
+}
+
+fn is_dot_hidden_name(name: &std::ffi::OsStr) -> bool {
+    name.to_string_lossy().starts_with('.')
 }
 
 fn relative_path_text(root: &Path, path: &Path) -> String {
@@ -811,19 +814,22 @@ where
         let entries = fs::read_dir(&directory)
             .map_err(|error| format!("cannot read directory {}: {error}", directory.display()))?;
         let mut process_entry = |entry: fs::DirEntry| -> Result<(), String> {
-            let path = entry.path();
-            if !include_hidden && is_dot_hidden(&path) {
+            let name = entry.file_name();
+            if !include_hidden && is_dot_hidden_name(&name) {
                 return Ok(());
             }
-            let file_type = entry
-                .file_type()
-                .map_err(|error| format!("cannot inspect {}: {error}", path.display()))?;
+            let file_type = entry.file_type().map_err(|error| {
+                format!(
+                    "cannot inspect {}: {error}",
+                    directory.join(&name).display()
+                )
+            })?;
             if file_type.is_symlink() {
                 return Ok(());
             }
+            let path = directory.join(&name);
             let mut relative = None;
             if file_type.is_dir() {
-                let name = entry.file_name();
                 let name = name.to_string_lossy();
                 if directory_name_matches(&name, skip_dirs)
                     || (!include_hidden && has_hidden_attribute(&path))
