@@ -3559,8 +3559,13 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
         }
         for (bucket, stats) in &ordered_size_summaries {
             println!(
-                "  {bucket:<18} +{} -{} ~{}",
-                stats.added, stats.removed, stats.modified
+                "  {bucket:<18} +{} ({}) -{} ({}) ~{} (net {:+} B)",
+                stats.added,
+                human_size_wide(stats.added_bytes),
+                stats.removed,
+                human_size_wide(stats.removed_bytes),
+                stats.modified,
+                stats.modified_size_delta_bytes
             );
         }
         if !summary_only {
