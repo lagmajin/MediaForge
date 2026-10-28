@@ -5591,6 +5591,8 @@ fn run_probe_dir(args: &[String]) -> Result<(), String> {
 
     let next = std::sync::atomic::AtomicUsize::new(0);
     let completed = std::sync::atomic::AtomicUsize::new(0);
+    let output_failed = std::sync::atomic::AtomicBool::new(false);
+    let first_output_error = std::sync::Mutex::new(None::<String>);
     let stream_output = std::sync::Mutex::new(());
     let failures = std::sync::atomic::AtomicUsize::new(0);
     let retained_results = if stream_results { 0 } else { records.len() };
@@ -5602,10 +5604,16 @@ fn run_probe_dir(args: &[String]) -> Result<(), String> {
         for _ in 0..worker_count {
             scope.spawn(|| {
                 loop {
+                    if output_failed.load(std::sync::atomic::Ordering::Acquire) {
+                        break;
+                    }
                     let index = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     let Some(record) = records.get(index) else {
                         break;
                     };
+                    if output_failed.load(std::sync::atomic::Ordering::Acquire) {
+                        break;
+                    }
                     let selector = selected_kind.map(|kind| match kind {
                         Kind::Video => "v",
                         Kind::Audio => "a",
@@ -5654,11 +5662,20 @@ fn run_probe_dir(args: &[String]) -> Result<(), String> {
                         let _guard = stream_output.lock().expect("probe output lock poisoned");
                         let current =
                             completed.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-                        println!(
+                        let stdout = io::stdout();
+                        if let Err(error) = writeln!(
+                            stdout.lock(),
                             "{{\"type\":\"result\",\"current\":{current},\"total\":{},{}",
                             records.len(),
                             &json[1..]
-                        );
+                        ) {
+                            output_failed.store(true, std::sync::atomic::Ordering::Release);
+                            first_output_error
+                                .lock()
+                                .expect("probe output error lock poisoned")
+                                .get_or_insert_with(|| error.to_string());
+                            break;
+                        }
                     }
                     if !stream_results {
                         results
@@ -5670,6 +5687,12 @@ fn run_probe_dir(args: &[String]) -> Result<(), String> {
             });
         }
     });
+    if let Some(error) = first_output_error
+        .into_inner()
+        .map_err(|_| "probe output error could not be collected".to_owned())?
+    {
+        return Err(format!("could not write probe JSONL output: {error}"));
+    }
     let mut results = results
         .into_inner()
         .map_err(|_| "probe results could not be collected".to_owned())?;
@@ -6526,6 +6549,7 @@ fn run_scene_detect_dir(args: &[String]) -> Result<(), String> {
 
     let next = std::sync::atomic::AtomicUsize::new(0);
     let completed = std::sync::atomic::AtomicUsize::new(0);
+    let output_failed = std::sync::atomic::AtomicBool::new(false);
     let stream_output = std::sync::Mutex::new(());
     let failed = std::sync::atomic::AtomicUsize::new(0);
     let first_output_error = std::sync::Mutex::new(None::<String>);
@@ -6533,10 +6557,16 @@ fn run_scene_detect_dir(args: &[String]) -> Result<(), String> {
         for _ in 0..jobs.min(records.len()) {
             scope.spawn(|| {
                 loop {
+                    if output_failed.load(std::sync::atomic::Ordering::Acquire) {
+                        break;
+                    }
                     let index = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     let Some(record) = records.get(index) else {
                         break;
                     };
+                    if output_failed.load(std::sync::atomic::Ordering::Acquire) {
+                        break;
+                    }
                     let source_path = root.join(&record.path);
                     let result = detect_scene_cuts(
                         &source_path,
@@ -6587,6 +6617,7 @@ fn run_scene_detect_dir(args: &[String]) -> Result<(), String> {
                         failed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     }
                     if let Some(error) = write_error {
+                        output_failed.store(true, std::sync::atomic::Ordering::Release);
                         let mut first_error = first_output_error
                             .lock()
                             .expect("scene detection output error mutex poisoned");
