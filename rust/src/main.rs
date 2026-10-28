@@ -520,8 +520,10 @@ fn walk_strict_filtered(
         skip_dirs,
         ignored,
         filters,
-        Some(records),
-        |_| Ok(()),
+        |record| {
+            records.push(record);
+            Ok(())
+        },
     )
 }
 
@@ -532,11 +534,10 @@ fn walk_strict_filtered_with_callback<F>(
     skip_dirs: &[&str],
     ignored: &[IgnoreRule],
     filters: &StrictWalkFilters<'_>,
-    mut records: Option<&mut Vec<FileRecord>>,
     mut on_record: F,
 ) -> Result<(), String>
 where
-    F: FnMut(&FileRecord) -> Result<(), String>,
+    F: FnMut(FileRecord) -> Result<(), String>,
 {
     let mut pending = vec![(current.to_path_buf(), Arc::<[IgnoreRule]>::from(ignored))];
     while let Some((directory, active_ignored)) = pending.pop() {
@@ -636,10 +637,7 @@ where
                     kind,
                     extension,
                 };
-                on_record(&record)?;
-                if let Some(records) = records.as_deref_mut() {
-                    records.push(record);
-                }
+                on_record(record)?;
             }
         }
     }
@@ -2245,15 +2243,14 @@ fn run_dupes(args: &[String]) -> Result<(), String> {
             SKIP_DIRS,
             &ignored,
             &filters,
-            None,
             |record| {
                 match by_size.entry(record.size) {
                     std::collections::hash_map::Entry::Occupied(mut entry) => {
-                        entry.get_mut().push(Cow::Owned(record.relative.clone()));
+                        entry.get_mut().push(Cow::Owned(record.relative));
                     }
                     std::collections::hash_map::Entry::Vacant(entry) => {
                         entry.insert(DuplicateSizeBucket {
-                            first: Some(Cow::Owned(record.relative.clone())),
+                            first: Some(Cow::Owned(record.relative)),
                             duplicates: None,
                         });
                     }
