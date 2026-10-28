@@ -1019,6 +1019,9 @@ fn glob_matches(pattern: &[GlobToken], value: &str, scratch: &mut GlobMatchScrat
             matches!(token, GlobToken::Literal(expected) if Some(*expected) == characters.next())
         }) && characters.next().is_none();
     }
+    if let Some(matched) = match_simple_star_glob(pattern, value) {
+        return matched;
+    }
     if value.is_ascii() {
         return glob_matches_units(
             pattern,
@@ -1045,6 +1048,53 @@ fn glob_matches(pattern: &[GlobToken], value: &str, scratch: &mut GlobMatchScrat
         current,
         directory_prefix,
     )
+}
+
+fn match_simple_star_glob(pattern: &[GlobToken], value: &str) -> Option<bool> {
+    let suffix = matches!(
+        pattern.first(),
+        Some(GlobToken::Star {
+            crosses_slash: false
+        })
+    )
+    .then_some(&pattern[1..])
+    .filter(|tokens| {
+        tokens
+            .iter()
+            .all(|token| matches!(token, GlobToken::Literal(character) if *character != '/'))
+    });
+    if let Some(suffix) = suffix {
+        if value.contains('/') {
+            return Some(false);
+        }
+        let mut characters = value.chars().rev();
+        return Some(suffix.iter().rev().all(|token| {
+            matches!(token, GlobToken::Literal(expected) if Some(*expected) == characters.next())
+        }));
+    }
+
+    let prefix = matches!(
+        pattern.last(),
+        Some(GlobToken::Star {
+            crosses_slash: false
+        })
+    )
+    .then_some(&pattern[..pattern.len() - 1])
+    .filter(|tokens| {
+        tokens
+            .iter()
+            .all(|token| matches!(token, GlobToken::Literal(character) if *character != '/'))
+    });
+    if let Some(prefix) = prefix {
+        if value.contains('/') {
+            return Some(false);
+        }
+        let mut characters = value.chars();
+        return Some(prefix.iter().all(|token| {
+            matches!(token, GlobToken::Literal(expected) if Some(*expected) == characters.next())
+        }));
+    }
+    None
 }
 
 fn glob_matches_path_prefix(
