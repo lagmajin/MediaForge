@@ -1162,7 +1162,7 @@ fn print_json(
     let mut by_type: BTreeMap<&str, (u64, u128)> = BTreeMap::new();
     let mut extensions: BTreeMap<&str, usize> = BTreeMap::new();
     let mut extension_bytes: BTreeMap<&str, u128> = BTreeMap::new();
-    let mut by_size: HashMap<u64, (usize, Vec<&str>)> = HashMap::new();
+    let mut by_size: HashMap<u64, usize> = HashMap::new();
     let total_bytes: u128 = records.iter().map(|record| u128::from(record.size)).sum();
     for record in records {
         let entry = by_type.entry(record.kind.as_str()).or_default();
@@ -1170,20 +1170,22 @@ fn print_json(
         entry.1 += u128::from(record.size);
         *extensions.entry(&record.extension).or_default() += 1;
         *extension_bytes.entry(&record.extension).or_default() += u128::from(record.size);
-        let size_group = by_size.entry(record.size).or_default();
-        size_group.0 += 1;
-        if include_same_size {
-            size_group.1.push(&record.relative);
-        }
+        *by_size.entry(record.size).or_default() += 1;
     }
     let largest = largest_records(records, largest_limit);
     let mut groups: Vec<_> = by_size
         .into_iter()
-        .filter(|(_, (count, _))| *count > 1)
+        .filter(|(_, count)| *count > 1)
+        .map(|(size, count)| (size, count, Vec::<&str>::new()))
         .collect();
-    groups.sort_by_key(|(size, _)| *size);
+    groups.sort_by_key(|(size, _, _)| *size);
     if include_same_size {
-        for (_, (_, files)) in &mut groups {
+        for record in records {
+            if let Ok(index) = groups.binary_search_by_key(&record.size, |(size, _, _)| *size) {
+                groups[index].2.push(&record.relative);
+            }
+        }
+        for (_, _, files) in &mut groups {
             files.sort_by_cached_key(|file| (file.to_lowercase(), (*file).to_owned()));
         }
     }
@@ -1274,7 +1276,7 @@ fn print_json(
     }
     if include_same_size {
         println!("  ],\n  \"same_size_candidates\": [");
-        for (index, (size, (_, files))) in groups.iter().enumerate() {
+        for (index, (size, _, files)) in groups.iter().enumerate() {
             let comma = if index + 1 == groups.len() { "" } else { "," };
             let file_values = files
                 .iter()
