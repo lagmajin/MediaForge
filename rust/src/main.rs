@@ -2228,7 +2228,7 @@ fn run_scan_config(args: &[String]) -> Result<(), String> {
 
 fn files_identical(left: &Path, right: &Path, size: u64) -> io::Result<bool> {
     const DEFAULT_BUFFER_SIZE: usize = 8 * 1024;
-    const MAX_BUFFER_SIZE: usize = 256 * 1024;
+    const MAX_BUFFER_SIZE: usize = 1024 * 1024;
     let capacity = usize::try_from(size)
         .unwrap_or(MAX_BUFFER_SIZE)
         .clamp(DEFAULT_BUFFER_SIZE, MAX_BUFFER_SIZE);
