@@ -481,6 +481,34 @@ fn walk_strict(
     ignored: &[IgnoreRule],
     records: &mut Vec<FileRecord>,
 ) -> Result<(), String> {
+    walk_strict_filtered(
+        root,
+        current,
+        include_hidden,
+        skip_dirs,
+        ignored,
+        &StrictWalkFilters::default(),
+        records,
+    )
+}
+
+#[derive(Default)]
+struct StrictWalkFilters<'a> {
+    kinds: Option<&'a [Kind]>,
+    extensions: Option<&'a HashSet<String>>,
+    min_size: Option<u64>,
+    max_size: Option<u64>,
+}
+
+fn walk_strict_filtered(
+    root: &Path,
+    current: &Path,
+    include_hidden: bool,
+    skip_dirs: &[&str],
+    ignored: &[IgnoreRule],
+    filters: &StrictWalkFilters<'_>,
+    records: &mut Vec<FileRecord>,
+) -> Result<(), String> {
     let mut pending = vec![(current.to_path_buf(), Arc::<[IgnoreRule]>::from(ignored))];
     while let Some((directory, active_ignored)) = pending.pop() {
         let entries = fs::read_dir(&directory)
@@ -495,7 +523,9 @@ fn walk_strict(
         sort_entries(&mut entries);
         for entry in entries {
             let path = entry.path();
-            let name = entry.file_name().to_string_lossy().into_owned();
+            if !include_hidden && is_dot_hidden(&path) {
+                continue;
+            }
             let file_type = entry
                 .file_type()
                 .map_err(|error| format!("cannot inspect {}: {error}", path.display()))?;
@@ -508,6 +538,8 @@ fn walk_strict(
                 .to_string_lossy()
                 .replace('\\', "/");
             if file_type.is_dir() {
+                let name = entry.file_name();
+                let name = name.to_string_lossy();
                 if directory_name_matches(&name, skip_dirs)
                     || (!include_hidden && is_hidden(&path))
                     || is_ignored_directory(&relative, &active_ignored)
@@ -521,7 +553,17 @@ fn walk_strict(
                 };
                 pending.push((path, child_ignored));
             } else if file_type.is_file() && !is_ignored(&relative, &active_ignored) {
-                if !include_hidden && is_dot_hidden(&path) {
+                let extension = path
+                    .extension()
+                    .and_then(|value| value.to_str())
+                    .map(|value| format!(".{}", value.to_ascii_lowercase()))
+                    .unwrap_or_else(|| "[no extension]".to_owned());
+                let kind = classify(&path);
+                if filters.kinds.is_some_and(|values| !values.contains(&kind))
+                    || filters
+                        .extensions
+                        .is_some_and(|values| !values.contains(&extension))
+                {
                     continue;
                 }
                 let metadata = entry
@@ -530,17 +572,18 @@ fn walk_strict(
                 if !include_hidden && metadata_has_hidden_attribute(&metadata) {
                     continue;
                 }
-                let extension = path
-                    .extension()
-                    .and_then(|value| value.to_str())
-                    .map(|value| format!(".{}", value.to_ascii_lowercase()))
-                    .unwrap_or_else(|| "[no extension]".to_owned());
+                let size = metadata.len();
+                if filters.min_size.is_some_and(|minimum| size < minimum)
+                    || filters.max_size.is_some_and(|maximum| size > maximum)
+                {
+                    continue;
+                }
                 records.push(FileRecord {
                     relative,
                     path: path.clone(),
-                    size: metadata.len(),
+                    size,
                     modified: metadata.modified().ok(),
-                    kind: classify(&path),
+                    kind,
                     extension,
                 });
             }
@@ -1900,24 +1943,24 @@ fn run_dupes(args: &[String]) -> Result<(), String> {
     }
     let ignored = ignored_by_git(&root)?;
     let mut records = Vec::new();
-    walk_strict(
+    let kinds = kind_filter.map(|kind| [kind]);
+    let filters = StrictWalkFilters {
+        kinds: kinds.as_ref().map(|values| values.as_slice()),
+        extensions: extension_filter.as_ref(),
+        min_size: Some(min_size),
+        max_size,
+    };
+    walk_strict_filtered(
         &root,
         &root,
         include_hidden,
         SKIP_DIRS,
         &ignored,
+        &filters,
         &mut records,
     )?;
-    if let Some(kind) = kind_filter {
-        records.retain(|record| record.kind == kind);
-    }
-    if let Some(extensions) = &extension_filter {
-        records.retain(|record| extensions.contains(&record.extension));
-    }
     let mut by_size: BTreeMap<u64, Vec<String>> = BTreeMap::new();
-    for record in records.into_iter().filter(|record| {
-        record.size >= min_size && max_size.map_or(true, |max_size| record.size <= max_size)
-    }) {
+    for record in records {
         by_size
             .entry(record.size)
             .or_default()
@@ -4059,23 +4102,23 @@ fn run_probe_dir(args: &[String]) -> Result<(), String> {
     }
     let ignored = ignored_by_git(&root)?;
     let mut records = Vec::new();
-    walk_strict(
+    let selected_kinds =
+        selected_kind.map_or_else(|| vec![Kind::Video, Kind::Audio], |kind| vec![kind]);
+    let filters = StrictWalkFilters {
+        kinds: Some(&selected_kinds),
+        extensions: extensions.as_ref(),
+        min_size: Some(min_size),
+        max_size,
+    };
+    walk_strict_filtered(
         &root,
         &root,
         include_hidden,
         SKIP_DIRS,
         &ignored,
+        &filters,
         &mut records,
     )?;
-    records.retain(|record| matches!(record.kind, Kind::Video | Kind::Audio));
-    if let Some(kind) = selected_kind {
-        records.retain(|record| record.kind == kind);
-    }
-    if let Some(extensions) = extensions {
-        records.retain(|record| extensions.contains(&record.extension));
-    }
-    records
-        .retain(|record| record.size >= min_size && max_size.is_none_or(|max| record.size <= max));
     records.sort_by(|left, right| left.relative.cmp(&right.relative));
     if records.is_empty() {
         if csv {
@@ -4801,18 +4844,21 @@ fn run_scene_detect_dir(args: &[String]) -> Result<(), String> {
     }
     let ignored = ignored_by_git(&root)?;
     let mut records = Vec::new();
-    walk_strict(
+    let kinds = [Kind::Video];
+    let filters = StrictWalkFilters {
+        kinds: Some(&kinds),
+        extensions: extensions.as_ref(),
+        ..StrictWalkFilters::default()
+    };
+    walk_strict_filtered(
         &root,
         &root,
         include_hidden,
         SKIP_DIRS,
         &ignored,
+        &filters,
         &mut records,
     )?;
-    records.retain(|record| record.kind == Kind::Video);
-    if let Some(extensions) = extensions {
-        records.retain(|record| extensions.contains(&record.extension));
-    }
     records.sort_by(|left, right| left.relative.cmp(&right.relative));
 
     let executable = env::current_exe()
@@ -5560,18 +5606,21 @@ fn run_proxy_dir(args: &[String]) -> Result<(), String> {
     let output_inside_root = output_root.starts_with(&root);
     let ignored = ignored_by_git(&root)?;
     let mut records = Vec::new();
-    walk_strict(
+    let kinds = [Kind::Video];
+    let filters = StrictWalkFilters {
+        kinds: Some(&kinds),
+        extensions: extensions.as_ref(),
+        ..StrictWalkFilters::default()
+    };
+    walk_strict_filtered(
         &root,
         &root,
         include_hidden,
         SKIP_DIRS,
         &ignored,
+        &filters,
         &mut records,
     )?;
-    records.retain(|record| record.kind == Kind::Video);
-    if let Some(extensions) = extensions {
-        records.retain(|record| extensions.contains(&record.extension));
-    }
     records.sort_by(|left, right| left.relative.cmp(&right.relative));
     if output_inside_root {
         records.retain(|record| !record.path.starts_with(&output_root));
@@ -6091,18 +6140,21 @@ fn run_extract_audio_dir(args: &[String]) -> Result<(), String> {
     let output_inside_root = output_root.starts_with(&root);
     let ignored = ignored_by_git(&root)?;
     let mut records = Vec::new();
-    walk_strict(
+    let kinds = [Kind::Video, Kind::Audio];
+    let filters = StrictWalkFilters {
+        kinds: Some(&kinds),
+        extensions: extensions.as_ref(),
+        ..StrictWalkFilters::default()
+    };
+    walk_strict_filtered(
         &root,
         &root,
         include_hidden,
         SKIP_DIRS,
         &ignored,
+        &filters,
         &mut records,
     )?;
-    records.retain(|record| matches!(record.kind, Kind::Video | Kind::Audio));
-    if let Some(extensions) = extensions {
-        records.retain(|record| extensions.contains(&record.extension));
-    }
     records.sort_by(|left, right| left.relative.cmp(&right.relative));
     if output_inside_root {
         records.retain(|record| !record.path.starts_with(&output_root));
@@ -7982,12 +8034,20 @@ fn run_organize(args: &[String]) -> Result<(), String> {
     if !include_generated {
         skip_dirs.extend_from_slice(PACK_GENERATED_DIRS);
     }
-    walk_strict(
+    let kinds = kind_filter.map(|kind| [kind]);
+    let filters = StrictWalkFilters {
+        kinds: kinds.as_ref().map(|values| values.as_slice()),
+        extensions: extension_filter.as_ref(),
+        min_size: Some(min_size),
+        ..StrictWalkFilters::default()
+    };
+    walk_strict_filtered(
         &root,
         &root,
         include_hidden,
         &skip_dirs,
         &ignored,
+        &filters,
         &mut records,
     )?;
     records.sort_by(|left, right| left.relative.cmp(&right.relative));
@@ -7995,14 +8055,6 @@ fn run_organize(args: &[String]) -> Result<(), String> {
     let mut skipped = 0usize;
     let mut destinations = HashSet::<PathBuf>::new();
     for record in records {
-        if kind_filter.is_some_and(|kind| record.kind != kind)
-            || extension_filter
-                .as_ref()
-                .is_some_and(|extensions| !extensions.contains(&record.extension))
-            || record.size < min_size
-        {
-            continue;
-        }
         let relative = match record.path.strip_prefix(&root) {
             Ok(relative) => relative,
             Err(_) => {
@@ -9184,24 +9236,24 @@ fn run_pack(args: &[String]) -> Result<(), String> {
     if !include_generated {
         skip_dirs.extend_from_slice(PACK_GENERATED_DIRS);
     }
-    walk_strict(
+    let kinds = selected_types
+        .as_ref()
+        .map(|types| types.iter().copied().collect::<Vec<_>>());
+    let filters = StrictWalkFilters {
+        kinds: kinds.as_deref(),
+        extensions: selected_extensions.as_ref(),
+        min_size: Some(min_size),
+        max_size,
+    };
+    walk_strict_filtered(
         &root,
         &root,
         include_hidden,
         &skip_dirs,
         &ignored,
+        &filters,
         &mut records,
     )?;
-    if let Some(types) = &selected_types {
-        records.retain(|record| types.contains(&record.kind));
-    }
-    if let Some(extensions) = &selected_extensions {
-        records.retain(|record| extensions.contains(&record.extension));
-    }
-    records.retain(|record| record.size >= min_size);
-    if let Some(max_size) = max_size {
-        records.retain(|record| record.size <= max_size);
-    }
     let mut entries = Vec::<(&FileRecord, String)>::with_capacity(records.len());
     let mut portable_names = HashMap::<String, (String, bool)>::new();
     let mut total_bytes = 0_u64;
