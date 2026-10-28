@@ -2921,9 +2921,15 @@ fn pack_file(
     let mut remaining = record.size;
     while remaining > 0 {
         let requested = remaining.min(copy_buffer.len() as u64) as usize;
-        let count = input
-            .read(&mut copy_buffer[..requested])
-            .map_err(|error| format!("could not read {}: {error}", record.path.display()))?;
+        let count = loop {
+            match input.read(&mut copy_buffer[..requested]) {
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+                Err(error) => {
+                    return Err(format!("could not read {}: {error}", record.path.display()));
+                }
+                Ok(count) => break count,
+            }
+        };
         if count == 0 {
             break;
         }
