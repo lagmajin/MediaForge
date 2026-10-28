@@ -8470,6 +8470,7 @@ fn run_unity_meta(args: &[String]) -> Result<(), String> {
     let mut missing_guid = Vec::<String>::new();
     let mut invalid_guid = Vec::<String>::new();
     let mut guid_paths = HashMap::<[u8; 16], (String, Option<Vec<String>>)>::new();
+    let mut summary_guids = HashSet::<[u8; 16]>::new();
     let assets_meta = unity_meta_sidecar(&assets);
     if !is_real_file(&assets_meta) {
         missing_meta_count += 1;
@@ -8486,17 +8487,11 @@ fn run_unity_meta(args: &[String]) -> Result<(), String> {
         })?;
         match unity_meta_guid(&contents) {
             Ok(Some(guid)) => {
-                guid_paths.insert(
-                    guid,
-                    (
-                        if summary {
-                            String::new()
-                        } else {
-                            "Assets.meta".to_owned()
-                        },
-                        None,
-                    ),
-                );
+                if summary {
+                    summary_guids.insert(guid);
+                } else {
+                    guid_paths.insert(guid, ("Assets.meta".to_owned(), None));
+                }
             }
             Ok(None) => {
                 missing_guid_count += 1;
@@ -8591,24 +8586,25 @@ fn run_unity_meta(args: &[String]) -> Result<(), String> {
                             )
                         })?;
                         match unity_meta_guid(&contents) {
-                            Ok(Some(guid)) => match guid_paths.entry(guid) {
-                                std::collections::hash_map::Entry::Vacant(entry) => {
-                                    entry.insert((
-                                        if summary { String::new() } else { relative },
-                                        None,
-                                    ));
-                                }
-                                std::collections::hash_map::Entry::Occupied(mut entry) => {
-                                    if summary {
+                            Ok(Some(guid)) => {
+                                if summary {
+                                    if !summary_guids.insert(guid) {
                                         summary_duplicate_guid_count += 1;
-                                    } else {
-                                        let (first, duplicates) = entry.get_mut();
-                                        let paths = duplicates
-                                            .get_or_insert_with(|| vec![std::mem::take(first)]);
-                                        paths.push(relative);
+                                    }
+                                } else {
+                                    match guid_paths.entry(guid) {
+                                        std::collections::hash_map::Entry::Vacant(entry) => {
+                                            entry.insert((relative, None));
+                                        }
+                                        std::collections::hash_map::Entry::Occupied(mut entry) => {
+                                            let (first, duplicates) = entry.get_mut();
+                                            let paths = duplicates
+                                                .get_or_insert_with(|| vec![std::mem::take(first)]);
+                                            paths.push(relative);
+                                        }
                                     }
                                 }
-                            },
+                            }
                             Ok(None) => {
                                 missing_guid_count += 1;
                                 if !summary {
