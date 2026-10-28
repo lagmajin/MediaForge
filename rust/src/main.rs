@@ -485,8 +485,10 @@ fn walk_with_skip_dirs_mode_counted(config: ScanWalkConfig<'_>) -> Result<ScanWa
                 ));
             }
         };
-        let mut skipped_entries = Vec::new();
-        let mut process_entry = |entry: fs::DirEntry| -> Result<(), String> {
+        let mut process_entry = |entry: fs::DirEntry,
+                                 skipped_paths: &mut usize,
+                                 skipped_examples: &mut Vec<String>|
+         -> Result<(), String> {
             let name = entry.file_name();
             if !include_hidden && is_dot_hidden_name(&name) {
                 return Ok(());
@@ -494,7 +496,7 @@ fn walk_with_skip_dirs_mode_counted(config: ScanWalkConfig<'_>) -> Result<ScanWa
             let file_type = match entry.file_type() {
                 Ok(file_type) => file_type,
                 Err(_) if !strict => {
-                    skipped_entries.push(directory.join(&name));
+                    record_skipped_path(&directory.join(&name), skipped_paths, skipped_examples);
                     return Ok(());
                 }
                 Err(error) => {
@@ -611,7 +613,7 @@ fn walk_with_skip_dirs_mode_counted(config: ScanWalkConfig<'_>) -> Result<ScanWa
                 let metadata = match entry.metadata() {
                     Ok(metadata) => metadata,
                     Err(_) if !strict => {
-                        skipped_entries.push(path.clone());
+                        record_skipped_path(&path, skipped_paths, skipped_examples);
                         return Ok(());
                     }
                     Err(error) => {
@@ -696,7 +698,7 @@ fn walk_with_skip_dirs_mode_counted(config: ScanWalkConfig<'_>) -> Result<ScanWa
                 })?;
             sort_entries(&mut entries);
             for entry in entries {
-                process_entry(entry)?;
+                process_entry(entry, &mut skipped_paths, &mut skipped_examples)?;
             }
         } else {
             for entry in entries {
@@ -713,12 +715,8 @@ fn walk_with_skip_dirs_mode_counted(config: ScanWalkConfig<'_>) -> Result<ScanWa
                         ));
                     }
                 };
-                process_entry(entry)?;
+                process_entry(entry, &mut skipped_paths, &mut skipped_examples)?;
             }
-        }
-        drop(process_entry);
-        for path in skipped_entries {
-            record_skipped_path(&path, &mut skipped_paths, &mut skipped_examples);
         }
     }
     Ok(ScanWalkResult {
