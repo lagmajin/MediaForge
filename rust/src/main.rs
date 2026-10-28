@@ -1000,12 +1000,18 @@ where
 
 #[derive(Clone, Debug)]
 struct IgnoreRule {
-    pattern: Vec<GlobToken>,
+    pattern: IgnorePattern,
     base: Arc<str>,
     negated: bool,
     anchored: bool,
     directory_only: bool,
     has_slash: bool,
+}
+
+#[derive(Clone, Debug)]
+enum IgnorePattern {
+    Literal(String),
+    Glob(Vec<GlobToken>),
 }
 
 #[derive(Clone, Debug)]
@@ -1097,9 +1103,12 @@ fn parse_ignore_rule(line: &str) -> Option<IgnoreRule> {
         return None;
     }
     let pattern = parse_glob_pattern(pattern, anchored)?;
-    let has_slash = pattern
-        .iter()
-        .any(|token| matches!(token, GlobToken::Literal('/') | GlobToken::AnyDirectories));
+    let has_slash = match &pattern {
+        IgnorePattern::Literal(value) => value.contains('/'),
+        IgnorePattern::Glob(tokens) => tokens
+            .iter()
+            .any(|token| matches!(token, GlobToken::Literal('/') | GlobToken::AnyDirectories)),
+    };
     Some(IgnoreRule {
         pattern,
         base: Arc::from(""),
@@ -1128,7 +1137,7 @@ fn has_odd_backslashes_before_last(value: &str) -> bool {
     backslashes % 2 == 1
 }
 
-fn parse_glob_pattern(pattern: &str, anchored: bool) -> Option<Vec<GlobToken>> {
+fn parse_glob_pattern(pattern: &str, anchored: bool) -> Option<IgnorePattern> {
     let mut tokens = Vec::new();
     let characters: Vec<_> = pattern.chars().collect();
     let mut index = 0;
@@ -1202,19 +1211,28 @@ fn parse_glob_pattern(pattern: &str, anchored: bool) -> Option<Vec<GlobToken>> {
         }
         index += 1;
     }
-    Some(tokens)
-}
-
-fn glob_matches(pattern: &[GlobToken], value: &str, scratch: &mut GlobMatchScratch) -> bool {
-    if pattern
+    if tokens
         .iter()
         .all(|token| matches!(token, GlobToken::Literal(_)))
     {
-        let mut characters = value.chars();
-        return pattern.iter().all(|token| {
-            matches!(token, GlobToken::Literal(expected) if Some(*expected) == characters.next())
-        }) && characters.next().is_none();
+        let mut literal = String::with_capacity(pattern.len());
+        for token in tokens {
+            let GlobToken::Literal(character) = token else {
+                unreachable!("literal-only glob contains a non-literal token");
+            };
+            literal.push(character);
+        }
+        Some(IgnorePattern::Literal(literal))
+    } else {
+        Some(IgnorePattern::Glob(tokens))
     }
+}
+
+fn glob_matches(pattern: &IgnorePattern, value: &str, scratch: &mut GlobMatchScratch) -> bool {
+    let pattern = match pattern {
+        IgnorePattern::Literal(literal) => return literal == value,
+        IgnorePattern::Glob(pattern) => pattern,
+    };
     if let Some(matched) = match_simple_star_glob(pattern, value) {
         return matched;
     }
@@ -1294,7 +1312,7 @@ fn match_simple_star_glob(pattern: &[GlobToken], value: &str) -> Option<bool> {
 }
 
 fn glob_matches_path_prefix(
-    pattern: &[GlobToken],
+    pattern: &IgnorePattern,
     value: &str,
     scratch: &mut GlobMatchScratch,
 ) -> bool {
