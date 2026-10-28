@@ -665,6 +665,19 @@ enum GlobToken {
     Class { negated: bool, members: Vec<char> },
 }
 
+#[derive(Default)]
+struct GlobMatchScratch {
+    value: Vec<char>,
+    previous: Vec<bool>,
+    current: Vec<bool>,
+    directory_prefix: Vec<bool>,
+}
+
+thread_local! {
+    static GLOB_MATCH_SCRATCH: std::cell::RefCell<GlobMatchScratch> =
+        std::cell::RefCell::new(GlobMatchScratch::default());
+}
+
 fn ignored_by_git(root: &Path) -> Result<Vec<IgnoreRule>, String> {
     Ok(extend_ignore_rules(root, root, &[])?.into_owned())
 }
@@ -839,7 +852,7 @@ fn parse_glob_pattern(pattern: &str, anchored: bool) -> Option<Vec<GlobToken>> {
     Some(tokens)
 }
 
-fn glob_matches(pattern: &[GlobToken], value: &str) -> bool {
+fn glob_matches(pattern: &[GlobToken], value: &str, scratch: &mut GlobMatchScratch) -> bool {
     if pattern
         .iter()
         .all(|token| matches!(token, GlobToken::Literal(_)))
@@ -849,15 +862,32 @@ fn glob_matches(pattern: &[GlobToken], value: &str) -> bool {
             matches!(token, GlobToken::Literal(expected) if Some(*expected) == characters.next())
         }) && characters.next().is_none();
     }
-    let value: Vec<char> = value.chars().collect();
-    glob_matches_chars(pattern, &value)
+    scratch.value.clear();
+    scratch.value.extend(value.chars());
+    let GlobMatchScratch {
+        value,
+        previous,
+        current,
+        directory_prefix,
+    } = scratch;
+    glob_matches_chars(pattern, value, previous, current, directory_prefix)
 }
 
-fn glob_matches_path_prefix(pattern: &[GlobToken], value: &str) -> bool {
-    glob_matches(pattern, value)
+fn glob_matches_path_prefix(
+    pattern: &[GlobToken],
+    value: &str,
+    scratch: &mut GlobMatchScratch,
+) -> bool {
+    glob_matches(pattern, value, scratch)
 }
 
-fn glob_matches_chars(pattern: &[GlobToken], value: &[char]) -> bool {
+fn glob_matches_chars(
+    pattern: &[GlobToken],
+    value: &[char],
+    previous: &mut Vec<bool>,
+    current: &mut Vec<bool>,
+    directory_prefix: &mut Vec<bool>,
+) -> bool {
     if pattern
         .iter()
         .all(|token| matches!(token, GlobToken::Literal(_)))
@@ -867,9 +897,13 @@ fn glob_matches_chars(pattern: &[GlobToken], value: &[char]) -> bool {
                 |(token, character)| matches!(token, GlobToken::Literal(expected) if expected == character),
             );
     }
-    let mut previous = vec![false; value.len() + 1];
-    let mut current = vec![false; value.len() + 1];
-    let mut directory_prefix = vec![false; value.len() + 1];
+    let state_len = value.len() + 1;
+    previous.resize(state_len, false);
+    previous.fill(false);
+    current.resize(state_len, false);
+    current.fill(false);
+    directory_prefix.resize(state_len, false);
+    directory_prefix.fill(false);
     previous[0] = true;
     for token in pattern {
         current.fill(false);
@@ -910,7 +944,7 @@ fn glob_matches_chars(pattern: &[GlobToken], value: &[char]) -> bool {
                 }
             }
         }
-        std::mem::swap(&mut previous, &mut current);
+        std::mem::swap(previous, current);
     }
     previous[value.len()]
 }
@@ -935,7 +969,12 @@ fn character_class_matches(members: &[char], negated: bool, character: char) -> 
     included != negated
 }
 
-fn rule_matches_path(rule: &IgnoreRule, relative: &str, target_is_directory: bool) -> bool {
+fn rule_matches_path(
+    rule: &IgnoreRule,
+    relative: &str,
+    target_is_directory: bool,
+    scratch: &mut GlobMatchScratch,
+) -> bool {
     let relative = if rule.base.is_empty() {
         relative
     } else if let Some(relative) = relative
@@ -953,7 +992,7 @@ fn rule_matches_path(rule: &IgnoreRule, relative: &str, target_is_directory: boo
             Some((part, parts.peek().is_some() || target_is_directory))
         })
         .any(|(part, is_directory)| {
-            (!rule.directory_only || is_directory) && glob_matches(&rule.pattern, part)
+            (!rule.directory_only || is_directory) && glob_matches(&rule.pattern, part, scratch)
         });
     }
     let mut end = 0;
@@ -965,7 +1004,7 @@ fn rule_matches_path(rule: &IgnoreRule, relative: &str, target_is_directory: boo
             end += usize::from(parts.peek().is_some());
             continue;
         }
-        if glob_matches_path_prefix(&rule.pattern, &relative[..end]) {
+        if glob_matches_path_prefix(&rule.pattern, &relative[..end], scratch) {
             return true;
         }
         end += usize::from(parts.peek().is_some());
@@ -982,13 +1021,16 @@ fn is_ignored_directory(relative: &str, rules: &[IgnoreRule]) -> bool {
 }
 
 fn is_ignored_path(relative: &str, is_directory: bool, rules: &[IgnoreRule]) -> bool {
-    let mut ignored = false;
-    for rule in rules {
-        if rule_matches_path(rule, relative, is_directory) {
-            ignored = !rule.negated;
+    GLOB_MATCH_SCRATCH.with(|scratch| {
+        let mut scratch = scratch.borrow_mut();
+        let mut ignored = false;
+        for rule in rules {
+            if rule_matches_path(rule, relative, is_directory, &mut scratch) {
+                ignored = !rule.negated;
+            }
         }
-    }
-    ignored
+        ignored
+    })
 }
 
 fn json_string(value: &str) -> String {
