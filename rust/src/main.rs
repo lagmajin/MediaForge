@@ -9026,7 +9026,9 @@ fn run_project(args: &[String]) -> Result<(), String> {
         let stdout = io::stdout();
         let mut writer = io::BufWriter::with_capacity(64 * 1024, stdout.lock());
         let result = (|| -> io::Result<()> {
-            writer.write_all(b"{\n  \"root\": ")?;
+            writer.write_all(
+                b"{\n  \"schema_version\": 1,\n  \"type\": \"project\",\n  \"root\": ",
+            )?;
             write_json_string(&mut writer, &root.to_string_lossy())?;
             writer.write_all(b",\n  \"engines\": [")?;
             for (index, (name, _, _)) in engines.iter().enumerate() {
@@ -9546,7 +9548,7 @@ fn run_unity_meta(args: &[String]) -> Result<(), String> {
         let stdout = io::stdout();
         let mut output = io::BufWriter::with_capacity(64 * 1024, stdout.lock());
         let result = (|| -> io::Result<()> {
-            output.write_all(b"{\"root\":")?;
+            output.write_all(b"{\"schema_version\":1,\"type\":\"unity_meta\",\"root\":")?;
             write_json_string(&mut output, &root.to_string_lossy())?;
             write!(
                 output,
