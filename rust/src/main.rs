@@ -1471,19 +1471,35 @@ fn write_json_string(output: &mut impl Write, value: &str) -> io::Result<()> {
     output.write_all(b"\"")
 }
 
-fn scan_filters_json(
-    kind_filter: Option<Kind>,
+#[derive(Clone, Copy)]
+struct ScanFilterOptions<'a> {
+    kind: Option<Kind>,
     min_size: Option<u64>,
     max_size: Option<u64>,
     modified_since: Option<u64>,
     modified_until: Option<u64>,
     modified_within: Option<u64>,
-    path_contains: &[String],
-    exclude_path_contains: &[String],
-    extension_filter: Option<&HashSet<String>>,
+    path_contains: &'a [String],
+    exclude_path_contains: &'a [String],
+    extensions: Option<&'a HashSet<String>>,
     include_hidden: bool,
     strict: bool,
-) -> String {
+}
+
+fn scan_filters_json(filters: ScanFilterOptions<'_>) -> String {
+    let ScanFilterOptions {
+        kind,
+        min_size,
+        max_size,
+        modified_since,
+        modified_until,
+        modified_within,
+        path_contains,
+        exclude_path_contains,
+        extensions: extension_filter,
+        include_hidden,
+        strict,
+    } = filters;
     let extensions = extension_filter.map_or_else(
         || "null".to_owned(),
         |extensions| {
@@ -1501,7 +1517,7 @@ fn scan_filters_json(
     );
     format!(
         "{{\"type\":{},\"min_size_bytes\":{},\"max_size_bytes\":{},\"modified_since_unix_seconds\":{},\"modified_until_unix_seconds\":{},\"modified_within_seconds\":{},\"path_contains\":[{}],\"exclude_path_contains\":[{}],\"extensions\":{extensions},\"include_hidden\":{include_hidden},\"strict\":{strict}}}",
-        kind_filter.map_or("null".to_owned(), |kind| json_string(kind.as_str())),
+        kind.map_or("null".to_owned(), |kind| json_string(kind.as_str())),
         min_size.map_or("null".to_owned(), |size| size.to_string()),
         max_size.map_or("null".to_owned(), |size| size.to_string()),
         modified_since.map_or("null".to_owned(), |time| time.to_string()),
@@ -1520,26 +1536,28 @@ fn scan_filters_json(
     )
 }
 
-fn print_scan_filter_preview(
-    path: &Path,
+struct ScanFilterPreviewOptions<'a> {
+    path: &'a Path,
     json: bool,
     csv: bool,
     csv_sort: Option<ScanCsvSort>,
     largest_limit: usize,
     largest_limit_default: usize,
     largest_limit_is_explicit: bool,
-    kind_filter: Option<Kind>,
-    min_size: Option<u64>,
-    max_size: Option<u64>,
-    modified_since: Option<u64>,
-    modified_until: Option<u64>,
-    modified_within: Option<u64>,
-    path_contains: &[String],
-    exclude_path_contains: &[String],
-    extension_filter: Option<&HashSet<String>>,
-    include_hidden: bool,
-    strict: bool,
-) {
+    filters: ScanFilterOptions<'a>,
+}
+
+fn print_scan_filter_preview(options: ScanFilterPreviewOptions<'_>) {
+    let ScanFilterPreviewOptions {
+        path,
+        json,
+        csv,
+        csv_sort,
+        largest_limit,
+        largest_limit_default,
+        largest_limit_is_explicit,
+        filters,
+    } = options;
     let output_format = if csv {
         "csv"
     } else if json {
@@ -1566,19 +1584,7 @@ fn print_scan_filter_preview(
             "default"
         }),
         !csv,
-        scan_filters_json(
-            kind_filter,
-            min_size,
-            max_size,
-            modified_since,
-            modified_until,
-            modified_within,
-            path_contains,
-            exclude_path_contains,
-            extension_filter,
-            include_hidden,
-            strict,
-        ),
+        scan_filters_json(filters),
     );
 }
 
@@ -1761,8 +1767,8 @@ fn print_json(
     );
     write_scan_json_line!(
         "  \"filters\": {},",
-        scan_filters_json(
-            kind_filter,
+        scan_filters_json(ScanFilterOptions {
+            kind: kind_filter,
             min_size,
             max_size,
             modified_since,
@@ -1770,10 +1776,10 @@ fn print_json(
             modified_within,
             path_contains,
             exclude_path_contains,
-            extension_filter,
+            extensions: extension_filter,
             include_hidden,
-            strict
-        )
+            strict,
+        })
     );
     write_scan_json_line!("  \"largest_limit\": {largest_limit},");
     write_scan_json_line!("  \"same_size_candidates_included\": {include_same_size},");
@@ -1992,8 +1998,8 @@ fn print_scan_csv_info(
         json_string(&root.to_string_lossy()),
         skipped_paths > 0,
         skipped_paths > skipped_examples.len(),
-        scan_filters_json(
-            kind_filter,
+        scan_filters_json(ScanFilterOptions {
+            kind: kind_filter,
             min_size,
             max_size,
             modified_since,
@@ -2001,10 +2007,10 @@ fn print_scan_csv_info(
             modified_within,
             path_contains,
             exclude_path_contains,
-            extension_filter,
+            extensions: extension_filter,
             include_hidden,
             strict,
-        ),
+        }),
         json_string(order),
     );
 }
@@ -3253,26 +3259,28 @@ fn run_scan(args: &[String]) -> Result<(), String> {
     let largest_limit_is_explicit = largest_limit.is_some();
     let largest_limit = largest_limit.unwrap_or(largest_limit_default);
     if show_filters {
-        print_scan_filter_preview(
-            &path,
+        print_scan_filter_preview(ScanFilterPreviewOptions {
+            path: &path,
             json,
             csv,
             csv_sort,
             largest_limit,
             largest_limit_default,
             largest_limit_is_explicit,
-            kind_filter,
-            min_size,
-            max_size,
-            modified_since,
-            modified_until,
-            modified_within,
-            &path_contains,
-            &exclude_path_contains,
-            extension_filter.as_ref(),
-            include_hidden,
-            strict,
-        );
+            filters: ScanFilterOptions {
+                kind: kind_filter,
+                min_size,
+                max_size,
+                modified_since,
+                modified_until,
+                modified_within,
+                path_contains: &path_contains,
+                exclude_path_contains: &exclude_path_contains,
+                extensions: extension_filter.as_ref(),
+                include_hidden,
+                strict,
+            },
+        });
         return Ok(());
     }
     let root =
