@@ -126,6 +126,16 @@ mediaforge undo ./Media --json
 
 Organization is a preview unless `--apply` is supplied. Use `--type`, `--extension`, and `--min-size` to limit which files are organized; for example, `--type video --min-size 500M` selects large video assets. Hidden files are skipped by default; pass `--include-hidden` to include them. Unity, Unreal, and Godot generated folders such as `Library`, `Intermediate`, `DerivedDataCache`, `.godot`, and `.import` are skipped by default; pass `--include-generated` to include them. Add `--json` to emit one machine-readable JSON object with the filtered move plan, counts, and inclusion settings; with `--apply`, the object reports the completed move count and undo manifest path. Moves preserve paths below the new type/extension folder, skip destination collisions, and refuse symlink paths. Before moving anything, MediaForge writes a `.mediaforge-undo` recovery manifest with portable `/` separators. `undo` restores files only when the original location is clear; it retains the manifest if a conflict needs manual handling. Add `--json` to get restored and conflict counts plus the manifest-retained state as JSON. Older manifests are still readable; ambiguous old records are handled conservatively and may need manual conflict resolution. It never deletes source files.
 
+## Sequence media filenames
+
+```sh
+mediaforge sequence ./Media --prefix shot --extension mov,mxf
+mediaforge sequence ./Media --prefix shot --start 100 --padding 5 --extension mov,mxf --apply
+mediaforge undo ./Media
+```
+
+`sequence` previews an alphabetical renaming plan for regular files directly inside the directory. It preserves extensions, skips hidden files by default, ignores Git-ignored paths, and skips any destination that already exists. Use `--apply` to rename; the shared recovery manifest lets `undo` restore the operation. Only one file operation can be pending per directory so the undo history stays unambiguous.
+
 ## Pack a project for handoff
 
 ```sh

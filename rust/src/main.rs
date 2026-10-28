@@ -1277,7 +1277,7 @@ fn fraction_ceil_scaled(fraction: &str, multiplier: u128) -> u128 {
 
 fn print_help() {
     println!(
-        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS] [--largest N]\n  mediaforge dupes [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--top-groups N]\n  mediaforge probe <FILE> [--compact]\n  mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--jobs N] [--summary]\n  mediaforge storyboard <VIDEO> --output <IMAGE> [--interval SECONDS] [--columns N] [--rows N] [--width PIXELS]\n  mediaforge proxy <VIDEO> --output <FILE.mp4> [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge extract-audio <VIDEO> --output <FILE> [--format mp3|wav|flac] [--bitrate RATE] [--stream N]\n  mediaforge project [PATH] [--json]\n  mediaforge gitignore [PATH] [--apply]\n  mediaforge organize [PATH] [--by type|extension] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--apply]\n  mediaforge undo [PATH] [--json]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--include-hidden] [--include-generated] [--dry-run] [--json] [--list]\n  mediaforge --version\n  mediaforge --help"
+        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS] [--largest N]\n  mediaforge dupes [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--top-groups N]\n  mediaforge probe <FILE> [--compact]\n  mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--jobs N] [--summary]\n  mediaforge storyboard <VIDEO> --output <IMAGE> [--interval SECONDS] [--columns N] [--rows N] [--width PIXELS]\n  mediaforge proxy <VIDEO> --output <FILE.mp4> [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge extract-audio <VIDEO> --output <FILE> [--format mp3|wav|flac] [--bitrate RATE] [--stream N]\n  mediaforge project [PATH] [--json]\n  mediaforge gitignore [PATH] [--apply]\n  mediaforge organize [PATH] [--by type|extension] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--apply]\n  mediaforge sequence [PATH] [--prefix NAME] [--start N] [--padding N] [--extension EXTENSIONS] [--include-hidden] [--json] [--apply]\n  mediaforge undo [PATH] [--json]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--include-hidden] [--include-generated] [--dry-run] [--json] [--list]\n  mediaforge --version\n  mediaforge --help"
     );
 }
 
@@ -3615,7 +3615,7 @@ fn run_undo(args: &[String]) -> Result<(), String> {
             "--json" => json = true,
             "--help" | "-h" => {
                 println!(
-                    "Usage: mediaforge undo [PATH] [--json]\n\nRestore files moved by the most recent 'mediaforge organize --apply' in PATH. --json emits restored and conflict counts."
+                    "Usage: mediaforge undo [PATH] [--json]\n\nRestore files moved by the most recent 'organize --apply' or 'sequence --apply' in PATH. --json emits restored and conflict counts."
                 );
                 return Ok(());
             }
@@ -3711,6 +3711,284 @@ fn run_undo(args: &[String]) -> Result<(), String> {
         );
     } else {
         println!("Restored {restored} file(s); undo manifest removed.");
+    }
+    Ok(())
+}
+
+fn run_sequence(args: &[String]) -> Result<(), String> {
+    let mut path = None;
+    let mut prefix = "frame".to_owned();
+    let mut start = 1_u64;
+    let mut padding = 4_usize;
+    let mut extension_filter = None;
+    let mut include_hidden = false;
+    let mut apply = false;
+    let mut json = false;
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--prefix" => {
+                prefix = iter
+                    .next()
+                    .ok_or_else(|| "--prefix requires a name".to_owned())?
+                    .clone();
+            }
+            "--start" => {
+                let value = iter
+                    .next()
+                    .ok_or_else(|| "--start requires a number".to_owned())?;
+                start = value
+                    .parse::<u64>()
+                    .map_err(|_| format!("invalid starting number '{value}'"))?;
+            }
+            "--padding" => {
+                let value = iter
+                    .next()
+                    .ok_or_else(|| "--padding requires a number".to_owned())?;
+                padding = value
+                    .parse::<usize>()
+                    .map_err(|_| format!("invalid number padding '{value}'"))?;
+            }
+            "--extension" => {
+                let value = iter
+                    .next()
+                    .ok_or_else(|| "--extension requires a comma-separated list".to_owned())?;
+                extension_filter = Some(parse_extensions(value)?);
+            }
+            "--include-hidden" => include_hidden = true,
+            "--apply" => apply = true,
+            "--json" => json = true,
+            "--help" | "-h" => {
+                println!(
+                    "Usage: mediaforge sequence [PATH] [--prefix NAME] [--start N] [--padding N] [--extension EXTENSIONS] [--include-hidden] [--json] [--apply]\n\nPreview a stable, alphabetical renumbering of files directly inside PATH. Extensions are preserved. The operation skips destination collisions and can be undone with 'mediaforge undo PATH'."
+                );
+                return Ok(());
+            }
+            value if value.starts_with('-') => return Err(format!("unknown option: {value}")),
+            value => {
+                if path.is_some() {
+                    return Err("only one sequence directory may be provided".into());
+                }
+                path = Some(PathBuf::from(value));
+            }
+        }
+    }
+    if prefix.is_empty()
+        || !prefix
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+    {
+        return Err("--prefix may contain only ASCII letters, digits, '_' and '-'".to_owned());
+    }
+    if !(1..=12).contains(&padding) {
+        return Err("--padding must be between 1 and 12".to_owned());
+    }
+    let path = path.unwrap_or_else(|| PathBuf::from("."));
+    let root = fs::canonicalize(&path)
+        .map_err(|error| format!("cannot access {}: {error}", path.display()))?;
+    if !root.is_dir() {
+        return Err(format!("expected a directory: {}", root.display()));
+    }
+    if apply
+        && (fs::symlink_metadata(root.join(ORGANIZE_MANIFEST_TEMP)).is_ok()
+            || fs::symlink_metadata(root.join(ORGANIZE_MANIFEST)).is_ok())
+    {
+        return Err(format!(
+            "an undo manifest or recovery file already exists under {}; run 'mediaforge undo {}' first",
+            root.display(),
+            root.display()
+        ));
+    }
+    let ignored = ignored_by_git(&root)?;
+    let mut entries = fs::read_dir(&root)
+        .map_err(|error| format!("cannot list {}: {error}", root.display()))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("cannot read directory entry: {error}"))?;
+    sort_entries(&mut entries);
+    let mut moves = Vec::<PlannedMove>::new();
+    let mut skipped = 0_usize;
+    let mut index = 0_u64;
+    for entry in entries {
+        let source = entry.path();
+        let name = entry.file_name();
+        let Some(name_text) = name.to_str() else {
+            skipped += 1;
+            continue;
+        };
+        if (!include_hidden && is_hidden(name_text))
+            || is_ignored(name_text, &ignored)
+            || matches!(
+                name_text,
+                ".gitignore"
+                    | ORGANIZE_MANIFEST
+                    | ORGANIZE_MANIFEST_TEMP
+                    | ORGANIZE_COMPLETE_MARKER
+            )
+        {
+            skipped += 1;
+            continue;
+        }
+        let metadata = fs::symlink_metadata(&source)
+            .map_err(|error| format!("cannot inspect {}: {error}", source.display()))?;
+        if !metadata.is_file() || metadata.file_type().is_symlink() {
+            skipped += 1;
+            continue;
+        }
+        let extension = source
+            .extension()
+            .and_then(|value| value.to_str())
+            .map(|value| format!(".{}", value.to_ascii_lowercase()))
+            .unwrap_or_else(|| "[no extension]".to_owned());
+        if extension_filter
+            .as_ref()
+            .is_some_and(|extensions| !extensions.contains(&extension))
+        {
+            continue;
+        }
+        let sequence_number = start
+            .checked_add(index)
+            .ok_or_else(|| "sequence number overflow".to_owned())?;
+        index = index
+            .checked_add(1)
+            .ok_or_else(|| "too many files to sequence".to_owned())?;
+        let original_extension = source
+            .extension()
+            .and_then(|value| value.to_str())
+            .map(|value| format!(".{value}"))
+            .unwrap_or_default();
+        let target_name = format!("{prefix}_{sequence_number:0padding$}{original_extension}");
+        let from_text = portable_relative_path(Path::new(name_text));
+        let to_text = portable_relative_path(Path::new(&target_name));
+        let (Some(from_text), Some(to_text)) = (from_text, to_text) else {
+            skipped += 1;
+            continue;
+        };
+        let target = root.join(&target_name);
+        let state = entry_state(&target)
+            .map_err(|error| format!("cannot inspect target {}: {error}", target.display()))?;
+        if from_text == to_text || state != EntryState::Missing {
+            skipped += 1;
+            continue;
+        }
+        moves.push(PlannedMove {
+            from: from_text,
+            to: to_text,
+        });
+    }
+
+    if json && !apply {
+        println!(
+            "{{\n  \"root\": {},\n  \"prefix\": {},\n  \"applied\": false,\n  \"moves\": [",
+            json_string(&root.to_string_lossy()),
+            json_string(&prefix)
+        );
+        for (position, movement) in moves.iter().enumerate() {
+            let comma = if position + 1 == moves.len() { "" } else { "," };
+            println!(
+                "    {{\"from\": {}, \"to\": {}}}{}",
+                json_string(&movement.from),
+                json_string(&movement.to),
+                comma
+            );
+        }
+        println!(
+            "  ],\n  \"move_count\": {},\n  \"skipped_count\": {}\n}}",
+            moves.len(),
+            skipped
+        );
+    } else if !json {
+        println!(
+            "Sequence preview: {} file(s) to rename; {skipped} skipped",
+            moves.len()
+        );
+        for movement in moves.iter().take(30) {
+            println!("  {} -> {}", movement.from, movement.to);
+        }
+        if moves.len() > 30 {
+            println!("  ... and {} more", moves.len() - 30);
+        }
+    }
+    if !apply {
+        if !moves.is_empty() && !json {
+            println!(
+                "\nPreview only. Re-run with --apply to rename files; use 'mediaforge undo {}' to restore them.",
+                root.display()
+            );
+        }
+        return Ok(());
+    }
+    if moves.is_empty() {
+        if json {
+            println!(
+                "{{\"root\": {}, \"prefix\": {}, \"applied\": true, \"moves\": [], \"move_count\": 0, \"renamed_count\": 0, \"skipped_count\": {}, \"result\": \"no_changes\"}}",
+                json_string(&root.to_string_lossy()),
+                json_string(&prefix),
+                skipped
+            );
+        } else {
+            println!("No files need renaming.");
+        }
+        return Ok(());
+    }
+    for movement in &moves {
+        let from = validate_relative_path(&movement.from)?;
+        let to = validate_relative_path(&movement.to)?;
+        reject_symlink_components(&root, &from)?;
+        reject_symlink_components(&root, &to)?;
+        if entry_state(&root.join(&from))
+            .map_err(|error| format!("cannot inspect source {}: {error}", from.display()))?
+            != EntryState::File
+            || entry_state(&root.join(&to))
+                .map_err(|error| format!("cannot inspect target {}: {error}", to.display()))?
+                != EntryState::Missing
+        {
+            return Err(format!(
+                "file plan changed since preview; refusing to apply: {}",
+                movement.from
+            ));
+        }
+    }
+    write_organize_manifest(&root, &moves)?;
+    let mut renamed = 0_usize;
+    for movement in &moves {
+        let from = root.join(validate_relative_path(&movement.from)?);
+        let to = root.join(validate_relative_path(&movement.to)?);
+        if let Err(error) = move_file_no_replace(&from, &to) {
+            return Err(format!(
+                "renamed {renamed} file(s) before failure: {error}; recovery manifest remains at {}",
+                root.join(ORGANIZE_MANIFEST).display()
+            ));
+        }
+        renamed += 1;
+    }
+    write_organize_complete_marker(&root)?;
+    if json {
+        println!(
+            "{{\n  \"root\": {},\n  \"prefix\": {},\n  \"applied\": true,\n  \"moves\": [",
+            json_string(&root.to_string_lossy()),
+            json_string(&prefix)
+        );
+        for (position, movement) in moves.iter().enumerate() {
+            let comma = if position + 1 == moves.len() { "" } else { "," };
+            println!(
+                "    {{\"from\": {}, \"to\": {}}}{}",
+                json_string(&movement.from),
+                json_string(&movement.to),
+                comma
+            );
+        }
+        println!(
+            "  ],\n  \"move_count\": {},\n  \"renamed_count\": {},\n  \"skipped_count\": {},\n  \"result\": \"applied\",\n  \"undo_manifest\": {}\n}}",
+            moves.len(),
+            renamed,
+            skipped,
+            json_string(&root.join(ORGANIZE_MANIFEST).to_string_lossy())
+        );
+    } else {
+        println!(
+            "Renamed {renamed} file(s). Undo manifest: {}",
+            root.join(ORGANIZE_MANIFEST).display()
+        );
     }
     Ok(())
 }
@@ -4499,6 +4777,7 @@ fn run() -> Result<(), String> {
         Some("project") => run_project(&args[1..]),
         Some("gitignore") => run_gitignore(&args[1..]),
         Some("organize") => run_organize(&args[1..]),
+        Some("sequence") => run_sequence(&args[1..]),
         Some("undo") => run_undo(&args[1..]),
         Some("pack") => run_pack(&args[1..]),
         Some(command) => Err(format!(
