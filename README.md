@@ -44,6 +44,7 @@ mediaforge probe-dir ./Media --type video --compare --jobs 4
 mediaforge storyboard ./Media/shot.mp4 --output ./Media/shot-sheet.jpg
 mediaforge storyboard ./Media/shot.mp4 -o ./Media/shot-sheet.png --interval 5 --columns 6 --rows 4 --width 240
 mediaforge scene-detect ./Media/shot.mp4 --threshold 0.4 --min-gap 1 --format jsonl
+mediaforge scene-detect ./Media/shot.mp4 --segments --format csv
 mediaforge proxy ./Media/shot.mp4 --output ./Proxies/shot-proxy.mp4
 mediaforge proxy-config init --profile fast --max-width 960 --crf 30 --preset ultrafast
 mediaforge proxy ./Media/shot.mp4 -o ./Proxies/shot-proxy.mp4 --profile fast
@@ -59,7 +60,7 @@ mediaforge extract-audio-dir ./Media --output-dir ./Audio --extension mov,mxf --
 
 `storyboard` creates a contact sheet using `ffmpeg` (also required on `PATH`). It samples at the requested interval (10 seconds by default), with a 5×5 grid of 320-pixel-wide thumbnails by default. JPG, PNG, and WebP outputs are supported. It refuses to overwrite existing files and only publishes the image after FFmpeg finishes successfully.
 
-`scene-detect` scans the first video stream for likely scene changes using FFmpeg's scene score, returning cut timecodes and scores without rendering a new video. The default threshold is 0.4 on the 0–1 score scale; `--min-gap` defaults to 1 second and keeps the strongest nearby cut. Output defaults to JSON Lines with a final summary; use `--format csv` for a header and one row per detected cut.
+`scene-detect` scans the first video stream for likely scene changes using FFmpeg's scene score, returning cut timecodes and scores without rendering a new video. The default threshold is 0.4 on the 0–1 score scale; `--min-gap` defaults to 1 second and keeps the strongest nearby cut. Output defaults to JSON Lines with a final summary; use `--format csv` for a header and one row per detected cut. Add `--segments` to convert cuts into contiguous intervals from 0 through the probed video duration; interval rows contain start, end, and duration timecodes/seconds for timeline import.
 
 `proxy` creates an H.264/AAC MP4 suitable for smoother editing. `--profile fast` uses 960 pixels, CRF 32, and `ultrafast`; `balanced` uses 1280, CRF 28, and `veryfast`; `quality` uses 1920, CRF 22, and `fast`. `balanced` is the default. Explicit `--max-width`, `--crf` (0–51), and `--preset` values override the selected profile. Lower CRF preserves more quality; faster presets trade compression efficiency for shorter encoding time. FFmpeg must include libx264 and AAC support. Existing files are never overwritten.
 

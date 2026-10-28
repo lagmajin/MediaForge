@@ -1380,7 +1380,7 @@ fn fraction_ceil_scaled(fraction: &str, multiplier: u128) -> u128 {
 
 fn print_help() {
     println!(
-        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json|--csv] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS] [--largest N]\n  mediaforge dupes [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--top-groups N]\n  mediaforge probe <FILE> [--compact] [--summary]\n  mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--type video|audio] [--min-size SIZE] [--max-size SIZE] [--jobs N] [--summary] [--compare]\n  mediaforge storyboard <VIDEO> --output <IMAGE> [--interval SECONDS] [--columns N] [--rows N] [--width PIXELS]\n  mediaforge scene-detect <VIDEO> [--threshold 0..1] [--min-gap SECONDS] [--format jsonl|csv]\n  mediaforge proxy <VIDEO> --output <FILE.mp4> [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge proxy-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET] [--jobs N] [--skip-existing] [--json]\n  mediaforge proxy-config init [FILE] [--profile fast|balanced|quality] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge extract-audio <VIDEO> --output <FILE> [--format mp3|wav|flac] [--bitrate RATE] [--stream N]\n  mediaforge extract-audio-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--format mp3|wav|flac] [--bitrate RATE] [--stream N] [--jobs N] [--skip-existing] [--json]\n  mediaforge project [PATH] [--json]\n  mediaforge gitignore [PATH] [--apply]\n  mediaforge organize [PATH] [--by type|extension|size] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--apply]\n  mediaforge sequence [PATH] [--prefix NAME] [--start N] [--padding N] [--extension EXTENSIONS] [--include-hidden] [--natural] [--json] [--apply]\n  mediaforge undo [PATH] [--json]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--include-hidden] [--include-generated] [--dry-run] [--json] [--list]\n  mediaforge --version\n  mediaforge --help"
+        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json|--csv] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS] [--largest N]\n  mediaforge dupes [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--top-groups N]\n  mediaforge probe <FILE> [--compact] [--summary]\n  mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--type video|audio] [--min-size SIZE] [--max-size SIZE] [--jobs N] [--summary] [--compare]\n  mediaforge storyboard <VIDEO> --output <IMAGE> [--interval SECONDS] [--columns N] [--rows N] [--width PIXELS]\n  mediaforge scene-detect <VIDEO> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--format jsonl|csv]\n  mediaforge proxy <VIDEO> --output <FILE.mp4> [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge proxy-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET] [--jobs N] [--skip-existing] [--json]\n  mediaforge proxy-config init [FILE] [--profile fast|balanced|quality] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge extract-audio <VIDEO> --output <FILE> [--format mp3|wav|flac] [--bitrate RATE] [--stream N]\n  mediaforge extract-audio-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--format mp3|wav|flac] [--bitrate RATE] [--stream N] [--jobs N] [--skip-existing] [--json]\n  mediaforge project [PATH] [--json]\n  mediaforge gitignore [PATH] [--apply]\n  mediaforge organize [PATH] [--by type|extension|size] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--apply]\n  mediaforge sequence [PATH] [--prefix NAME] [--start N] [--padding N] [--extension EXTENSIONS] [--include-hidden] [--natural] [--json] [--apply]\n  mediaforge undo [PATH] [--json]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--include-hidden] [--include-generated] [--dry-run] [--json] [--list]\n  mediaforge --version\n  mediaforge --help"
     );
 }
 
@@ -2095,6 +2095,12 @@ struct SceneCut {
     score: f64,
 }
 
+struct SceneSegment {
+    index: usize,
+    start: f64,
+    end: f64,
+}
+
 fn scene_timecode(seconds: f64) -> String {
     let milliseconds = (seconds * 1000.0).round() as u64;
     let hours = milliseconds / 3_600_000;
@@ -2104,10 +2110,48 @@ fn scene_timecode(seconds: f64) -> String {
     format!("{hours:02}:{minutes:02}:{seconds:02}.{millis:03}")
 }
 
+fn probe_media_duration(path: &Path) -> Result<f64, String> {
+    let output = Command::new("ffprobe")
+        .args([
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+        ])
+        .arg(path)
+        .output()
+        .map_err(|error| {
+            if error.kind() == io::ErrorKind::NotFound {
+                "ffprobe was not found on PATH. Install FFmpeg to export scene segments.".to_owned()
+            } else {
+                format!("could not start ffprobe: {error}")
+            }
+        })?;
+    if !output.status.success() {
+        let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        return Err(if detail.is_empty() {
+            format!("ffprobe failed with {}", output.status)
+        } else {
+            format!("ffprobe failed: {detail}")
+        });
+    }
+    let duration = String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .parse::<f64>()
+        .map_err(|_| "ffprobe did not return a valid media duration".to_owned())?;
+    if !duration.is_finite() || duration <= 0.0 {
+        return Err("ffprobe returned a non-positive or invalid media duration".to_owned());
+    }
+    Ok(duration)
+}
+
 fn run_scene_detect(args: &[String]) -> Result<(), String> {
     let mut input = None;
     let mut threshold = 0.4_f64;
     let mut min_gap = 1.0_f64;
+    let mut segments = false;
     let mut output_format = "jsonl";
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
@@ -2142,9 +2186,10 @@ fn run_scene_detect(args: &[String]) -> Result<(), String> {
                     return Err("--format must be 'jsonl' or 'csv'".to_owned());
                 }
             }
+            "--segments" => segments = true,
             "--help" | "-h" => {
                 println!(
-                    "Usage: mediaforge scene-detect <VIDEO> [--threshold 0..1] [--min-gap SECONDS] [--format jsonl|csv]\n\nFind likely cuts with FFmpeg's scene score. Defaults: threshold 0.4 and at least 1 second between results. JSON Lines is the default; CSV writes a header and one row per cut."
+                    "Usage: mediaforge scene-detect <VIDEO> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--format jsonl|csv]\n\nFind likely cuts with FFmpeg's scene score. Defaults: threshold 0.4 and at least 1 second between results. JSON Lines is the default; CSV writes a header and one row per cut. --segments turns cut points into contiguous start/end intervals spanning the video."
                 );
                 return Ok(());
             }
@@ -2166,6 +2211,11 @@ fn run_scene_detect(args: &[String]) -> Result<(), String> {
     {
         return Err(format!("expected a video file: {}", input.display()));
     }
+    let duration = if segments {
+        Some(probe_media_duration(&input)?)
+    } else {
+        None
+    };
     let filter = format!("select='gt(scene,{threshold})',metadata=mode=print");
     let result = Command::new("ffmpeg")
         .args([
@@ -2232,7 +2282,62 @@ fn run_scene_detect(args: &[String]) -> Result<(), String> {
             }
         }
     }
-    if output_format == "csv" {
+    if let Some(duration) = duration {
+        let mut intervals = Vec::with_capacity(cuts.len() + 1);
+        let mut start = 0.0_f64;
+        for cut in &cuts {
+            if cut.seconds > start && cut.seconds < duration {
+                intervals.push(SceneSegment {
+                    index: intervals.len() + 1,
+                    start,
+                    end: cut.seconds,
+                });
+                start = cut.seconds;
+            }
+        }
+        if start < duration {
+            intervals.push(SceneSegment {
+                index: intervals.len() + 1,
+                start,
+                end: duration,
+            });
+        }
+        if output_format == "csv" {
+            println!(
+                "path,segment,start_timecode,start_seconds,end_timecode,end_seconds,duration_seconds"
+            );
+            for interval in &intervals {
+                println!(
+                    "{},{},{},{:.6},{},{:.6},{:.6}",
+                    csv_field(&input.to_string_lossy()),
+                    interval.index,
+                    csv_field(&scene_timecode(interval.start)),
+                    interval.start,
+                    csv_field(&scene_timecode(interval.end)),
+                    interval.end,
+                    interval.end - interval.start
+                );
+            }
+        } else {
+            let source = json_string(&input.to_string_lossy());
+            for interval in &intervals {
+                println!(
+                    "{{\"type\":\"segment\",\"path\":{source},\"segment\":{},\"start_timecode\":{},\"start_seconds\":{:.6},\"end_timecode\":{},\"end_seconds\":{:.6},\"duration_seconds\":{:.6}}}",
+                    interval.index,
+                    json_string(&scene_timecode(interval.start)),
+                    interval.start,
+                    json_string(&scene_timecode(interval.end)),
+                    interval.end,
+                    interval.end - interval.start
+                );
+            }
+            println!(
+                "{{\"type\":\"summary\",\"path\":{source},\"segments\":{},\"scene_cuts\":{},\"duration_seconds\":{duration:.6},\"threshold\":{threshold:.6},\"min_gap_seconds\":{min_gap:.6}}}",
+                intervals.len(),
+                cuts.len()
+            );
+        }
+    } else if output_format == "csv" {
         println!("path,timecode,time_seconds,score");
         for cut in &cuts {
             println!(
