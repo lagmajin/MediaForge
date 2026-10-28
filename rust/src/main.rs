@@ -6205,12 +6205,10 @@ fn directory_size(root: &Path) -> Result<(u64, u64), String> {
     if !is_real_directory(root) {
         return Err(format!("expected a real directory: {}", root.display()));
     }
-    let root = root.to_path_buf();
-    let ignored = ignored_by_git(&root)?;
-    let mut pending = vec![(root.clone(), Arc::<[IgnoreRule]>::from(ignored))];
+    let mut pending = vec![root.to_path_buf()];
     let mut bytes = 0_u64;
     let mut files = 0_u64;
-    while let Some((directory, active_ignored)) = pending.pop() {
+    while let Some(directory) = pending.pop() {
         for entry in fs::read_dir(&directory)
             .map_err(|error| format!("cannot read {}: {error}", directory.display()))?
         {
@@ -6224,32 +6222,15 @@ fn directory_size(root: &Path) -> Result<(u64, u64), String> {
                 continue;
             }
             let path = entry.path();
-            let relative = path
-                .strip_prefix(&root)
-                .unwrap_or(&path)
-                .to_string_lossy()
-                .replace('\\', "/");
             if file_type.is_dir() {
-                let name = entry.file_name();
-                if !directory_name_matches(&name.to_string_lossy(), SKIP_DIRS)
-                    && !is_ignored_directory(&relative, &active_ignored)
-                {
-                    let child_rules = extend_ignore_rules(&root, &path, active_ignored.as_ref())?;
-                    let child_ignored = match child_rules {
-                        Cow::Borrowed(_) => Arc::clone(&active_ignored),
-                        Cow::Owned(rules) => Arc::from(rules),
-                    };
-                    pending.push((path, child_ignored));
-                }
+                pending.push(path);
             } else if file_type.is_file() {
-                if !is_ignored(&relative, &active_ignored) {
-                    let length = entry
-                        .metadata()
-                        .map_err(|error| format!("cannot inspect {}: {error}", path.display()))?
-                        .len();
-                    bytes = bytes.saturating_add(length);
-                    files = files.saturating_add(1);
-                }
+                let length = entry
+                    .metadata()
+                    .map_err(|error| format!("cannot inspect {}: {error}", path.display()))?
+                    .len();
+                bytes = bytes.saturating_add(length);
+                files = files.saturating_add(1);
             }
         }
     }
