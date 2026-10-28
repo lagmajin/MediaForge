@@ -726,25 +726,6 @@ fn record_skipped_path(path: &Path, count: &mut usize, examples: &mut Vec<String
     }
 }
 
-fn walk_strict(
-    root: &Path,
-    current: &Path,
-    include_hidden: bool,
-    skip_dirs: &[&str],
-    ignored: &[IgnoreRule],
-    records: &mut Vec<FileRecord>,
-) -> Result<(), String> {
-    walk_strict_filtered(
-        root,
-        current,
-        include_hidden,
-        skip_dirs,
-        ignored,
-        &StrictWalkFilters::default(),
-        records,
-    )
-}
-
 #[derive(Default)]
 struct StrictWalkFilters<'a> {
     kinds: Option<&'a [Kind]>,
@@ -3585,51 +3566,47 @@ impl Sha256 {
     }
 }
 
-fn hash_snapshot_file(record: &FileRecord) -> Result<[u8; 32], String> {
-    let mut file = File::open(&record.path)
-        .map_err(|error| format!("cannot read {} for hashing: {error}", record.path.display()))?;
-    let before = file.metadata().map_err(|error| {
-        format!(
-            "cannot inspect {} before hashing: {error}",
-            record.path.display()
-        )
-    })?;
+fn hash_snapshot_file(root: &Path, record: &FileRecord) -> Result<[u8; 32], String> {
+    let path = root.join(&record.path);
+    let mut file = File::open(&path)
+        .map_err(|error| format!("cannot read {} for hashing: {error}", path.display()))?;
+    let before = file
+        .metadata()
+        .map_err(|error| format!("cannot inspect {} before hashing: {error}", path.display()))?;
     if before.len() != record.size || before.modified().ok() != record.modified {
         return Err(format!(
             "file changed during snapshot scan: {}",
-            record.path.display()
+            path.display()
         ));
     }
     let mut hasher = Sha256::new();
     let mut buffer = [0_u8; 256 * 1024];
     loop {
         let count = read_retry_interrupted(&mut file, &mut buffer)
-            .map_err(|error| format!("could not hash {}: {error}", record.path.display()))?;
+            .map_err(|error| format!("could not hash {}: {error}", path.display()))?;
         if count == 0 {
             break;
         }
         hasher.update(&buffer[..count]);
     }
-    let after = file.metadata().map_err(|error| {
-        format!(
-            "cannot inspect {} after hashing: {error}",
-            record.path.display()
-        )
-    })?;
+    let after = file
+        .metadata()
+        .map_err(|error| format!("cannot inspect {} after hashing: {error}", path.display()))?;
     if after.len() != record.size || after.modified().ok() != record.modified {
         return Err(format!(
             "file changed while hashing snapshot: {}",
-            record.path.display()
+            path.display()
         ));
     }
     Ok(hasher.finish())
 }
 
-fn collect_snapshot_entries(
-    records: &[FileRecord],
+fn collect_snapshot_entries<'a>(
+    root: &Path,
+    records: &'a [FileRecord],
     hash_content: bool,
     jobs: usize,
-) -> Result<BTreeMap<&str, SnapshotEntry>, String> {
+) -> Result<BTreeMap<&'a str, SnapshotEntry>, String> {
     if jobs == 0 {
         return Err("snapshot worker count must be greater than zero".to_owned());
     }
@@ -3649,7 +3626,10 @@ fn collect_snapshot_entries(
                         let Some(record) = records.get(index) else {
                             break;
                         };
-                        if sender.send((index, hash_snapshot_file(record))).is_err() {
+                        if sender
+                            .send((index, hash_snapshot_file(root, record)))
+                            .is_err()
+                        {
                             break;
                         }
                     }
@@ -4352,12 +4332,27 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
         SNAPSHOT_SKIP_DIRS
     };
     let mut records = Vec::new();
-    walk_strict(&root, &root, use_hidden, skip_dirs, &ignored, &mut records)?;
-    if let Some(excluded) = excluded {
-        records.retain(|record| record.path != excluded);
+    let filters = StrictWalkFilters {
+        store_relative_path: true,
+        ..StrictWalkFilters::default()
+    };
+    walk_strict_filtered(
+        &root,
+        &root,
+        use_hidden,
+        skip_dirs,
+        &ignored,
+        &filters,
+        &mut records,
+    )?;
+    if let Some(excluded_relative) = excluded
+        .as_deref()
+        .and_then(|excluded| excluded.strip_prefix(&root).ok())
+    {
+        records.retain(|record| record.path != excluded_relative);
     }
     records.sort_unstable_by(|left, right| left.relative.cmp(&right.relative));
-    let current_entries = collect_snapshot_entries(&records, use_hash, jobs)?;
+    let current_entries = collect_snapshot_entries(&root, &records, use_hash, jobs)?;
     if let Some(output) = output_abs {
         write_snapshot_manifest(
             &output,
