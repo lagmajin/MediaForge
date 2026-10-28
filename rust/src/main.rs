@@ -2026,6 +2026,56 @@ fn write_json_stdout(
         .map_err(|error| format!("could not write {description}: {error}"))
 }
 
+struct JsonWhitespaceWriter<W> {
+    inner: W,
+    compact: bool,
+    in_string: bool,
+    escaped: bool,
+}
+
+impl<W> JsonWhitespaceWriter<W> {
+    fn new(inner: W, compact: bool) -> Self {
+        Self {
+            inner,
+            compact,
+            in_string: false,
+            escaped: false,
+        }
+    }
+}
+
+impl<W: Write> Write for JsonWhitespaceWriter<W> {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        if !self.compact {
+            self.inner.write_all(bytes)?;
+            return Ok(bytes.len());
+        }
+        let mut start = 0;
+        for (index, byte) in bytes.iter().copied().enumerate() {
+            if self.in_string {
+                if self.escaped {
+                    self.escaped = false;
+                } else if byte == b'\\' {
+                    self.escaped = true;
+                } else if byte == b'"' {
+                    self.in_string = false;
+                }
+            } else if matches!(byte, b' ' | b'\n' | b'\r' | b'\t') {
+                self.inner.write_all(&bytes[start..index])?;
+                start = index + 1;
+            } else if byte == b'"' {
+                self.in_string = true;
+            }
+        }
+        self.inner.write_all(&bytes[start..])?;
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.inner.flush()
+    }
+}
+
 #[derive(Clone, Copy)]
 struct ScanFilterOptions<'a> {
     kind: Option<Kind>,
@@ -2094,6 +2144,7 @@ fn scan_filters_json(filters: ScanFilterOptions<'_>) -> String {
 struct ScanFilterPreviewOptions<'a> {
     path: &'a Path,
     json: bool,
+    compact: bool,
     csv: bool,
     csv_sort: Option<ScanCsvSort>,
     largest_limit: usize,
@@ -2106,6 +2157,7 @@ fn print_scan_filter_preview(options: ScanFilterPreviewOptions<'_>) -> Result<()
     let ScanFilterPreviewOptions {
         path,
         json,
+        compact,
         csv,
         csv_sort,
         largest_limit,
@@ -2127,8 +2179,9 @@ fn print_scan_filter_preview(options: ScanFilterPreviewOptions<'_>) -> Result<()
         None => "scan",
     };
     write_json_stdout("scan filter preview JSON", |output| {
+        let mut output = JsonWhitespaceWriter::new(output, compact);
         writeln!(
-            output,
+            &mut output,
             "{{\"schema_version\":1,\"type\":\"scan_filter_preview\",\"scan_performed\":false,\"root\":{},\"output_format\":{},\"csv_order\":{},\"largest_limit\":{},\"largest_limit_default\":{},\"largest_limit_source\":{},\"largest_limit_applies\":{},\"filters\":{}}}",
             json_string(&path.to_string_lossy()),
             json_string(output_format),
@@ -2241,12 +2294,16 @@ fn largest_records(records: &[ScanFileRecord], limit: usize) -> Vec<&ScanFileRec
 fn print_json(
     root: &Path,
     records: &[ScanFileRecord],
-    largest_limit: usize,
-    include_same_size: bool,
+    options: ScanJsonOutputOptions,
     skipped_paths: usize,
     skipped_examples: &[String],
     filters: ScanFilterOptions<'_>,
 ) -> Result<(), String> {
+    let ScanJsonOutputOptions {
+        largest_limit,
+        include_same_size,
+        compact,
+    } = options;
     let mut by_type: BTreeMap<&str, (u64, u128)> = BTreeMap::new();
     let mut extensions: BTreeMap<&str, (usize, u128)> = BTreeMap::new();
     let mut by_size: HashMap<u64, usize> = HashMap::new();
@@ -2302,7 +2359,8 @@ fn print_json(
         }
     }
     let stdout = io::stdout();
-    let mut output = io::BufWriter::with_capacity(64 * 1024, stdout.lock());
+    let output = io::BufWriter::with_capacity(64 * 1024, stdout.lock());
+    let mut output = JsonWhitespaceWriter::new(output, compact);
     macro_rules! write_scan_json_line {
         ($($argument:tt)*) => {
             writeln!(output, $($argument)*)
@@ -2411,16 +2469,24 @@ fn print_json(
     Ok(())
 }
 
+struct ScanJsonOutputOptions {
+    largest_limit: usize,
+    include_same_size: bool,
+    compact: bool,
+}
+
 fn print_json_summary(
     root: &Path,
     summary: &mut ScanJsonAccumulator,
     skipped_paths: usize,
     skipped_examples: &[String],
     filters: ScanFilterOptions<'_>,
+    compact: bool,
 ) -> Result<(), String> {
     let largest = summary.largest_sorted();
     let stdout = io::stdout();
-    let mut output = io::BufWriter::with_capacity(64 * 1024, stdout.lock());
+    let output = io::BufWriter::with_capacity(64 * 1024, stdout.lock());
+    let mut output = JsonWhitespaceWriter::new(output, compact);
     macro_rules! write_scan_json_line {
         ($($argument:tt)*) => {
             writeln!(output, $($argument)*)
@@ -3791,6 +3857,7 @@ fn run_scan(args: &[String]) -> Result<(), String> {
     let resolved_args = scan_args_with_settings(args)?;
     let args = resolved_args.as_slice();
     let mut json = false;
+    let mut compact = false;
     let mut csv = false;
     let mut show_filters = false;
     let mut include_same_size = true;
@@ -3813,6 +3880,7 @@ fn run_scan(args: &[String]) -> Result<(), String> {
     while let Some(arg) = iter.next() {
         match arg.as_str() {
             "--json" => json = true,
+            "--compact" => compact = true,
             "--csv" => csv = true,
             "--show-filters" => show_filters = true,
             "--no-same-size" => include_same_size = false,
@@ -3920,7 +3988,7 @@ fn run_scan(args: &[String]) -> Result<(), String> {
             }
             "--help" | "-h" => {
                 println!(
-                    "Usage: mediaforge scan [PATH] [--json|--csv] [--csv-info] [--show-filters] [--include-hidden] [--strict] [--no-same-size] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--modified-since UNIX_SECONDS] [--modified-until UNIX_SECONDS] [--modified-within DURATION] [--path-contains TEXT ...] [--exclude-path-contains TEXT ...] [--extension EXTENSIONS ...] [--largest N] [--sort path|size|modified] [--settings FILE]\n\nSummarize media and game assets in a folder. --show-filters prints the resolved filters as JSON and exits without scanning the target path, so it can preview --settings plus command-line overrides. The preview reports whether --largest applies and whether its value is explicit or the output-format default; CSV always includes all matching rows. --no-same-size omits the potentially large same-size candidate path list from JSON while retaining the group count. --min-size and --max-size select an inclusive byte range; fractional size values are rounded up to whole bytes. --modified-since and --modified-until select an inclusive modification-time range in Unix seconds. --modified-within selects recent files using a duration such as 12h or 7d and cannot be combined with those absolute-time filters. --settings loads key=value scan filters; explicit command-line values are applied afterward. --path-contains selects relative paths by a case-insensitive substring; repeat it to require every substring. --exclude-path-contains removes paths matching any repeated case-insensitive substring. --extension accepts comma-separated extensions; repeat it to combine more extensions. Permission and file-system errors are skipped by default; text/JSON report incomplete scans and CSV writes warnings to stderr. JSON uses schema_version 1 and includes incomplete, skipped_paths, up to 100 skipped_path_examples, skipped_paths_truncated, and the applied filters. Use --strict to fail on the first traversal error instead. --csv emits one row per matched file with path, type, extension, byte size, and modification time in Unix seconds; it always includes all matches. Add --csv-info to write a JSON scan-info record to stderr without changing CSV stdout. Use --sort path, --sort size, or --sort modified to control CSV row order; size order is largest first and modified order is newest first, with unavailable times last and deterministic path tie-breaking. --largest controls how many biggest files are shown (default: 10 in text, 20 in JSON). Defaults to the current directory.\n\nTypes: video, audio, image, model, texture, project, other\nExtensions: comma-separated, case-insensitive (for example exr,tif); use none to select files without an extension\nSizes: bytes, KiB/MiB/GiB, or K/M/G (for example 500M); fractional values round up to the next byte"
+                    "Usage: mediaforge scan [PATH] [--json|--csv] [--compact] [--csv-info] [--show-filters] [--include-hidden] [--strict] [--no-same-size] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--modified-since UNIX_SECONDS] [--modified-until UNIX_SECONDS] [--modified-within DURATION] [--path-contains TEXT ...] [--exclude-path-contains TEXT ...] [--extension EXTENSIONS ...] [--largest N] [--sort path|size|modified] [--settings FILE]\n\nSummarize media and game assets in a folder. --compact removes formatting whitespace from JSON output and requires --json. --show-filters prints the resolved filters as JSON and exits without scanning the target path, so it can preview --settings plus command-line overrides. The preview reports whether --largest applies and whether its value is explicit or the output-format default; CSV always includes all matching rows. --no-same-size omits the potentially large same-size candidate path list from JSON while retaining the group count. --min-size and --max-size select an inclusive byte range; fractional size values are rounded up to whole bytes. --modified-since and --modified-until select an inclusive modification-time range in Unix seconds. --modified-within selects recent files using a duration such as 12h or 7d and cannot be combined with those absolute-time filters. --settings loads key=value scan filters; explicit command-line values are applied afterward. --path-contains selects relative paths by a case-insensitive substring; repeat it to require every substring. --exclude-path-contains removes paths matching any repeated case-insensitive substring. --extension accepts comma-separated extensions; repeat it to combine more extensions. Permission and file-system errors are skipped by default; text/JSON report incomplete scans and CSV writes warnings to stderr. JSON uses schema_version 1 and includes incomplete, skipped_paths, up to 100 skipped_path_examples, skipped_paths_truncated, and the applied filters. Use --strict to fail on the first traversal error instead. --csv emits one row per matched file with path, type, extension, byte size, and modification time in Unix seconds; it always includes all matches. Add --csv-info to write a JSON scan-info record to stderr without changing CSV stdout. Use --sort path, --sort size, or --sort modified to control CSV row order; size order is largest first and modified order is newest first, with unavailable times last and deterministic path tie-breaking. --largest controls how many biggest files are shown (default: 10 in text, 20 in JSON). Defaults to the current directory.\n\nTypes: video, audio, image, model, texture, project, other\nExtensions: comma-separated, case-insensitive (for example exr,tif); use none to select files without an extension\nSizes: bytes, KiB/MiB/GiB, or K/M/G (for example 500M); fractional values round up to the next byte"
                 );
                 return Ok(());
             }
@@ -3935,6 +4003,9 @@ fn run_scan(args: &[String]) -> Result<(), String> {
     }
     if json && csv {
         return Err("--json and --csv cannot be used together".to_owned());
+    }
+    if compact && !json {
+        return Err("--compact can only be used with --json".to_owned());
     }
     if csv_sort.is_some() && !csv {
         return Err("--sort can only be used with --csv".to_owned());
@@ -3974,6 +4045,7 @@ fn run_scan(args: &[String]) -> Result<(), String> {
         print_scan_filter_preview(ScanFilterPreviewOptions {
             path: &path,
             json,
+            compact,
             csv,
             csv_sort,
             largest_limit,
@@ -4123,13 +4195,23 @@ fn run_scan(args: &[String]) -> Result<(), String> {
             strict,
         };
         if let Some(summary) = json_summary.as_mut() {
-            print_json_summary(&root, summary, skipped_paths, &skipped_examples, filters)?;
+            print_json_summary(
+                &root,
+                summary,
+                skipped_paths,
+                &skipped_examples,
+                filters,
+                compact,
+            )?;
         } else {
             print_json(
                 &root,
                 &records,
-                largest_limit,
-                include_same_size,
+                ScanJsonOutputOptions {
+                    largest_limit,
+                    include_same_size,
+                    compact,
+                },
                 skipped_paths,
                 &skipped_examples,
                 filters,
