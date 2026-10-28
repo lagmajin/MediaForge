@@ -88,7 +88,7 @@ mediaforge organize ./Media --by type --apply
 mediaforge undo ./Media
 ```
 
-Organization is a preview unless `--apply` is supplied. Moves preserve paths below the new type/extension folder, skip destination collisions, and refuse symlink paths. Before moving anything, MediaForge writes a `.mediaforge-undo` recovery manifest. `undo` restores files only when the original location is clear; it retains the manifest if a conflict needs manual handling. It never deletes source files.
+Organization is a preview unless `--apply` is supplied. Moves preserve paths below the new type/extension folder, skip destination collisions, and refuse symlink paths. Before moving anything, MediaForge writes a `.mediaforge-undo` recovery manifest with portable `/` separators. `undo` restores files only when the original location is clear; it retains the manifest if a conflict needs manual handling. Older manifests are still readable. It never deletes source files.
 
 ## Pack a project for handoff
 

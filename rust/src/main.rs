@@ -1009,7 +1009,8 @@ fn run_project(args: &[String]) -> Result<(), String> {
 }
 
 const ORGANIZE_MANIFEST: &str = ".mediaforge-undo";
-const ORGANIZE_MAGIC: &[u8; 8] = b"MFORG001";
+const ORGANIZE_MAGIC: &[u8; 8] = b"MFORG002";
+const ORGANIZE_MAGIC_V1: &[u8; 8] = b"MFORG001";
 const ORGANIZE_MANIFEST_TEMP: &str = ".mediaforge-undo.tmp";
 const TAR_BLOCK_SIZE: usize = 512;
 const TAR_OCTAL_MAX: u64 = 0o77777777777;
@@ -1031,6 +1032,41 @@ fn validate_relative_path(value: &str) -> Result<PathBuf, String> {
         return Err(format!("unsafe path in organize manifest: {value:?}"));
     }
     Ok(path.to_path_buf())
+}
+
+fn validate_portable_relative_path(value: &str) -> Result<PathBuf, String> {
+    if value
+        .split('/')
+        .any(|part| part.is_empty() || part == "." || part == "..")
+        || value
+            .chars()
+            .any(|character| matches!(character, '\\' | ':' | '\0'))
+    {
+        return Err(format!(
+            "unsafe portable path in organize manifest: {value:?}"
+        ));
+    }
+    validate_relative_path(value)
+}
+
+fn portable_relative_path(path: &Path) -> Option<String> {
+    path.components()
+        .map(|component| match component {
+            std::path::Component::Normal(part) => part.to_str().and_then(|part| {
+                if part
+                    .chars()
+                    .any(|character| matches!(character, '/' | '\\' | ':' | '\0'))
+                {
+                    None
+                } else {
+                    Some(part)
+                }
+            }),
+            _ => None,
+        })
+        .collect::<Option<Vec<_>>>()
+        .filter(|parts| !parts.is_empty())
+        .map(|parts| parts.join("/"))
 }
 
 fn reject_symlink_components(root: &Path, relative: &Path) -> Result<(), String> {
@@ -1120,9 +1156,13 @@ fn read_organize_manifest(root: &Path) -> Result<Vec<PlannedMove>, String> {
     cursor
         .read_exact(&mut magic)
         .map_err(|error| format!("invalid undo manifest header: {error}"))?;
-    if &magic != ORGANIZE_MAGIC {
+    let portable = if &magic == ORGANIZE_MAGIC {
+        true
+    } else if &magic == ORGANIZE_MAGIC_V1 {
+        false
+    } else {
         return Err("unrecognized undo manifest format".to_owned());
-    }
+    };
     let count = read_manifest_u32(&mut cursor)? as usize;
     if count > 1_000_000 {
         return Err("undo manifest contains too many entries".to_owned());
@@ -1133,8 +1173,13 @@ fn read_organize_manifest(root: &Path) -> Result<Vec<PlannedMove>, String> {
     for _ in 0..count {
         let from = read_manifest_string(&mut cursor)?;
         let to = read_manifest_string(&mut cursor)?;
-        validate_relative_path(&from)?;
-        validate_relative_path(&to)?;
+        if portable {
+            validate_portable_relative_path(&from)?;
+            validate_portable_relative_path(&to)?;
+        } else {
+            validate_relative_path(&from)?;
+            validate_relative_path(&to)?;
+        }
         if !sources.insert(from.clone()) || !destinations.insert(to.clone()) {
             return Err("undo manifest contains repeated paths".to_owned());
         }
@@ -1248,7 +1293,7 @@ fn run_organize(args: &[String]) -> Result<(), String> {
                 continue;
             }
         };
-        let Some(relative_text) = relative.to_str() else {
+        let Some(from_text) = portable_relative_path(relative) else {
             skipped += 1;
             continue;
         };
@@ -1263,12 +1308,13 @@ fn run_organize(args: &[String]) -> Result<(), String> {
         if components.next().and_then(|part| part.as_os_str().to_str()) == Some(category.as_str()) {
             continue;
         }
-        let from = validate_relative_path(relative_text)?;
+        let from = validate_portable_relative_path(&from_text)?;
         let to = PathBuf::from(&category).join(relative);
-        let to_text = to
-            .to_str()
-            .ok_or_else(|| format!("destination path is not UTF-8: {}", to.display()))?
-            .to_owned();
+        let Some(to_text) = portable_relative_path(&to) else {
+            skipped += 1;
+            continue;
+        };
+        let to = validate_portable_relative_path(&to_text)?;
         if !destinations.insert(to.clone()) || fs::symlink_metadata(root.join(&to)).is_ok() {
             skipped += 1;
             continue;
@@ -1280,7 +1326,7 @@ fn run_organize(args: &[String]) -> Result<(), String> {
             continue;
         }
         moves.push(PlannedMove {
-            from: relative_text.to_owned(),
+            from: from_text,
             to: to_text,
         });
     }
