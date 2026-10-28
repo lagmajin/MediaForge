@@ -1330,7 +1330,7 @@ fn ffprobe_json(path: &Path, pretty: bool, summary: bool) -> Result<String, Stri
     if summary {
         command.args([
             "-show_entries",
-            "format=duration,format_name:stream=index,codec_type,codec_name,width,height,duration,sample_rate,channels,channel_layout,avg_frame_rate",
+            "format=duration,format_name,size,bit_rate,nb_streams:stream=index,codec_type,codec_name,codec_tag_string,profile,width,height,pix_fmt,sample_aspect_ratio,display_aspect_ratio,duration,bit_rate,avg_frame_rate,r_frame_rate,nb_frames,sample_rate,channels,channel_layout",
         ]);
     } else {
         command.args(["-show_format", "-show_streams"]);
@@ -1362,12 +1362,14 @@ fn ffprobe_json(path: &Path, pretty: bool, summary: bool) -> Result<String, Stri
 }
 
 fn run_probe_dir(args: &[String]) -> Result<(), String> {
+    const MAX_PROBE_JOBS: usize = 32;
     let mut include_hidden = false;
     let mut summary = false;
     let mut extensions = None;
     let mut jobs = std::thread::available_parallelism()
         .map(usize::from)
-        .unwrap_or(1);
+        .unwrap_or(1)
+        .min(MAX_PROBE_JOBS);
     let mut path = None;
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
@@ -1390,10 +1392,15 @@ fn run_probe_dir(args: &[String]) -> Result<(), String> {
                 if jobs == 0 {
                     return Err("--jobs must be greater than zero".to_owned());
                 }
+                if jobs > MAX_PROBE_JOBS {
+                    return Err(format!(
+                        "--jobs is limited to {MAX_PROBE_JOBS} concurrent ffprobe processes"
+                    ));
+                }
             }
             "--help" | "-h" => {
                 println!(
-                    "Usage: mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--jobs N] [--summary]\n\nProbe video and audio assets in a directory with ffprobe. Emits one JSON Lines record per file. --jobs controls the number of concurrent ffprobe processes. --summary limits metadata to duration, codec, dimensions, frame rate, and audio channels."
+                    "Usage: mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--jobs N] [--summary]\n\nProbe video and audio assets in a directory with ffprobe. Emits one JSON Lines record per file. --jobs controls concurrent ffprobe processes (1–32). --summary selects compact fields for size, duration, bitrate, codecs, dimensions, pixel/aspect formats, frame rates, and audio layout."
                 );
                 return Ok(());
             }
