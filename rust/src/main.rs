@@ -8825,20 +8825,40 @@ fn run_project(args: &[String]) -> Result<(), String> {
         return Err(format!("expected a project directory: {}", root.display()));
     }
 
-    let root_entries = fs::read_dir(&root)
-        .map_err(|error| format!("cannot read project directory {}: {error}", root.display()))?
-        .map(|entry| {
-            let entry = entry
-                .map_err(|error| format!("cannot read entry in {}: {error}", root.display()))?;
-            let file_type = entry.file_type().map_err(|error| {
+    let mut root_entries = Vec::new();
+    let mut unreal_files = Vec::<(String, Option<String>)>::new();
+    let entries = fs::read_dir(&root)
+        .map_err(|error| format!("cannot read project directory {}: {error}", root.display()))?;
+    for entry in entries {
+        let entry =
+            entry.map_err(|error| format!("cannot read entry in {}: {error}", root.display()))?;
+        let file_type = entry.file_type().map_err(|error| {
+            format!(
+                "cannot inspect project entry {}: {error}",
+                entry.path().display()
+            )
+        })?;
+        let entry_path = entry.path();
+        if file_type.is_file()
+            && entry_path
+                .extension()
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("uproject"))
+        {
+            let project_file = entry.file_name().to_string_lossy().into_owned();
+            let contents = fs::read_to_string(&entry_path).map_err(|error| {
                 format!(
-                    "cannot inspect project entry {}: {error}",
-                    entry.path().display()
+                    "cannot read Unreal project descriptor {}: {error}",
+                    entry_path.display()
                 )
             })?;
-            Ok((entry, file_type))
-        })
-        .collect::<Result<Vec<_>, String>>()?;
+            let association = json_top_level_string_field(&contents, "EngineAssociation")
+                .filter(|association| !association.trim().is_empty());
+            unreal_files.push((project_file, association));
+        }
+        if editor_files {
+            root_entries.push((entry, file_type));
+        }
+    }
     let has_unity_assets = is_real_directory(&root.join("Assets"));
     let has_godot_project = is_real_file(&root.join("project.godot"));
     let mut engines = Vec::<(&str, Vec<&str>, Vec<&str>)>::new();
@@ -8871,26 +8891,6 @@ fn run_project(args: &[String]) -> Result<(), String> {
                 .map(str::to_owned)
         })
     });
-    let mut unreal_files = Vec::<(String, Option<String>)>::new();
-    for (entry, file_type) in &root_entries {
-        let entry_path = entry.path();
-        if file_type.is_file()
-            && entry_path
-                .extension()
-                .is_some_and(|extension| extension.eq_ignore_ascii_case("uproject"))
-        {
-            let project_file = entry.file_name().to_string_lossy().into_owned();
-            let contents = fs::read_to_string(&entry_path).map_err(|error| {
-                format!(
-                    "cannot read Unreal project descriptor {}: {error}",
-                    entry_path.display()
-                )
-            })?;
-            let association = json_top_level_string_field(&contents, "EngineAssociation")
-                .filter(|association| !association.trim().is_empty());
-            unreal_files.push((project_file, association));
-        }
-    }
     unreal_files.sort_unstable_by(|left, right| compare_paths_case_insensitive(&left.0, &right.0));
     if !unreal_files.is_empty() {
         engines.push((
