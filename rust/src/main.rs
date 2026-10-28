@@ -626,6 +626,11 @@ where
                 .map_err(|error| format!("cannot relativize {}: {error}", path.display()))?
                 .to_string_lossy()
                 .replace('\\', "/");
+            let relative_lower = if filters.exclude_path_contains_lower.is_some() {
+                Some(relative.to_lowercase())
+            } else {
+                None
+            };
             if file_type.is_dir() {
                 let name = entry.file_name();
                 let name = name.to_string_lossy();
@@ -636,8 +641,8 @@ where
                         .excluded_subtree
                         .is_some_and(|excluded| path.starts_with(excluded))
                     || filters.exclude_path_contains_lower.is_some_and(|values| {
-                        let relative_lower = relative.to_lowercase();
-                        values.iter().any(|value| relative_lower.contains(value))
+                        let value = relative_lower.as_deref().unwrap_or_default();
+                        values.iter().any(|needle| value.contains(needle))
                     })
                 {
                     continue;
@@ -651,8 +656,8 @@ where
             } else if file_type.is_file()
                 && !is_ignored(&relative, &active_ignored)
                 && !filters.exclude_path_contains_lower.is_some_and(|values| {
-                    let relative_lower = relative.to_lowercase();
-                    values.iter().any(|value| relative_lower.contains(value))
+                    let value = relative_lower.as_deref().unwrap_or_default();
+                    values.iter().any(|needle| value.contains(needle))
                 })
             {
                 let kind = classify(&path);
