@@ -1277,7 +1277,7 @@ fn fraction_ceil_scaled(fraction: &str, multiplier: u128) -> u128 {
 
 fn print_help() {
     println!(
-        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS] [--largest N]\n  mediaforge dupes [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--top-groups N]\n  mediaforge probe <FILE> [--compact] [--summary]\n  mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--jobs N] [--summary]\n  mediaforge storyboard <VIDEO> --output <IMAGE> [--interval SECONDS] [--columns N] [--rows N] [--width PIXELS]\n  mediaforge proxy <VIDEO> --output <FILE.mp4> [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge proxy-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET] [--jobs N] [--json]\n  mediaforge proxy-config init [FILE] [--profile fast|balanced|quality] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge extract-audio <VIDEO> --output <FILE> [--format mp3|wav|flac] [--bitrate RATE] [--stream N]\n  mediaforge extract-audio-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--format mp3|wav|flac] [--bitrate RATE] [--stream N] [--jobs N] [--json]\n  mediaforge project [PATH] [--json]\n  mediaforge gitignore [PATH] [--apply]\n  mediaforge organize [PATH] [--by type|extension] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--apply]\n  mediaforge sequence [PATH] [--prefix NAME] [--start N] [--padding N] [--extension EXTENSIONS] [--include-hidden] [--json] [--apply]\n  mediaforge undo [PATH] [--json]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--include-hidden] [--include-generated] [--dry-run] [--json] [--list]\n  mediaforge --version\n  mediaforge --help"
+        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS] [--largest N]\n  mediaforge dupes [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--top-groups N]\n  mediaforge probe <FILE> [--compact] [--summary]\n  mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--jobs N] [--summary]\n  mediaforge storyboard <VIDEO> --output <IMAGE> [--interval SECONDS] [--columns N] [--rows N] [--width PIXELS]\n  mediaforge proxy <VIDEO> --output <FILE.mp4> [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge proxy-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET] [--jobs N] [--skip-existing] [--json]\n  mediaforge proxy-config init [FILE] [--profile fast|balanced|quality] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge extract-audio <VIDEO> --output <FILE> [--format mp3|wav|flac] [--bitrate RATE] [--stream N]\n  mediaforge extract-audio-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--format mp3|wav|flac] [--bitrate RATE] [--stream N] [--jobs N] [--json]\n  mediaforge project [PATH] [--json]\n  mediaforge gitignore [PATH] [--apply]\n  mediaforge organize [PATH] [--by type|extension] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--apply]\n  mediaforge sequence [PATH] [--prefix NAME] [--start N] [--padding N] [--extension EXTENSIONS] [--include-hidden] [--json] [--apply]\n  mediaforge undo [PATH] [--json]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--include-hidden] [--include-generated] [--dry-run] [--json] [--list]\n  mediaforge --version\n  mediaforge --help"
     );
 }
 
@@ -2220,6 +2220,7 @@ fn run_proxy_dir(args: &[String]) -> Result<(), String> {
         .map(usize::from)
         .unwrap_or(1)
         .min(4);
+    let mut skip_existing = false;
     let mut json = false;
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
@@ -2294,9 +2295,10 @@ fn run_proxy_dir(args: &[String]) -> Result<(), String> {
                     ));
                 }
             }
+            "--skip-existing" => skip_existing = true,
             "--help" | "-h" => {
                 println!(
-                    "Usage: mediaforge proxy-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET] [--jobs N] [--json]\n\nCreate H.264/AAC proxies for video assets while preserving their relative folders. Automatically reads .mediaforge-proxy from the working directory when present. Explicit options override settings-file values. --jobs controls concurrent ffmpeg processes (1–16; default 4). Existing outputs are never overwritten. Failed files are reported after the remaining videos are processed. The output directory must already exist. --json emits progress and per-file result records as JSON Lines."
+                    "Usage: mediaforge proxy-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET] [--jobs N] [--skip-existing] [--json]\n\nCreate H.264/AAC proxies for video assets while preserving their relative folders. Automatically reads .mediaforge-proxy from the working directory when present. Explicit options override settings-file values. --jobs controls concurrent ffmpeg processes (1–16; default 4). Existing outputs are never overwritten; --skip-existing skips them to resume a batch. Failed files are reported after the remaining videos are processed. The output directory must already exist. --json emits progress and per-file result records as JSON Lines."
                 );
                 return Ok(());
             }
@@ -2398,7 +2400,7 @@ fn run_proxy_dir(args: &[String]) -> Result<(), String> {
         })
         .collect();
     let next = std::sync::atomic::AtomicUsize::new(0);
-    let results = std::sync::Mutex::new(Vec::<(usize, Result<(), String>)>::with_capacity(total));
+    let results = std::sync::Mutex::new(Vec::<(usize, Result<bool, String>)>::with_capacity(total));
     std::thread::scope(|scope| {
         for _ in 0..jobs.min(total) {
             scope.spawn(|| {
@@ -2421,6 +2423,12 @@ fn run_proxy_dir(args: &[String]) -> Result<(), String> {
                     }
                     let result = plan.clone().and_then(|()| {
                         let output = output.as_ref().expect("successful plan has output");
+                        let output_state = entry_state(output).map_err(|error| {
+                            format!("cannot inspect output {}: {error}", output.display())
+                        })?;
+                        if skip_existing && output_state != EntryState::Missing {
+                            return Ok(false);
+                        }
                         if let Some(parent) = output.parent() {
                             fs::create_dir_all(parent).map_err(|error| {
                                 format!(
@@ -2448,7 +2456,7 @@ fn run_proxy_dir(args: &[String]) -> Result<(), String> {
                             preset.clone(),
                             "--quiet".to_owned(),
                         ];
-                        run_proxy(&proxy_args)
+                        run_proxy(&proxy_args).map(|()| true)
                     });
                     results
                         .lock()
@@ -2463,6 +2471,7 @@ fn run_proxy_dir(args: &[String]) -> Result<(), String> {
         .map_err(|_| "proxy results lock poisoned".to_owned())?;
     results.sort_by_key(|(index, _)| *index);
     let mut succeeded = 0_usize;
+    let mut skipped = 0_usize;
     let mut failed = 0_usize;
     for (index, result) in results {
         let record = &records[index];
@@ -2472,16 +2481,32 @@ fn run_proxy_dir(args: &[String]) -> Result<(), String> {
             .map(|output| json_string(&output.to_string_lossy()))
             .unwrap_or_else(|| "null".to_owned());
         match result {
-            Ok(()) => {
-                succeeded += 1;
+            Ok(created) => {
+                if created {
+                    succeeded += 1;
+                } else {
+                    skipped += 1;
+                }
                 if json {
-                    println!(
-                        "{{\"type\":\"result\",\"path\":{},\"output\":{},\"ok\":true}}",
-                        json_string(&record.relative),
-                        output_json
-                    );
+                    if created {
+                        println!(
+                            "{{\"type\":\"result\",\"path\":{},\"output\":{},\"ok\":true}}",
+                            json_string(&record.relative),
+                            output_json
+                        );
+                    } else {
+                        println!(
+                            "{{\"type\":\"result\",\"path\":{},\"output\":{},\"ok\":true,\"skipped\":true}}",
+                            json_string(&record.relative),
+                            output_json
+                        );
+                    }
                 } else if let Some(output) = &plans[index].0 {
-                    println!("Created proxy {}", output.display());
+                    if created {
+                        println!("Created proxy {}", output.display());
+                    } else {
+                        println!("Skipped existing proxy {}", output.display());
+                    }
                 }
             }
             Err(error) => {
@@ -2500,9 +2525,13 @@ fn run_proxy_dir(args: &[String]) -> Result<(), String> {
         }
     }
     if json {
-        println!("{{\"type\":\"summary\",\"succeeded\":{succeeded},\"failed\":{failed}}}");
+        println!(
+            "{{\"type\":\"summary\",\"succeeded\":{succeeded},\"skipped\":{skipped},\"failed\":{failed}}}"
+        );
     } else {
-        println!("Proxy batch finished: {succeeded} succeeded, {failed} failed.");
+        println!(
+            "Proxy batch finished: {succeeded} succeeded, {skipped} skipped, {failed} failed."
+        );
     }
     if failed > 0 {
         return Err(format!("proxy generation failed for {failed} file(s)"));
