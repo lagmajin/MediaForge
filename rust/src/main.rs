@@ -1379,7 +1379,7 @@ fn fraction_ceil_scaled(fraction: &str, multiplier: u128) -> u128 {
 
 fn print_help() {
     println!(
-        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json|--csv] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS] [--largest N]\n  mediaforge dupes [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--top-groups N]\n  mediaforge probe <FILE> [--compact] [--summary]\n  mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--jobs N] [--summary]\n  mediaforge storyboard <VIDEO> --output <IMAGE> [--interval SECONDS] [--columns N] [--rows N] [--width PIXELS]\n  mediaforge proxy <VIDEO> --output <FILE.mp4> [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge proxy-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET] [--jobs N] [--skip-existing] [--json]\n  mediaforge proxy-config init [FILE] [--profile fast|balanced|quality] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge extract-audio <VIDEO> --output <FILE> [--format mp3|wav|flac] [--bitrate RATE] [--stream N]\n  mediaforge extract-audio-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--format mp3|wav|flac] [--bitrate RATE] [--stream N] [--jobs N] [--skip-existing] [--json]\n  mediaforge project [PATH] [--json]\n  mediaforge gitignore [PATH] [--apply]\n  mediaforge organize [PATH] [--by type|extension] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--apply]\n  mediaforge sequence [PATH] [--prefix NAME] [--start N] [--padding N] [--extension EXTENSIONS] [--include-hidden] [--natural] [--json] [--apply]\n  mediaforge undo [PATH] [--json]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--include-hidden] [--include-generated] [--dry-run] [--json] [--list]\n  mediaforge --version\n  mediaforge --help"
+        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json|--csv] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS] [--largest N]\n  mediaforge dupes [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--top-groups N]\n  mediaforge probe <FILE> [--compact] [--summary]\n  mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--type video|audio] [--jobs N] [--summary]\n  mediaforge storyboard <VIDEO> --output <IMAGE> [--interval SECONDS] [--columns N] [--rows N] [--width PIXELS]\n  mediaforge proxy <VIDEO> --output <FILE.mp4> [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge proxy-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET] [--jobs N] [--skip-existing] [--json]\n  mediaforge proxy-config init [FILE] [--profile fast|balanced|quality] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge extract-audio <VIDEO> --output <FILE> [--format mp3|wav|flac] [--bitrate RATE] [--stream N]\n  mediaforge extract-audio-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--format mp3|wav|flac] [--bitrate RATE] [--stream N] [--jobs N] [--skip-existing] [--json]\n  mediaforge project [PATH] [--json]\n  mediaforge gitignore [PATH] [--apply]\n  mediaforge organize [PATH] [--by type|extension] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--apply]\n  mediaforge sequence [PATH] [--prefix NAME] [--start N] [--padding N] [--extension EXTENSIONS] [--include-hidden] [--natural] [--json] [--apply]\n  mediaforge undo [PATH] [--json]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--include-hidden] [--include-generated] [--dry-run] [--json] [--list]\n  mediaforge --version\n  mediaforge --help"
     );
 }
 
@@ -1415,7 +1415,7 @@ fn run_probe(args: &[String]) -> Result<(), String> {
     let path = fs::canonicalize(&path)
         .map_err(|error| format!("cannot resolve media file {}: {error}", path.display()))?;
 
-    let json = ffprobe_json(&path, pretty, summary)?;
+    let json = ffprobe_json(&path, pretty, summary, None)?;
     let mut stdout = io::stdout().lock();
     stdout
         .write_all(json.as_bytes())
@@ -1428,9 +1428,17 @@ fn run_probe(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-fn ffprobe_json(path: &Path, pretty: bool, summary: bool) -> Result<String, String> {
+fn ffprobe_json(
+    path: &Path,
+    pretty: bool,
+    summary: bool,
+    stream_selector: Option<&str>,
+) -> Result<String, String> {
     let mut command = Command::new("ffprobe");
     command.args(["-v", "error"]);
+    if let Some(selector) = stream_selector {
+        command.args(["-select_streams", selector]);
+    }
     if summary {
         command.args([
             "-show_entries",
@@ -1469,6 +1477,7 @@ fn run_probe_dir(args: &[String]) -> Result<(), String> {
     const MAX_PROBE_JOBS: usize = 32;
     let mut include_hidden = false;
     let mut summary = false;
+    let mut selected_kind = None;
     let mut extensions = None;
     let mut jobs = std::thread::available_parallelism()
         .map(usize::from)
@@ -1480,6 +1489,16 @@ fn run_probe_dir(args: &[String]) -> Result<(), String> {
         match arg.as_str() {
             "--include-hidden" => include_hidden = true,
             "--summary" => summary = true,
+            "--type" => {
+                let value = iter
+                    .next()
+                    .ok_or_else(|| "--type requires 'video' or 'audio'".to_owned())?;
+                selected_kind = Some(match value.as_str() {
+                    "video" => Kind::Video,
+                    "audio" => Kind::Audio,
+                    _ => return Err("--type must be 'video' or 'audio'".to_owned()),
+                });
+            }
             "--extension" => {
                 let value = iter.next().ok_or_else(|| {
                     "--extension requires a comma-separated extension list".to_owned()
@@ -1504,7 +1523,7 @@ fn run_probe_dir(args: &[String]) -> Result<(), String> {
             }
             "--help" | "-h" => {
                 println!(
-                    "Usage: mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--jobs N] [--summary]\n\nProbe video and audio assets in a directory with ffprobe. Emits one JSON Lines record per file. --jobs controls concurrent ffprobe processes (1–32). --summary selects compact fields for size, duration, bitrate, codecs, dimensions, pixel/aspect formats, frame rates, and audio layout."
+                    "Usage: mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--type video|audio] [--jobs N] [--summary]\n\nProbe video and audio assets in a directory with ffprobe. Emits one JSON Lines record per file. --type filters to video or audio assets and selects only that stream type in the report. --jobs controls concurrent ffprobe processes (1–32). --summary selects compact fields for size, duration, bitrate, codecs, dimensions, pixel/aspect formats, frame rates, and audio layout."
                 );
                 return Ok(());
             }
@@ -1534,6 +1553,9 @@ fn run_probe_dir(args: &[String]) -> Result<(), String> {
         &mut records,
     )?;
     records.retain(|record| matches!(record.kind, Kind::Video | Kind::Audio));
+    if let Some(kind) = selected_kind {
+        records.retain(|record| record.kind == kind);
+    }
     if let Some(extensions) = extensions {
         records.retain(|record| extensions.contains(&record.extension));
     }
@@ -1553,7 +1575,12 @@ fn run_probe_dir(args: &[String]) -> Result<(), String> {
                     let Some(record) = records.get(index) else {
                         break;
                     };
-                    let result = ffprobe_json(&record.path, false, summary);
+                    let selector = selected_kind.map(|kind| match kind {
+                        Kind::Video => "v",
+                        Kind::Audio => "a",
+                        _ => unreachable!(),
+                    });
+                    let result = ffprobe_json(&record.path, false, summary, selector);
                     let (success, json) = match result {
                         Ok(probe) => (
                             true,
