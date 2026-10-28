@@ -407,6 +407,44 @@ fn run_with_bounded_stderr(
     Ok((child.wait()?, detail_head))
 }
 
+fn create_unique_media_temp(parent: &Path, stem: &str, extension: &str) -> Result<PathBuf, String> {
+    let mut attempt = 0_u64;
+    loop {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let candidate = parent.join(format!(
+            ".{stem}.mediaforge-{}-{nonce}-{attempt}.tmp.{extension}",
+            std::process::id()
+        ));
+        attempt = attempt
+            .checked_add(1)
+            .ok_or_else(|| "could not allocate a unique temporary media name".to_owned())?;
+        match entry_state(&candidate) {
+            Ok(EntryState::Missing) => return Ok(candidate),
+            Ok(_) => continue,
+            Err(error) => {
+                return Err(format!(
+                    "cannot inspect temporary media beside {}: {error}",
+                    parent.display()
+                ));
+            }
+        }
+    }
+}
+
+fn remove_temp_with_context(path: &Path, context: String) -> String {
+    match fs::remove_file(path) {
+        Ok(()) => context,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => context,
+        Err(error) => format!(
+            "{context}; temporary file remains at {}: {error}",
+            path.display()
+        ),
+    }
+}
+
 fn read_up_to_full_or_eof(reader: &mut impl Read, buffer: &mut [u8]) -> io::Result<usize> {
     let mut filled = 0;
     while filled < buffer.len() {
@@ -6202,65 +6240,58 @@ fn run_storyboard(args: &[String]) -> Result<(), String> {
         .file_stem()
         .and_then(|value| value.to_str())
         .unwrap_or("storyboard");
-    let temporary = parent.join(format!(
-        ".{stem}.mediaforge-{}-{}.tmp.{extension}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos()
-    ));
+    let temporary = create_unique_media_temp(&parent, stem, &extension)?;
     let tile_height = width * 9 / 16;
     let filter = format!(
         "fps=1/{interval},scale={width}:{tile_height}:force_original_aspect_ratio=decrease,pad={width}:{tile_height}:(ow-iw)/2:(oh-ih)/2,tile={columns}x{rows}"
     );
-    let (status, stderr) = run_with_bounded_stderr(
+    let run_result = run_with_bounded_stderr(
         Command::new("ffmpeg")
             .args(["-hide_banner", "-loglevel", "error", "-nostdin", "-n", "-i"])
             .arg(&input)
             .args(["-vf", &filter, "-frames:v", "1"])
             .arg(&temporary),
-    )
-    .map_err(|error| {
-        if error.kind() == std::io::ErrorKind::NotFound {
-            "ffmpeg was not found on PATH. Install FFmpeg to create storyboards.".to_owned()
-        } else {
-            format!("could not start ffmpeg: {error}")
+    );
+    let (status, stderr) = match run_result {
+        Ok(result) => result,
+        Err(error) => {
+            let message = if error.kind() == io::ErrorKind::NotFound {
+                "ffmpeg was not found on PATH. Install FFmpeg to create storyboards.".to_owned()
+            } else {
+                format!("could not start ffmpeg: {error}")
+            };
+            return Err(message);
         }
-    })?;
+    };
     if !status.success() {
         let detail = String::from_utf8_lossy(&stderr).trim().to_owned();
-        let _ = fs::remove_file(&temporary);
-        return Err(if detail.is_empty() {
+        let message = if detail.is_empty() {
             format!("ffmpeg failed with {status}")
         } else {
             format!("ffmpeg failed: {detail}")
-        });
+        };
+        return Err(remove_temp_with_context(&temporary, message));
     }
     let temporary_size = match fs::metadata(&temporary) {
         Ok(metadata) => metadata.len(),
         Err(error) => {
-            let _ = fs::remove_file(&temporary);
-            return Err(format!("could not inspect generated storyboard: {error}"));
+            return Err(remove_temp_with_context(
+                &temporary,
+                format!("could not inspect generated storyboard: {error}"),
+            ));
         }
     };
     if temporary_size == 0 {
-        let _ = fs::remove_file(&temporary);
-        return Err("ffmpeg produced an empty storyboard".to_owned());
+        return Err(remove_temp_with_context(
+            &temporary,
+            "ffmpeg produced an empty storyboard".to_owned(),
+        ));
     }
     move_file_no_replace(&temporary, &output).map_err(|error| {
-        let cleanup = fs::remove_file(&temporary);
-        match cleanup {
-            Ok(()) => format!("could not publish storyboard {}: {error}", output.display()),
-            Err(cleanup_error) if cleanup_error.kind() == io::ErrorKind::NotFound => {
-                format!("could not publish storyboard {}: {error}", output.display())
-            }
-            Err(cleanup_error) => format!(
-                "could not publish storyboard {}: {error}; temporary image remains at {}: {cleanup_error}",
-                output.display(),
-                temporary.display()
-            ),
-        }
+        remove_temp_with_context(
+            &temporary,
+            format!("could not publish storyboard {}: {error}", output.display()),
+        )
     })?;
     println!(
         "Created storyboard {} ({}; up to {cells} frames)",
@@ -7440,16 +7471,9 @@ fn run_proxy_with_options(
         .file_stem()
         .and_then(|value| value.to_str())
         .unwrap_or("proxy");
-    let temporary = parent.join(format!(
-        ".{stem}.mediaforge-{}-{}.tmp.mp4",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos()
-    ));
+    let temporary = create_unique_media_temp(&parent, stem, "mp4")?;
     let filter = format!("scale=w='trunc(min({max_width},iw)/2)*2':h=-2");
-    let (status, stderr) = run_with_bounded_stderr(
+    let run_result = run_with_bounded_stderr(
         Command::new("ffmpeg")
             .args(["-hide_banner", "-loglevel", "error", "-nostdin", "-n", "-i"])
             .arg(&input)
@@ -7470,47 +7494,47 @@ fn run_proxy_with_options(
                 "+faststart",
             ])
             .arg(&temporary),
-    )
-    .map_err(|error| {
-        if error.kind() == std::io::ErrorKind::NotFound {
-            "ffmpeg was not found on PATH. Install FFmpeg to create proxies.".to_owned()
-        } else {
-            format!("could not start ffmpeg: {error}")
+    );
+    let (status, stderr) = match run_result {
+        Ok(result) => result,
+        Err(error) => {
+            let message = if error.kind() == io::ErrorKind::NotFound {
+                "ffmpeg was not found on PATH. Install FFmpeg to create proxies.".to_owned()
+            } else {
+                format!("could not start ffmpeg: {error}")
+            };
+            return Err(message);
         }
-    })?;
+    };
     if !status.success() {
         let detail = String::from_utf8_lossy(&stderr).trim().to_owned();
-        let _ = fs::remove_file(&temporary);
-        return Err(if detail.is_empty() {
+        let message = if detail.is_empty() {
             format!("ffmpeg failed with {status}")
         } else {
             format!("ffmpeg failed: {detail}")
-        });
+        };
+        return Err(remove_temp_with_context(&temporary, message));
     }
     let temporary_size = match fs::metadata(&temporary) {
         Ok(metadata) => metadata.len(),
         Err(error) => {
-            let _ = fs::remove_file(&temporary);
-            return Err(format!("could not inspect generated proxy: {error}"));
+            return Err(remove_temp_with_context(
+                &temporary,
+                format!("could not inspect generated proxy: {error}"),
+            ));
         }
     };
     if temporary_size == 0 {
-        let _ = fs::remove_file(&temporary);
-        return Err("ffmpeg produced an empty proxy".to_owned());
+        return Err(remove_temp_with_context(
+            &temporary,
+            "ffmpeg produced an empty proxy".to_owned(),
+        ));
     }
     move_file_no_replace(&temporary, &output).map_err(|error| {
-        let cleanup = fs::remove_file(&temporary);
-        match cleanup {
-            Ok(()) => format!("could not publish proxy {}: {error}", output.display()),
-            Err(cleanup_error) if cleanup_error.kind() == io::ErrorKind::NotFound => {
-                format!("could not publish proxy {}: {error}", output.display())
-            }
-            Err(cleanup_error) => format!(
-                "could not publish proxy {}: {error}; temporary video remains at {}: {cleanup_error}",
-                output.display(),
-                temporary.display()
-            ),
-        }
+        remove_temp_with_context(
+            &temporary,
+            format!("could not publish proxy {}: {error}", output.display()),
+        )
     })?;
     if !quiet {
         println!(
@@ -8066,14 +8090,7 @@ fn run_extract_audio_with_options(
         .file_stem()
         .and_then(|value| value.to_str())
         .unwrap_or("audio");
-    let temporary = parent.join(format!(
-        ".{stem}.mediaforge-{}-{}.tmp.{format}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos()
-    ));
+    let temporary = create_unique_media_temp(&parent, stem, format)?;
     let mut command = Command::new("ffmpeg");
     command
         .args(["-hide_banner", "-loglevel", "error", "-nostdin", "-n", "-i"])
@@ -8093,46 +8110,47 @@ fn run_extract_audio_with_options(
         }
         _ => unreachable!(),
     }
-    let (status, stderr) = run_with_bounded_stderr(command.arg(&temporary)).map_err(|error| {
-        if error.kind() == std::io::ErrorKind::NotFound {
-            "ffmpeg was not found on PATH. Install FFmpeg to extract audio.".to_owned()
-        } else {
-            format!("could not start ffmpeg: {error}")
+    let run_result = run_with_bounded_stderr(command.arg(&temporary));
+    let (status, stderr) = match run_result {
+        Ok(result) => result,
+        Err(error) => {
+            let message = if error.kind() == io::ErrorKind::NotFound {
+                "ffmpeg was not found on PATH. Install FFmpeg to extract audio.".to_owned()
+            } else {
+                format!("could not start ffmpeg: {error}")
+            };
+            return Err(message);
         }
-    })?;
+    };
     if !status.success() {
         let detail = String::from_utf8_lossy(&stderr).trim().to_owned();
-        let _ = fs::remove_file(&temporary);
-        return Err(if detail.is_empty() {
+        let message = if detail.is_empty() {
             format!("ffmpeg failed with {status}")
         } else {
             format!("ffmpeg failed: {detail}")
-        });
+        };
+        return Err(remove_temp_with_context(&temporary, message));
     }
     let temporary_size = match fs::metadata(&temporary) {
         Ok(metadata) => metadata.len(),
         Err(error) => {
-            let _ = fs::remove_file(&temporary);
-            return Err(format!("could not inspect extracted audio: {error}"));
+            return Err(remove_temp_with_context(
+                &temporary,
+                format!("could not inspect extracted audio: {error}"),
+            ));
         }
     };
     if temporary_size == 0 {
-        let _ = fs::remove_file(&temporary);
-        return Err("ffmpeg produced an empty audio file".to_owned());
+        return Err(remove_temp_with_context(
+            &temporary,
+            "ffmpeg produced an empty audio file".to_owned(),
+        ));
     }
     move_file_no_replace(&temporary, &output).map_err(|error| {
-        let cleanup = fs::remove_file(&temporary);
-        match cleanup {
-            Ok(()) => format!("could not publish audio {}: {error}", output.display()),
-            Err(cleanup_error) if cleanup_error.kind() == io::ErrorKind::NotFound => {
-                format!("could not publish audio {}: {error}", output.display())
-            }
-            Err(cleanup_error) => format!(
-                "could not publish audio {}: {error}; temporary audio remains at {}: {cleanup_error}",
-                output.display(),
-                temporary.display()
-            ),
-        }
+        remove_temp_with_context(
+            &temporary,
+            format!("could not publish audio {}: {error}", output.display()),
+        )
     })?;
     if !quiet {
         println!(
