@@ -10977,7 +10977,7 @@ fn run_sequence(args: &[String]) -> Result<(), String> {
             "--json" => json = true,
             "--help" | "-h" => {
                 println!(
-                    "Usage: mediaforge sequence [PATH] [--prefix NAME] [--start N] [--padding N] [--extension EXTENSIONS] [--include-hidden] [--natural] [--json] [--apply]\n\nPreview a stable renumbering of files directly inside PATH. Alphabetical order is the default; --natural sorts digit runs by numeric value (for example frame2 before frame10). Extensions are preserved. The operation skips destination collisions and can be undone with 'mediaforge undo PATH'."
+                    "Usage: mediaforge sequence [PATH] [--prefix NAME] [--start N] [--padding N] [--extension EXTENSIONS] [--include-hidden] [--natural] [--json] [--apply]\n\nPreview a stable renumbering of files directly inside PATH. Alphabetical order is the default; --natural sorts digit runs by numeric value (for example frame2 before frame10). Extensions are preserved. Matching Unity .meta sidecars move with their assets to preserve GUIDs. The operation skips destination collisions and can be undone with 'mediaforge undo PATH'."
                 );
                 return Ok(());
             }
@@ -11071,6 +11071,28 @@ fn run_sequence(args: &[String]) -> Result<(), String> {
             skipped += 1;
             continue;
         }
+        if let Some(asset_name) = strip_ascii_case_insensitive_suffix(name_text, ".meta") {
+            let asset_path = root.join(asset_name);
+            match fs::symlink_metadata(&asset_path) {
+                Ok(asset_metadata)
+                    if !asset_metadata.file_type().is_symlink()
+                        && (asset_metadata.is_file() || asset_metadata.is_dir()) =>
+                {
+                    if asset_metadata.is_dir() {
+                        skipped += 1;
+                    }
+                    continue;
+                }
+                Ok(_) => {}
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    return Err(format!(
+                        "cannot inspect Unity asset {}: {error}",
+                        asset_path.display()
+                    ));
+                }
+            }
+        }
         let extension = source.extension().and_then(|value| value.to_str());
         if extension_filter
             .as_ref()
@@ -11096,23 +11118,68 @@ fn run_sequence(args: &[String]) -> Result<(), String> {
             skipped += 1;
             continue;
         };
+        let sidecar_name = format!("{name_text}.meta");
+        let sidecar = root.join(&sidecar_name);
+        let sidecar_state = entry_state(&sidecar)
+            .map_err(|error| format!("cannot inspect sidecar {}: {error}", sidecar.display()))?;
         let target = root.join(&target_name);
         let state = entry_state(&target)
             .map_err(|error| format!("cannot inspect target {}: {error}", target.display()))?;
-        if from_text == to_text || state != EntryState::Missing {
+        let sidecar_target_name = format!("{target_name}.meta");
+        let sidecar_target = root.join(&sidecar_target_name);
+        let sidecar_target_state = entry_state(&sidecar_target).map_err(|error| {
+            format!(
+                "cannot inspect sidecar target {}: {error}",
+                sidecar_target.display()
+            )
+        })?;
+        if from_text == to_text
+            || state != EntryState::Missing
+            || sidecar_state == EntryState::Other
+            || sidecar_target_state != EntryState::Missing
+            || target_name.encode_utf16().count() > 255
+            || (sidecar_state == EntryState::File
+                && sidecar_target_name.encode_utf16().count() > 255)
+        {
             skipped += 1;
             collision_count += 1;
             if collision_examples.len() < 100 {
                 collision_examples.push((
                     from_text,
-                    if state == EntryState::Missing {
-                        "already_named".to_owned()
-                    } else {
+                    if state == EntryState::Missing && sidecar_target_state == EntryState::Missing {
+                        if sidecar_state == EntryState::Other {
+                            "sidecar_not_regular".to_owned()
+                        } else if target_name.encode_utf16().count() > 255
+                            || (sidecar_state == EntryState::File
+                                && sidecar_target_name.encode_utf16().count() > 255)
+                        {
+                            "filename_too_long".to_owned()
+                        } else {
+                            "already_named".to_owned()
+                        }
+                    } else if state != EntryState::Missing {
                         "destination_exists".to_owned()
+                    } else if sidecar_target_state != EntryState::Missing {
+                        "sidecar_destination_exists".to_owned()
+                    } else {
+                        "sidecar_not_regular".to_owned()
                     },
                 ));
             }
             continue;
+        }
+        if sidecar_state == EntryState::File {
+            let sidecar_from = portable_relative_path(Path::new(&sidecar_name));
+            let sidecar_to = portable_relative_path(Path::new(&sidecar_target_name));
+            let (Some(sidecar_from), Some(sidecar_to)) = (sidecar_from, sidecar_to) else {
+                return Err(format!(
+                    "cannot create a portable Unity sidecar path for {name_text}"
+                ));
+            };
+            moves.push(PlannedMove {
+                from: sidecar_from,
+                to: sidecar_to,
+            });
         }
         moves.push(PlannedMove {
             from: from_text,
