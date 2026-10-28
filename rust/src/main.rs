@@ -5782,6 +5782,9 @@ fn run_scene_detect_dir(args: &[String]) -> Result<(), String> {
 
     let executable = env::current_exe()
         .map_err(|error| format!("could not locate the mediaforge executable: {error}"))?;
+    let threshold_arg = threshold.to_string();
+    let min_gap_arg = min_gap.to_string();
+    let fps_arg = fps.map(|rate| rate.to_string());
     let next = std::sync::atomic::AtomicUsize::new(0);
     let completed = std::sync::atomic::AtomicUsize::new(0);
     let stream_output = std::sync::Mutex::new(());
@@ -5799,14 +5802,14 @@ fn run_scene_detect_dir(args: &[String]) -> Result<(), String> {
                     command
                         .arg("scene-detect")
                         .arg(&record.path)
-                        .args(["--threshold", &threshold.to_string()])
-                        .args(["--min-gap", &min_gap.to_string()])
+                        .args(["--threshold", threshold_arg.as_str()])
+                        .args(["--min-gap", min_gap_arg.as_str()])
                         .args(["--format", "jsonl"]);
                     if segments {
                         command.arg("--segments");
                     }
-                    if let Some(fps) = fps {
-                        command.args(["--fps", &fps.to_string()]);
+                    if let Some(fps) = fps_arg.as_deref() {
+                        command.args(["--fps", fps]);
                     }
                     let result = command.output();
                     let (success, output) = match result {
