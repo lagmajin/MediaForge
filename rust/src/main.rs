@@ -5,6 +5,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufRead, BufReader, Cursor, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
+use std::sync::Arc;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const SKIP_DIRS: &[&str] = &[
@@ -477,6 +478,15 @@ fn parse_glob_pattern(pattern: &str, anchored: bool) -> Option<Vec<GlobToken>> {
 }
 
 fn glob_matches(pattern: &[GlobToken], value: &str) -> bool {
+    if pattern
+        .iter()
+        .all(|token| matches!(token, GlobToken::Literal(_)))
+    {
+        let mut characters = value.chars();
+        return pattern.iter().all(|token| {
+            matches!(token, GlobToken::Literal(expected) if Some(*expected) == characters.next())
+        }) && characters.next().is_none();
+    }
     let value: Vec<char> = value.chars().collect();
     let mut memo = HashMap::<(usize, usize), bool>::new();
     fn matches(
@@ -1469,7 +1479,7 @@ fn run_project(args: &[String]) -> Result<(), String> {
 
     let mut project_files = Vec::<(String, &'static str)>::new();
     let ignored = ignored_by_git(&root)?;
-    let mut pending = vec![(root.clone(), ignored)];
+    let mut pending = vec![(root.clone(), Arc::<[IgnoreRule]>::from(ignored))];
     while let Some((directory, active_ignored)) = pending.pop() {
         let mut entries = fs::read_dir(&directory)
             .map_err(|error| {
@@ -1505,8 +1515,11 @@ fn run_project(args: &[String]) -> Result<(), String> {
                     && !PROJECT_ARTIFACT_DIRS.contains(&lossy_name.as_ref())
                     && !is_ignored_directory(&relative, &active_ignored)
                 {
-                    let child_ignored =
-                        extend_ignore_rules(&root, &path, &active_ignored)?.into_owned();
+                    let child_rules = extend_ignore_rules(&root, &path, active_ignored.as_ref())?;
+                    let child_ignored = match child_rules {
+                        Cow::Borrowed(_) => Arc::clone(&active_ignored),
+                        Cow::Owned(rules) => Arc::from(rules),
+                    };
                     pending.push((path, child_ignored));
                 }
             } else if file_type.is_file() {
