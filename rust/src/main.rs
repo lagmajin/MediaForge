@@ -1027,6 +1027,53 @@ fn write_organize_manifest(root: &Path, moves: &[PlannedMove]) -> Result<(), Str
     Ok(())
 }
 
+fn replace_organize_manifest(root: &Path, moves: &[PlannedMove]) -> Result<(), String> {
+    let manifest = root.join(ORGANIZE_MANIFEST);
+    let temporary = root.join(format!("{ORGANIZE_MANIFEST}.tmp"));
+    if fs::symlink_metadata(&temporary).is_ok() {
+        return Err(format!(
+            "temporary undo manifest already exists: {}",
+            temporary.display()
+        ));
+    }
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temporary)
+        .map_err(|error| format!("cannot create temporary undo manifest: {error}"))?;
+    let write_result = (|| -> io::Result<()> {
+        file.write_all(ORGANIZE_MAGIC)?;
+        let count = u32::try_from(moves.len())
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "too many moved files"))?;
+        file.write_all(&count.to_le_bytes())?;
+        for movement in moves {
+            let from = movement.from.as_bytes();
+            let to = movement.to.as_bytes();
+            let from_len = u32::try_from(from.len()).map_err(|_| {
+                io::Error::new(io::ErrorKind::InvalidInput, "source path is too long")
+            })?;
+            let to_len = u32::try_from(to.len()).map_err(|_| {
+                io::Error::new(io::ErrorKind::InvalidInput, "destination path is too long")
+            })?;
+            file.write_all(&from_len.to_le_bytes())?;
+            file.write_all(from)?;
+            file.write_all(&to_len.to_le_bytes())?;
+            file.write_all(to)?;
+        }
+        file.sync_all()
+    })();
+    drop(file);
+    if let Err(error) = write_result {
+        let _ = fs::remove_file(&temporary);
+        return Err(format!("could not update undo manifest: {error}"));
+    }
+    if let Err(error) = fs::rename(&temporary, &manifest) {
+        let _ = fs::remove_file(&temporary);
+        return Err(format!("could not replace undo manifest: {error}"));
+    }
+    Ok(())
+}
+
 fn read_organize_manifest(root: &Path) -> Result<Vec<PlannedMove>, String> {
     let path = root.join(ORGANIZE_MANIFEST);
     let metadata = fs::symlink_metadata(&path)
@@ -1218,7 +1265,7 @@ fn run_organize(args: &[String]) -> Result<(), String> {
             ));
         }
     }
-    write_organize_manifest(&root, &moves)?;
+    write_organize_manifest(&root, &[])?;
     let mut moved = 0usize;
     for movement in &moves {
         let from = root.join(validate_relative_path(&movement.from)?);
@@ -1227,12 +1274,23 @@ fn run_organize(args: &[String]) -> Result<(), String> {
             .parent()
             .ok_or_else(|| "destination has no parent directory".to_owned())?;
         if let Err(error) = fs::create_dir_all(parent).and_then(|()| fs::rename(&from, &to)) {
+            let moved_entries = &moves[..moved];
+            let manifest_error = replace_organize_manifest(&root, moved_entries).err();
+            let recovery = manifest_error.map_or_else(
+                || format!("recovery manifest remains at {}", root.join(ORGANIZE_MANIFEST).display()),
+                |manifest_error| format!("could not update recovery manifest: {manifest_error}; initial manifest remains at {}", root.join(ORGANIZE_MANIFEST).display()),
+            );
             return Err(format!(
-                "moved {moved} file(s) before failure: {error}; recovery manifest remains at {}",
-                root.join(ORGANIZE_MANIFEST).display()
+                "moved {moved} file(s) before failure: {error}; {recovery}"
             ));
         }
         moved += 1;
+        if let Err(manifest_error) = replace_organize_manifest(&root, &moves[..moved]) {
+            return Err(format!(
+                "moved {moved} file(s), but could not update recovery manifest: {manifest_error}; the previous manifest remains at {}",
+                root.join(ORGANIZE_MANIFEST).display()
+            ));
+        }
     }
     println!(
         "Moved {moved} file(s). Undo manifest: {}",
