@@ -3964,13 +3964,29 @@ fn hash_snapshot_file(
         ));
     }
     let mut hasher = Sha256::new();
-    loop {
-        let count = read_retry_interrupted(&mut file, buffer)
+    let mut remaining = record.size;
+    while remaining > 0 {
+        let requested = remaining.min(buffer.len() as u64) as usize;
+        let count = read_up_to_full_or_eof(&mut file, &mut buffer[..requested])
             .map_err(|error| format!("could not hash {}: {error}", path.display()))?;
-        if count == 0 {
-            break;
+        if count != requested {
+            return Err(format!(
+                "file shortened while hashing snapshot: {}",
+                path.display()
+            ));
         }
         hasher.update(&buffer[..count]);
+        remaining -= count as u64;
+    }
+    let mut extra = [0_u8; 1];
+    if read_retry_interrupted(&mut file, &mut extra)
+        .map_err(|error| format!("could not verify {} after hashing: {error}", path.display()))?
+        != 0
+    {
+        return Err(format!(
+            "file grew while hashing snapshot: {}",
+            path.display()
+        ));
     }
     let after = file
         .metadata()
