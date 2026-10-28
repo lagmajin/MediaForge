@@ -5057,7 +5057,6 @@ const PROBE_COMPARE_FIELDS: &[&str] = &[
 ];
 
 enum ProbeRetainedData {
-    CsvValues(Vec<String>),
     CompareValues(Vec<String>),
 }
 
@@ -5244,6 +5243,82 @@ fn print_probe_csv_row(
     result.map_err(|write_error| format!("could not write probe CSV row: {write_error}"))
 }
 
+fn probe_csv_batches(
+    root: &Path,
+    records: &[FilePathRecord],
+    jobs: usize,
+    selector: Option<&str>,
+) -> Result<usize, String> {
+    const BATCHES_PER_WORKER: usize = 4;
+    let batch_size = jobs.saturating_mul(BATCHES_PER_WORKER).max(1);
+    let stdout = io::stdout();
+    let mut output = io::BufWriter::with_capacity(64 * 1024, stdout.lock());
+    output
+        .write_all(b"path,ok,error,format_name,duration_seconds,codec_type,codec,profile,width,height,frame_rate,pixel_format,sample_rate,channels,channel_layout,size_bytes,bit_rate\n")
+        .map_err(|error| format!("could not write probe CSV header: {error}"))?;
+    let mut failures = 0_usize;
+
+    for batch_start in (0..records.len()).step_by(batch_size) {
+        let batch_end = (batch_start + batch_size).min(records.len());
+        let batch = &records[batch_start..batch_end];
+        let next = std::sync::atomic::AtomicUsize::new(0);
+        let next = &next;
+        let results = std::sync::Mutex::new(
+            Vec::<(usize, bool, String, Option<Vec<String>>)>::with_capacity(batch.len()),
+        );
+        let worker_count = jobs.min(batch.len());
+        std::thread::scope(|scope| {
+            for _ in 0..worker_count {
+                scope.spawn(|| {
+                    loop {
+                        let index = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        let Some(record) = batch.get(index) else {
+                            break;
+                        };
+                        let source_path = root.join(&record.path);
+                        let (success, error, values) =
+                            match ffprobe_json(&source_path, false, true, selector) {
+                                Ok(probe) => {
+                                    match probe_selected_values(&probe, PROBE_CSV_FIELDS) {
+                                        Ok(values) => (true, String::new(), Some(values)),
+                                        Err(error) => (false, error, None),
+                                    }
+                                }
+                                Err(error) => (false, error, None),
+                            };
+                        results.lock().expect("probe results mutex poisoned").push((
+                            batch_start + index,
+                            success,
+                            error,
+                            values,
+                        ));
+                    }
+                });
+            }
+        });
+
+        let mut results = results
+            .into_inner()
+            .map_err(|_| "probe CSV results could not be collected".to_owned())?;
+        results.sort_unstable_by_key(|(index, _, _, _)| *index);
+        for (index, success, error, values) in results {
+            failures += usize::from(!success);
+            print_probe_csv_row(
+                &mut output,
+                &records[index].relative,
+                success,
+                &error,
+                values.as_deref(),
+            )?;
+        }
+    }
+
+    output
+        .flush()
+        .map_err(|error| format!("could not write probe CSV: {error}"))?;
+    Ok(failures)
+}
+
 fn run_probe_dir(args: &[String]) -> Result<(), String> {
     const MAX_PROBE_JOBS: usize = 32;
     let mut include_hidden = false;
@@ -5366,7 +5441,7 @@ fn run_probe_dir(args: &[String]) -> Result<(), String> {
         &filters,
         &mut records,
     )?;
-    let stream_results = !csv && !compare;
+    let stream_results = !compare;
     if !stream_results {
         records.sort_unstable_by(|left, right| left.relative.cmp(&right.relative));
     }
@@ -5379,6 +5454,19 @@ fn run_probe_dir(args: &[String]) -> Result<(), String> {
             println!(
                 "{{\"files\":0,\"successful\":0,\"failed\":0,\"varying_fields\":[],\"failures\":[]}}"
             );
+        }
+        return Ok(());
+    }
+
+    if csv {
+        let selector = selected_kind.map(|kind| match kind {
+            Kind::Video => "v",
+            Kind::Audio => "a",
+            _ => unreachable!(),
+        });
+        let failures = probe_csv_batches(&root, &records, jobs, selector)?;
+        if failures > 0 {
+            return Err(format!("ffprobe failed for {failures} file(s)"));
         }
         return Ok(());
     }
@@ -5406,7 +5494,7 @@ fn run_probe_dir(args: &[String]) -> Result<(), String> {
                         _ => unreachable!(),
                     });
                     let source_path = root.join(&record.path);
-                    let result = ffprobe_json(&source_path, false, summary || csv, selector);
+                    let result = ffprobe_json(&source_path, false, summary, selector);
                     let (success, json, probe) = match result {
                         Ok(probe) if stream_results => {
                             let mut json = probe;
@@ -5435,14 +5523,6 @@ fn run_probe_dir(args: &[String]) -> Result<(), String> {
                                 Err(error) => (false, error, None),
                             }
                         }
-                        Ok(probe) if csv => match probe_selected_values(&probe, PROBE_CSV_FIELDS) {
-                            Ok(values) => (
-                                true,
-                                String::new(),
-                                Some(ProbeRetainedData::CsvValues(values)),
-                            ),
-                            Err(error) => (false, error, None),
-                        },
                         Ok(_) => (true, String::new(), None),
                         Err(error) if stream_results => (
                             false,
@@ -5487,28 +5567,6 @@ fn run_probe_dir(args: &[String]) -> Result<(), String> {
     let failures = failures.load(std::sync::atomic::Ordering::Relaxed);
     if compare {
         summarize_probe_differences(&records, &results)?;
-    } else if csv {
-        let stdout = io::stdout();
-        let mut output = io::BufWriter::with_capacity(64 * 1024, stdout.lock());
-        output
-            .write_all(b"path,ok,error,format_name,duration_seconds,codec_type,codec,profile,width,height,frame_rate,pixel_format,sample_rate,channels,channel_layout,size_bytes,bit_rate\n")
-            .map_err(|error| format!("could not write probe CSV header: {error}"))?;
-        for (index, success, record, probe) in &results {
-            let error = if *success { "" } else { record.as_str() };
-            print_probe_csv_row(
-                &mut output,
-                &records[*index].relative,
-                *success,
-                error,
-                probe.as_ref().and_then(|data| match data {
-                    ProbeRetainedData::CsvValues(values) => Some(values.as_slice()),
-                    ProbeRetainedData::CompareValues(_) => None,
-                }),
-            )?;
-        }
-        output
-            .flush()
-            .map_err(|error| format!("could not write probe CSV: {error}"))?;
     }
     if failures > 0 {
         return Err(format!("ffprobe failed for {failures} file(s)"));
