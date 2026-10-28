@@ -42,6 +42,7 @@ mediaforge storyboard ./Media/shot.mp4 -o ./Media/shot-sheet.png --interval 5 --
 mediaforge proxy ./Media/shot.mp4 --output ./Proxies/shot-proxy.mp4
 mediaforge proxy ./Media/shot.mp4 -o ./Proxies/shot-proxy.mp4 --max-width 960 --crf 30 --preset ultrafast
 mediaforge proxy-dir ./Media --output-dir ./Proxies --extension mov,mxf --max-width 1280 --preset veryfast
+mediaforge proxy-dir ./Media --output-dir ./Proxies --extension mov,mxf --json
 mediaforge extract-audio ./Media/shot.mp4 --output ./Audio/shot.mp3
 mediaforge extract-audio ./Media/shot.mp4 -o ./Audio/shot.wav --format wav --stream 1
 ```
@@ -52,7 +53,7 @@ mediaforge extract-audio ./Media/shot.mp4 -o ./Audio/shot.wav --format wav --str
 
 `proxy` creates an H.264/AAC MP4 suitable for smoother editing. It scales down to at most 1280 pixels wide by default, with CRF 28 and the `veryfast` x264 preset. Lower CRF preserves more quality; faster presets trade compression efficiency for shorter encoding time. Set `--max-width`, `--crf` (0–51), and `--preset` to tune the result. FFmpeg must include libx264 and AAC support. Existing files are never overwritten.
 
-`proxy-dir` applies the same proxy settings to video files in a directory tree, preserving relative folders beneath an existing output directory. It skips files already inside that output directory, never overwrites existing proxies, continues after per-file errors, and returns a nonzero exit status if any file failed. Set `--extension` to limit inputs.
+`proxy-dir` applies the same proxy settings to video files in a directory tree, preserving relative folders beneath an existing output directory. It skips files already inside that output directory, never overwrites existing proxies, continues after per-file errors, and returns a nonzero exit status if any file failed. Set `--extension` to limit inputs. Add `--json` for JSON Lines progress, per-file success/error records, and a final summary.
 
 `extract-audio` writes the selected audio stream as MP3 (192k by default), WAV, or FLAC. `--stream` selects a zero-based audio stream; `--bitrate` selects an MP3 bitrate from 64k to 320k. The output extension must match `--format`. FFmpeg must include the selected encoder, and existing files are never overwritten.
 
