@@ -1112,6 +1112,21 @@ fn ignored_by_git(root: &Path) -> Result<Vec<IgnoreRule>, String> {
             global_rules.extend(contents.lines().filter_map(parse_ignore_rule));
         }
     }
+    if let Some(path) = repository_ignore_file(root)? {
+        let contents = match fs::read_to_string(&path) {
+            Ok(contents) => Some(contents),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+            Err(error) => {
+                return Err(format!(
+                    "cannot read repository ignore file {}: {error}",
+                    path.display()
+                ));
+            }
+        };
+        if let Some(contents) = contents {
+            global_rules.extend(contents.lines().filter_map(parse_ignore_rule));
+        }
+    }
     Ok(extend_ignore_rules(root, root, &global_rules)?.into_owned())
 }
 
@@ -1153,6 +1168,33 @@ fn global_ignore_file(root: &Path) -> Result<Option<PathBuf>, String> {
                 .map(|home| PathBuf::from(home).join(".config"))
         });
     Ok(config_root.map(|path| path.join("git").join("ignore")))
+}
+
+fn repository_ignore_file(root: &Path) -> Result<Option<PathBuf>, String> {
+    let output = match Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["rev-parse", "--git-path", "info/exclude"])
+        .output()
+    {
+        Ok(output) if output.status.success() => output,
+        Ok(_) => return Ok(None),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(format!("could not locate repository ignore file: {error}"));
+        }
+    };
+    let value = String::from_utf8_lossy(&output.stdout);
+    let value = value.trim();
+    if value.is_empty() {
+        return Ok(None);
+    }
+    let path = PathBuf::from(value);
+    Ok(Some(if path.is_absolute() {
+        path
+    } else {
+        root.join(path)
+    }))
 }
 
 fn extend_ignore_rules<'a>(
