@@ -9962,11 +9962,15 @@ fn run_sequence(args: &[String]) -> Result<(), String> {
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| format!("cannot read directory entry: {error}"))?;
     if natural {
-        entries.sort_by(|left, right| {
-            let left_name = left.file_name().to_string_lossy().into_owned();
-            let right_name = right.file_name().to_string_lossy().into_owned();
-            natural_name_cmp(&left_name, &right_name)
-        });
+        let mut keyed = entries
+            .drain(..)
+            .map(|entry| {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                (name, entry)
+            })
+            .collect::<Vec<_>>();
+        keyed.sort_by(|(left, _), (right, _)| natural_name_cmp(left, right));
+        entries.extend(keyed.into_iter().map(|(_, entry)| entry));
     } else {
         sort_entries(&mut entries);
     }
