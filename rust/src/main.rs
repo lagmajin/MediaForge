@@ -2725,22 +2725,40 @@ fn files_identical(
         .clamp(DEFAULT_BUFFER_SIZE, MAX_BUFFER_SIZE);
     let mut left = fs::File::open(left)?;
     let mut right = fs::File::open(right)?;
+    let left_before = left.metadata()?;
+    let right_before = right.metadata()?;
+    if left_before.len() != size || right_before.len() != size {
+        return Ok(false);
+    }
+    let left_modified_before = left_before.modified().ok();
+    let right_modified_before = right_before.modified().ok();
     left_buffer.resize(capacity, 0);
     right_buffer.resize(capacity, 0);
     let mut remaining = size;
     loop {
-        let requested = if remaining == 0 {
-            capacity
-        } else {
-            remaining.min(capacity as u64) as usize
-        };
+        if remaining == 0 {
+            let mut left_extra = [0_u8; 1];
+            let mut right_extra = [0_u8; 1];
+            if read_retry_interrupted(&mut left, &mut left_extra)? != 0
+                || read_retry_interrupted(&mut right, &mut right_extra)? != 0
+            {
+                return Ok(false);
+            }
+            let left_after = left.metadata()?;
+            let right_after = right.metadata()?;
+            return Ok(left_after.len() == size
+                && right_after.len() == size
+                && left_after.modified().ok() == left_modified_before
+                && right_after.modified().ok() == right_modified_before);
+        }
+        let requested = remaining.min(capacity as u64) as usize;
         let left_count = read_up_to_full_or_eof(&mut left, &mut left_buffer[..requested])?;
         let right_count = read_up_to_full_or_eof(&mut right, &mut right_buffer[..requested])?;
-        if left_count != right_count || left_buffer[..left_count] != right_buffer[..right_count] {
+        if left_count != requested
+            || right_count != requested
+            || left_buffer[..left_count] != right_buffer[..right_count]
+        {
             return Ok(false);
-        }
-        if left_count == 0 {
-            return Ok(true);
         }
         remaining = remaining.saturating_sub(left_count as u64);
     }
