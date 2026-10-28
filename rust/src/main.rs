@@ -10049,17 +10049,17 @@ fn register_portable_archive_path(
     paths: &mut HashMap<String, (String, bool)>,
     archive_name: &str,
 ) -> Result<(), String> {
-    let components: Vec<_> = archive_name.split('/').collect();
+    let mut components = archive_name.split('/').peekable();
     let mut actual_prefix = String::new();
     let mut portable_prefix = String::new();
-    for (index, component) in components.iter().enumerate() {
+    while let Some(component) = components.next() {
         if !actual_prefix.is_empty() {
             actual_prefix.push('/');
             portable_prefix.push('/');
         }
         actual_prefix.push_str(component);
         portable_prefix.push_str(&component.to_lowercase());
-        let is_file = index + 1 == components.len();
+        let is_file = components.peek().is_none();
         match paths.get(&portable_prefix) {
             Some((existing, true)) if !is_file => {
                 return Err(format!(
