@@ -96,6 +96,14 @@ struct FileRecord {
     extension: String,
 }
 
+struct ScanFileRecord {
+    relative: String,
+    size: u64,
+    modified: Option<std::time::SystemTime>,
+    kind: Kind,
+    extension: String,
+}
+
 struct FilePathRecord {
     relative: String,
     path: PathBuf,
@@ -429,7 +437,7 @@ struct ScanWalkConfig<'a> {
 }
 
 struct ScanWalkResult {
-    records: Vec<FileRecord>,
+    records: Vec<ScanFileRecord>,
     skipped_paths: usize,
     skipped_examples: Vec<String>,
 }
@@ -628,7 +636,7 @@ fn walk_with_skip_dirs_mode_counted(config: ScanWalkConfig<'_>) -> Result<ScanWa
                         return Ok(());
                     }
                 }
-                records.push(FileRecord {
+                records.push(ScanFileRecord {
                     relative,
                     kind,
                     modified: if filters.include_modified {
@@ -638,7 +646,6 @@ fn walk_with_skip_dirs_mode_counted(config: ScanWalkConfig<'_>) -> Result<ScanWa
                     },
                     size,
                     extension,
-                    path: PathBuf::new(),
                 });
             }
             Ok(())
@@ -1604,13 +1611,13 @@ fn compare_paths_case_insensitive(left: &str, right: &str) -> std::cmp::Ordering
     case_insensitive.then_with(|| left.cmp(right))
 }
 
-fn compare_largest_records(left: &FileRecord, right: &FileRecord) -> std::cmp::Ordering {
+fn compare_largest_records(left: &ScanFileRecord, right: &ScanFileRecord) -> std::cmp::Ordering {
     std::cmp::Reverse(left.size)
         .cmp(&std::cmp::Reverse(right.size))
         .then_with(|| compare_paths_case_insensitive(&left.relative, &right.relative))
 }
 
-struct LargestRecord<'a>(&'a FileRecord);
+struct LargestRecord<'a>(&'a ScanFileRecord);
 
 impl PartialEq for LargestRecord<'_> {
     fn eq(&self, other: &Self) -> bool {
@@ -1632,7 +1639,7 @@ impl Ord for LargestRecord<'_> {
     }
 }
 
-fn largest_records(records: &[FileRecord], limit: usize) -> Vec<&FileRecord> {
+fn largest_records(records: &[ScanFileRecord], limit: usize) -> Vec<&ScanFileRecord> {
     if limit == 0 {
         return Vec::new();
     }
@@ -1660,7 +1667,7 @@ fn largest_records(records: &[FileRecord], limit: usize) -> Vec<&FileRecord> {
 
 fn print_json(
     root: &Path,
-    records: &[FileRecord],
+    records: &[ScanFileRecord],
     largest_limit: usize,
     include_same_size: bool,
     skipped_paths: usize,
@@ -1853,7 +1860,7 @@ fn print_json(
 
 fn print_report(
     root: &Path,
-    records: &[FileRecord],
+    records: &[ScanFileRecord],
     largest_limit: usize,
     skipped_paths: usize,
     skipped_examples: &[String],
@@ -1924,7 +1931,7 @@ fn write_csv_column(output: &mut impl Write, first: &mut bool, value: &str) -> i
     write_csv_field(output, value)
 }
 
-fn print_csv(records: &[FileRecord]) -> Result<(), String> {
+fn print_csv(records: &[ScanFileRecord]) -> Result<(), String> {
     let stdout = io::stdout();
     let mut output = io::BufWriter::with_capacity(64 * 1024, stdout.lock());
     let result = (|| -> io::Result<()> {
