@@ -1137,7 +1137,23 @@ fn has_odd_backslashes_before_last(value: &str) -> bool {
     backslashes % 2 == 1
 }
 
+fn parse_literal_ignore_pattern(pattern: &str) -> Option<String> {
+    let mut literal = String::with_capacity(pattern.len());
+    let mut characters = pattern.chars();
+    while let Some(character) = characters.next() {
+        match character {
+            '\\' => literal.push(characters.next()?),
+            '*' | '?' | '[' => return None,
+            character => literal.push(character),
+        }
+    }
+    Some(literal)
+}
+
 fn parse_glob_pattern(pattern: &str, anchored: bool) -> Option<IgnorePattern> {
+    if let Some(literal) = parse_literal_ignore_pattern(pattern) {
+        return Some(IgnorePattern::Literal(literal));
+    }
     let mut tokens = Vec::new();
     let characters: Vec<_> = pattern.chars().collect();
     let mut index = 0;
