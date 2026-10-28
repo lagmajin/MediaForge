@@ -5569,13 +5569,19 @@ fn run_probe_dir(args: &[String]) -> Result<(), String> {
     }
     if records.is_empty() {
         if csv {
-            println!(
+            let stdout = io::stdout();
+            writeln!(
+                stdout.lock(),
                 "path,ok,error,format_name,duration_seconds,codec_type,codec,profile,width,height,frame_rate,pixel_format,sample_rate,channels,channel_layout,size_bytes,bit_rate"
-            );
+            )
+            .map_err(|error| format!("could not write probe CSV header: {error}"))?;
         } else if compare {
-            println!(
+            let stdout = io::stdout();
+            writeln!(
+                stdout.lock(),
                 "{{\"files\":0,\"successful\":0,\"failed\":0,\"varying_fields\":[],\"failures\":[]}}"
-            );
+            )
+            .map_err(|error| format!("could not write probe comparison JSON: {error}"))?;
         }
         return Ok(());
     }
@@ -7379,7 +7385,12 @@ fn run_proxy_dir(args: &[String]) -> Result<(), String> {
     records.sort_unstable_by(|left, right| left.relative.cmp(&right.relative));
     if records.is_empty() {
         if json {
-            println!("{{\"type\":\"summary\",\"succeeded\":0,\"skipped\":0,\"failed\":0}}");
+            let stdout = io::stdout();
+            writeln!(
+                stdout.lock(),
+                "{{\"type\":\"summary\",\"succeeded\":0,\"skipped\":0,\"failed\":0}}"
+            )
+            .map_err(|error| format!("could not write proxy summary JSON: {error}"))?;
         } else {
             println!("No video assets found.");
         }
@@ -7581,9 +7592,12 @@ fn run_proxy_dir(args: &[String]) -> Result<(), String> {
         (succeeded, skipped, failed)
     };
     if json {
-        println!(
+        let stdout = io::stdout();
+        writeln!(
+            stdout.lock(),
             "{{\"type\":\"summary\",\"succeeded\":{succeeded},\"skipped\":{skipped},\"failed\":{failed}}}"
-        );
+        )
+        .map_err(|error| format!("could not write proxy summary JSON: {error}"))?;
     } else {
         println!(
             "Proxy batch finished: {succeeded} succeeded, {skipped} skipped, {failed} failed."
@@ -7950,7 +7964,12 @@ fn run_extract_audio_dir(args: &[String]) -> Result<(), String> {
     records.sort_unstable_by(|left, right| left.relative.cmp(&right.relative));
     if records.is_empty() {
         if json {
-            println!("{{\"type\":\"summary\",\"succeeded\":0,\"skipped\":0,\"failed\":0}}");
+            let stdout = io::stdout();
+            writeln!(
+                stdout.lock(),
+                "{{\"type\":\"summary\",\"succeeded\":0,\"skipped\":0,\"failed\":0}}"
+            )
+            .map_err(|error| format!("could not write audio summary JSON: {error}"))?;
         } else {
             println!("No media assets found.");
         }
@@ -8154,9 +8173,12 @@ fn run_extract_audio_dir(args: &[String]) -> Result<(), String> {
         (succeeded, skipped, failed)
     };
     if json {
-        println!(
+        let stdout = io::stdout();
+        writeln!(
+            stdout.lock(),
             "{{\"type\":\"summary\",\"succeeded\":{succeeded},\"skipped\":{skipped},\"failed\":{failed}}}"
-        );
+        )
+        .map_err(|error| format!("could not write audio summary JSON: {error}"))?;
     } else {
         println!(
             "Audio extraction finished: {succeeded} succeeded, {skipped} skipped, {failed} failed."
