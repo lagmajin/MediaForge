@@ -780,37 +780,41 @@ where
             if file_type.is_symlink() {
                 return Ok(());
             }
-            let mut relative = if file_type.is_dir() {
-                Some(
-                    path.strip_prefix(root)
-                        .map_err(|error| format!("cannot relativize {}: {error}", path.display()))?
-                        .to_string_lossy()
-                        .replace('\\', "/"),
-                )
-            } else {
-                None
-            };
+            let mut relative = None;
             if file_type.is_dir() {
-                let relative = relative
-                    .as_deref()
-                    .expect("directory paths are materialized");
                 let name = entry.file_name();
                 let name = name.to_string_lossy();
                 if directory_name_matches(&name, skip_dirs)
                     || (!include_hidden && has_hidden_attribute(&path))
-                    || is_ignored_directory(relative, &active_ignored)
                     || filters
                         .excluded_subtree
                         .is_some_and(|excluded| path.starts_with(excluded))
-                    || filters.exclude_path_contains_lower.is_some_and(|values| {
-                        if values.is_empty() {
-                            return false;
-                        }
-                        lowercase_into(relative, &mut lowercase_scratch);
-                        values.iter().any(|value| lowercase_scratch.contains(value))
-                    })
                 {
                     return Ok(());
+                }
+                let has_path_filter = filters
+                    .exclude_path_contains_lower
+                    .is_some_and(|values| !values.is_empty());
+                if !active_ignored.is_empty() || has_path_filter {
+                    let relative = relative.get_or_insert(
+                        path.strip_prefix(root)
+                            .map_err(|error| {
+                                format!("cannot relativize {}: {error}", path.display())
+                            })?
+                            .to_string_lossy()
+                            .replace('\\', "/"),
+                    );
+                    if is_ignored_directory(relative, &active_ignored)
+                        || filters.exclude_path_contains_lower.is_some_and(|values| {
+                            if values.is_empty() {
+                                return false;
+                            }
+                            lowercase_into(relative, &mut lowercase_scratch);
+                            values.iter().any(|value| lowercase_scratch.contains(value))
+                        })
+                    {
+                        return Ok(());
+                    }
                 }
                 let child_rules = extend_ignore_rules(root, &path, active_ignored.as_ref())?;
                 let child_ignored = match child_rules {
