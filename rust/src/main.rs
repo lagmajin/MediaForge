@@ -2880,10 +2880,20 @@ const SNAPSHOT_SKIP_DIRS: &[&str] = &[
 ];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(C)]
 struct SnapshotEntry {
     size: u64,
-    modified_ns: Option<i128>,
-    content_hash: Option<[u8; 32]>,
+    has_modified_ns: bool,
+    modified_ns: i128,
+    content_hash: [u8; 32],
+}
+
+const _: () = assert!(std::mem::size_of::<SnapshotEntry>() <= 64);
+
+impl SnapshotEntry {
+    fn modified_ns(self) -> Option<i128> {
+        self.has_modified_ns.then_some(self.modified_ns)
+    }
 }
 
 #[derive(Default)]
@@ -2907,7 +2917,7 @@ struct SnapshotSizeStats {
     modified_size_delta_bytes: i128,
 }
 
-fn snapshot_entry(record: &FileRecord, content_hash: Option<[u8; 32]>) -> SnapshotEntry {
+fn snapshot_entry(record: &FileRecord, content_hash: [u8; 32]) -> SnapshotEntry {
     let modified_ns =
         record.modified.map(
             |modified| match modified.duration_since(std::time::UNIX_EPOCH) {
@@ -2917,7 +2927,8 @@ fn snapshot_entry(record: &FileRecord, content_hash: Option<[u8; 32]>) -> Snapsh
         );
     SnapshotEntry {
         size: record.size,
-        modified_ns,
+        has_modified_ns: modified_ns.is_some(),
+        modified_ns: modified_ns.unwrap_or_default(),
         content_hash,
     }
 }
@@ -3120,13 +3131,11 @@ fn collect_snapshot_entries(
     let mut entries = BTreeMap::new();
     for (index, record) in records.iter().enumerate() {
         let content_hash = if let Some(hash_results) = &mut hash_results {
-            Some(
-                hash_results[index]
-                    .take()
-                    .expect("every snapshot file has a hash result")?,
-            )
+            hash_results[index]
+                .take()
+                .expect("every snapshot file has a hash result")?
         } else {
-            None
+            [0; 32]
         };
         if entries
             .insert(
@@ -3146,9 +3155,9 @@ fn collect_snapshot_entries(
 
 fn snapshot_entries_equal(old: SnapshotEntry, new: SnapshotEntry, hash_content: bool) -> bool {
     if hash_content {
-        old.content_hash.is_some() && old.content_hash == new.content_hash
+        old.content_hash == new.content_hash
     } else {
-        old.size == new.size && old.modified_ns == new.modified_ns
+        old.size == new.size && old.modified_ns() == new.modified_ns()
     }
 }
 
@@ -3248,8 +3257,9 @@ fn read_snapshot_manifest(
         };
         let snapshot_entry = SnapshotEntry {
             size: u64::from_le_bytes(size_bytes),
-            modified_ns,
-            content_hash,
+            has_modified_ns: modified_ns.is_some(),
+            modified_ns: modified_ns.unwrap_or_default(),
+            content_hash: content_hash.unwrap_or_default(),
         };
         match entries.entry(relative) {
             std::collections::btree_map::Entry::Occupied(entry) => {
@@ -3399,7 +3409,7 @@ fn write_snapshot_manifest(
                 .map_err(|error| format!("could not write snapshot entry: {error}"))?;
             match entries
                 .get(record.relative.as_str())
-                .and_then(|entry| entry.modified_ns)
+                .and_then(|entry| entry.modified_ns())
             {
                 Some(value) => writer
                     .write_all(&[1])
@@ -3409,11 +3419,7 @@ fn write_snapshot_manifest(
             .map_err(|error| format!("could not write snapshot timestamp: {error}"))?;
             if hash_content {
                 writer
-                    .write_all(
-                        &entries[record.relative.as_str()]
-                            .content_hash
-                            .expect("hash mode entries have hashes"),
-                    )
+                    .write_all(&entries[record.relative.as_str()].content_hash)
                     .map_err(|error| format!("could not write snapshot content hash: {error}"))?;
             }
         }
@@ -3537,10 +3543,10 @@ fn snapshot_csv_event(
     values[4] = new.map_or(String::new(), |entry| entry.size.to_string());
     values[5] = size_delta.to_string();
     values[6] = old
-        .and_then(|entry| entry.modified_ns)
+        .and_then(|entry| entry.modified_ns())
         .map_or(String::new(), |value| value.to_string());
     values[7] = new
-        .and_then(|entry| entry.modified_ns)
+        .and_then(|entry| entry.modified_ns())
         .map_or(String::new(), |value| value.to_string());
     values
 }
@@ -3911,8 +3917,8 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
                         || current.size.to_string(),
                         |value| (i128::from(current.size) - i128::from(value.size)).to_string()
                     ),
-                    read_json_timestamp(old.and_then(|value| value.modified_ns)),
-                    read_json_timestamp(current.modified_ns)
+                    read_json_timestamp(old.and_then(|value| value.modified_ns())),
+                    read_json_timestamp(current.modified_ns())
                 );
             }
             for (relative, old) in &old_entries {
@@ -3925,7 +3931,7 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
                     json_string(relative),
                     old.size,
                     -i128::from(old.size),
-                    read_json_timestamp(old.modified_ns)
+                    read_json_timestamp(old.modified_ns())
                 );
             }
         }
