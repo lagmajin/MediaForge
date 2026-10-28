@@ -3246,18 +3246,21 @@ fn read_snapshot_manifest(
         } else {
             None
         };
-        if entries
-            .insert(
-                relative.clone(),
-                SnapshotEntry {
-                    size: u64::from_le_bytes(size_bytes),
-                    modified_ns,
-                    content_hash,
-                },
-            )
-            .is_some()
-        {
-            return Err(format!("snapshot contains a duplicate path: {relative}"));
+        let snapshot_entry = SnapshotEntry {
+            size: u64::from_le_bytes(size_bytes),
+            modified_ns,
+            content_hash,
+        };
+        match entries.entry(relative) {
+            std::collections::btree_map::Entry::Occupied(entry) => {
+                return Err(format!(
+                    "snapshot contains a duplicate path: {}",
+                    entry.key()
+                ));
+            }
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                entry.insert(snapshot_entry);
+            }
         }
     }
     let mut trailing = [0];
