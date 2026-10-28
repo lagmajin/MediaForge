@@ -4692,32 +4692,14 @@ fn fraction_ceil_scaled(fraction: &str, multiplier: u128) -> u128 {
         return 0;
     }
     let multiplier = multiplier as u64;
-    let mut product_digits = Vec::with_capacity(fraction.len() + 12);
     let mut carry = 0_u64;
+    let mut has_remainder = false;
     for digit in fraction.bytes().rev() {
         let product = u64::from(digit - b'0') * multiplier + carry;
-        product_digits.push((product % 10) as u8);
+        has_remainder |= !product.is_multiple_of(10);
         carry = product / 10;
     }
-    while carry > 0 {
-        product_digits.push((carry % 10) as u8);
-        carry /= 10;
-    }
-
-    let fractional_digits = fraction.len();
-    let mut scaled_integer = 0_u128;
-    for digit in product_digits
-        .get(fractional_digits..)
-        .unwrap_or_default()
-        .iter()
-        .rev()
-    {
-        scaled_integer = scaled_integer * 10 + u128::from(*digit);
-    }
-    let has_remainder = product_digits[..fractional_digits.min(product_digits.len())]
-        .iter()
-        .any(|digit| *digit != 0);
-    scaled_integer + u128::from(has_remainder)
+    u128::from(carry) + u128::from(has_remainder)
 }
 
 fn print_help() {
