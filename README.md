@@ -202,7 +202,7 @@ mediaforge sequence ./Frames --prefix shot --natural --extension png --apply
 mediaforge undo ./Media
 ```
 
-`sequence` previews an alphabetical renaming plan for regular files directly inside the directory. It preserves extensions, skips hidden files by default, ignores Git-ignored paths, and skips any destination that already exists. Use `--natural` to sort digit runs by numeric value, so `frame2.png` comes before `frame10.png`; the default remains alphabetical. Use `--apply` to rename; the shared recovery manifest lets `undo` restore the operation. Only one file operation can be pending per directory so the undo history stays unambiguous.
+`sequence` previews an alphabetical renaming plan for regular files directly inside the directory. It preserves extensions, skips hidden files by default, ignores Git-ignored paths, and skips any destination that already exists. JSON preview output includes up to 100 skipped destination examples with a reason (`already_named` or `destination_exists`) and a truncation flag. Use `--natural` to sort digit runs by numeric value, so `frame2.png` comes before `frame10.png`; the default remains alphabetical. Use `--apply` to rename; the shared recovery manifest lets `undo` restore the operation. Only one file operation can be pending per directory so the undo history stays unambiguous.
 
 ## Pack a project for handoff
 

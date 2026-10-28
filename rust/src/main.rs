@@ -8310,6 +8310,8 @@ fn run_sequence(args: &[String]) -> Result<(), String> {
     }
     let mut moves = Vec::<PlannedMove>::new();
     let mut skipped = 0_usize;
+    let mut collision_examples = Vec::<(String, String)>::new();
+    let mut collision_count = 0_usize;
     let mut index = 0_u64;
     for entry in entries {
         let source = entry.path();
@@ -8375,6 +8377,17 @@ fn run_sequence(args: &[String]) -> Result<(), String> {
             .map_err(|error| format!("cannot inspect target {}: {error}", target.display()))?;
         if from_text == to_text || state != EntryState::Missing {
             skipped += 1;
+            collision_count += 1;
+            if collision_examples.len() < 100 {
+                collision_examples.push((
+                    from_text,
+                    if state == EntryState::Missing {
+                        "already_named".to_owned()
+                    } else {
+                        "destination_exists".to_owned()
+                    },
+                ));
+            }
             continue;
         }
         moves.push(PlannedMove {
@@ -8399,9 +8412,26 @@ fn run_sequence(args: &[String]) -> Result<(), String> {
             );
         }
         println!(
-            "  ],\n  \"move_count\": {},\n  \"skipped_count\": {}\n}}",
+            "  ],\n  \"move_count\": {},\n  \"skipped_count\": {},\n  \"skipped_examples\": [",
             moves.len(),
             skipped
+        );
+        for (position, (path, reason)) in collision_examples.iter().enumerate() {
+            let comma = if position + 1 == collision_examples.len() {
+                ""
+            } else {
+                ","
+            };
+            println!(
+                "    {{\"path\": {}, \"reason\": {}}}{}",
+                json_string(path),
+                json_string(reason),
+                comma
+            );
+        }
+        println!(
+            "  ],\n  \"skipped_examples_truncated\": {}\n}}",
+            collision_count > collision_examples.len()
         );
     } else if !json {
         println!(
