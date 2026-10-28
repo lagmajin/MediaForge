@@ -513,6 +513,31 @@ fn walk_strict_filtered(
     filters: &StrictWalkFilters<'_>,
     records: &mut Vec<FileRecord>,
 ) -> Result<(), String> {
+    walk_strict_filtered_with_callback(
+        root,
+        current,
+        include_hidden,
+        skip_dirs,
+        ignored,
+        filters,
+        Some(records),
+        |_| Ok(()),
+    )
+}
+
+fn walk_strict_filtered_with_callback<F>(
+    root: &Path,
+    current: &Path,
+    include_hidden: bool,
+    skip_dirs: &[&str],
+    ignored: &[IgnoreRule],
+    filters: &StrictWalkFilters<'_>,
+    mut records: Option<&mut Vec<FileRecord>>,
+    mut on_record: F,
+) -> Result<(), String>
+where
+    F: FnMut(&FileRecord) -> Result<(), String>,
+{
     let mut pending = vec![(current.to_path_buf(), Arc::<[IgnoreRule]>::from(ignored))];
     while let Some((directory, active_ignored)) = pending.pop() {
         let entries = fs::read_dir(&directory)
@@ -595,7 +620,7 @@ fn walk_strict_filtered(
                 {
                     continue;
                 }
-                records.push(FileRecord {
+                let record = FileRecord {
                     relative,
                     path: if filters.omit_absolute_path {
                         PathBuf::new()
@@ -610,7 +635,11 @@ fn walk_strict_filtered(
                     },
                     kind,
                     extension,
-                });
+                };
+                on_record(&record)?;
+                if let Some(records) = records.as_deref_mut() {
+                    records.push(record);
+                }
             }
         }
     }
@@ -1950,16 +1979,16 @@ fn sample_signature_for_path(root: &Path, relative: &str, size: u64) -> Result<u
         .map_err(|error| format!("could not sample {}: {error}", path.display()))
 }
 
-fn sample_signatures(
+fn sample_signatures<P: AsRef<str> + Sync>(
     root: &Path,
-    paths: &[&str],
+    paths: &[P],
     size: u64,
     jobs: usize,
 ) -> Vec<Result<u64, String>> {
     if jobs == 1 || paths.len() < 8 {
         return paths
             .iter()
-            .map(|relative| sample_signature_for_path(root, relative, size))
+            .map(|relative| sample_signature_for_path(root, relative.as_ref(), size))
             .collect();
     }
     let worker_count = jobs.min(paths.len());
@@ -1973,7 +2002,7 @@ fn sample_signatures(
                 scope.spawn(move || {
                     paths[start..end]
                         .iter()
-                        .map(|relative| sample_signature_for_path(root, relative, size))
+                        .map(|relative| sample_signature_for_path(root, relative.as_ref(), size))
                         .collect::<Vec<_>>()
                 })
             })
@@ -1992,12 +2021,12 @@ struct VerifiedDuplicateGroup {
 }
 
 struct DuplicateSizeBucket<'a> {
-    first: Option<&'a str>,
-    duplicates: Option<Vec<&'a str>>,
+    first: Option<Cow<'a, str>>,
+    duplicates: Option<Vec<Cow<'a, str>>>,
 }
 
 impl<'a> DuplicateSizeBucket<'a> {
-    fn push(&mut self, path: &'a str) {
+    fn push(&mut self, path: Cow<'a, str>) {
         if let Some(paths) = &mut self.duplicates {
             paths.push(path);
         } else {
@@ -2164,33 +2193,66 @@ fn run_dupes(args: &[String]) -> Result<(), String> {
         omit_absolute_path: true,
         omit_modified_time: true,
     };
-    walk_strict_filtered(
-        &root,
-        &root,
-        include_hidden,
-        SKIP_DIRS,
-        &ignored,
-        &filters,
-        &mut records,
-    )?;
-    let mut by_size = HashMap::<u64, DuplicateSizeBucket<'_>>::new();
-    for record in &records {
-        match by_size.entry(record.size) {
-            std::collections::hash_map::Entry::Occupied(mut entry) => {
-                entry.get_mut().push(record.relative.as_str());
-            }
-            std::collections::hash_map::Entry::Vacant(entry) => {
-                entry.insert(DuplicateSizeBucket {
-                    first: Some(record.relative.as_str()),
-                    duplicates: None,
-                });
+    let mut duplicate_sizes = if summary_only {
+        let mut by_size = HashMap::<u64, DuplicateSizeBucket<'static>>::new();
+        walk_strict_filtered_with_callback(
+            &root,
+            &root,
+            include_hidden,
+            SKIP_DIRS,
+            &ignored,
+            &filters,
+            None,
+            |record| {
+                match by_size.entry(record.size) {
+                    std::collections::hash_map::Entry::Occupied(mut entry) => {
+                        entry.get_mut().push(Cow::Owned(record.relative.clone()));
+                    }
+                    std::collections::hash_map::Entry::Vacant(entry) => {
+                        entry.insert(DuplicateSizeBucket {
+                            first: Some(Cow::Owned(record.relative.clone())),
+                            duplicates: None,
+                        });
+                    }
+                }
+                Ok(())
+            },
+        )?;
+        by_size
+            .into_iter()
+            .filter_map(|(size, bucket)| bucket.duplicates.map(|paths| (size, paths)))
+            .collect::<Vec<_>>()
+    } else {
+        walk_strict_filtered(
+            &root,
+            &root,
+            include_hidden,
+            SKIP_DIRS,
+            &ignored,
+            &filters,
+            &mut records,
+        )?;
+        let mut by_size = HashMap::<u64, DuplicateSizeBucket<'_>>::new();
+        for record in &records {
+            match by_size.entry(record.size) {
+                std::collections::hash_map::Entry::Occupied(mut entry) => {
+                    entry
+                        .get_mut()
+                        .push(Cow::Borrowed(record.relative.as_str()));
+                }
+                std::collections::hash_map::Entry::Vacant(entry) => {
+                    entry.insert(DuplicateSizeBucket {
+                        first: Some(Cow::Borrowed(record.relative.as_str())),
+                        duplicates: None,
+                    });
+                }
             }
         }
-    }
-    let mut duplicate_sizes = by_size
-        .into_iter()
-        .filter_map(|(size, bucket)| bucket.duplicates.map(|paths| (size, paths)))
-        .collect::<Vec<_>>();
+        by_size
+            .into_iter()
+            .filter_map(|(size, bucket)| bucket.duplicates.map(|paths| (size, paths)))
+            .collect::<Vec<_>>()
+    };
     duplicate_sizes.sort_unstable_by_key(|(size, _)| *size);
 
     let retain_group_paths = !summary_only && top_groups != Some(0);
@@ -2203,13 +2265,13 @@ fn run_dupes(args: &[String]) -> Result<(), String> {
         let mut by_sample: HashMap<u64, Vec<VerifiedDuplicateGroup>> = HashMap::new();
         let signatures = sample_signatures(&root, &paths, size, jobs);
         for (index, signature) in signatures.into_iter().enumerate() {
-            let relative = paths[index];
+            let relative = paths[index].as_ref();
             let signature = signature?;
             let candidate = root.join(relative);
             let candidates = by_sample.entry(signature).or_default();
             let mut matched = false;
             for group in candidates.iter_mut() {
-                let representative = root.join(paths[group.representative]);
+                let representative = root.join(paths[group.representative].as_ref());
                 match files_identical(&representative, &candidate) {
                     Ok(true) => {
                         group.count += 1;
@@ -2252,7 +2314,7 @@ fn run_dupes(args: &[String]) -> Result<(), String> {
             if let Some(file_indices) = group.files {
                 let files = file_indices
                     .into_iter()
-                    .map(|index| paths[index].to_owned())
+                    .map(|index| paths[index].to_string())
                     .collect();
                 let candidate = DuplicateOutputGroup { size, files };
                 if let Some(limit) = top_groups {
