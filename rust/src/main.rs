@@ -112,6 +112,13 @@ fn is_hidden(name: &str) -> bool {
     name.starts_with('.')
 }
 
+fn sort_entries(entries: &mut [fs::DirEntry]) {
+    entries.sort_by_cached_key(|entry| {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        (name.to_lowercase(), name)
+    });
+}
+
 fn walk(root: &Path, current: &Path, include_hidden: bool, records: &mut Vec<FileRecord>) {
     walk_with_skip_dirs(root, current, include_hidden, SKIP_DIRS, records);
 }
@@ -127,7 +134,7 @@ fn walk_with_skip_dirs(
         return;
     };
     let mut entries: Vec<_> = entries.filter_map(Result::ok).collect();
-    entries.sort_by_key(|entry| entry.file_name().to_string_lossy().to_lowercase());
+    sort_entries(&mut entries);
     for entry in entries {
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().into_owned();
@@ -184,7 +191,7 @@ fn walk_strict(
             entry.map_err(|error| format!("cannot read entry in {}: {error}", current.display()))
         })
         .collect::<Result<Vec<_>, _>>()?;
-    entries.sort_by_key(|entry| entry.file_name().to_string_lossy().to_lowercase());
+    sort_entries(&mut entries);
     for entry in entries {
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().into_owned();
@@ -862,10 +869,7 @@ fn directory_size(root: &Path) -> io::Result<(u64, u64)> {
             }
             if file_type.is_dir() {
                 let name = entry.file_name();
-                let name = name.to_string_lossy();
-                if !SKIP_DIRS.contains(&name.as_ref())
-                    && !PROJECT_ARTIFACT_DIRS.contains(&name.as_ref())
-                {
+                if !SKIP_DIRS.contains(&name.to_string_lossy().as_ref()) {
                     pending.push(entry.path());
                 }
             } else if file_type.is_file() {
@@ -1189,7 +1193,12 @@ fn run_project(args: &[String]) -> Result<(), String> {
             unreal_files.push((project_file, association));
         }
     }
-    unreal_files.sort_by_key(|(name, _)| name.to_lowercase());
+    unreal_files.sort_by(|left, right| {
+        left.0
+            .to_lowercase()
+            .cmp(&right.0.to_lowercase())
+            .then_with(|| left.0.cmp(&right.0))
+    });
     if !unreal_files.is_empty() {
         engines.push((
             "Unreal Engine",
@@ -1229,7 +1238,7 @@ fn run_project(args: &[String]) -> Result<(), String> {
                 })
             })
             .collect::<Result<Vec<_>, _>>()?;
-        entries.sort_by_key(|entry| entry.file_name().to_string_lossy().to_lowercase());
+        sort_entries(&mut entries);
         for entry in entries {
             let path = entry.path();
             let file_type = entry.file_type().map_err(|error| {
@@ -1267,7 +1276,12 @@ fn run_project(args: &[String]) -> Result<(), String> {
             }
         }
     }
-    project_files.sort_by(|left, right| left.0.to_lowercase().cmp(&right.0.to_lowercase()));
+    project_files.sort_by(|left, right| {
+        left.0
+            .to_lowercase()
+            .cmp(&right.0.to_lowercase())
+            .then_with(|| left.0.cmp(&right.0))
+    });
 
     let mut missing = Vec::<(&str, &str)>::new();
     let mut caches = Vec::<(String, u64, u64)>::new();
@@ -1480,7 +1494,7 @@ fn run_gitignore(args: &[String]) -> Result<(), String> {
         .map_err(|error| format!("cannot read project directory {}: {error}", root.display()))?
         .map(|entry| entry.map_err(|error| format!("cannot read project directory entry: {error}")))
         .collect::<Result<Vec<_>, _>>()?;
-    entries.sort_by_key(|entry| entry.file_name().to_string_lossy().to_lowercase());
+    sort_entries(&mut entries);
     let unity =
         root.join("Assets").is_dir() || root.join("ProjectSettings/ProjectVersion.txt").is_file();
     let mut unreal = false;

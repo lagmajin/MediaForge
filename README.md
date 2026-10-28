@@ -78,7 +78,7 @@ mediaforge project ./Game
 mediaforge project ./Game --json
 ```
 
-The read-only inspector recognizes Unity, Unreal Engine, and Godot project markers. It reports missing expected folders and measures known build/cache folders (`Library`, `Intermediate`, `DerivedDataCache`, `.godot`, `.import`, and related folders) without deleting them. Cache size totals skip nested generated folders to avoid double counting. For Unreal projects, it also reports the top-level `EngineAssociation` value from each `.uproject` descriptor. For Godot, it reads the `[application]` `config/features` array from `project.godot`. Some folders, such as Unreal's `Saved`, can also contain backups or logs. It also lists Blender, DaVinci Resolve, Premiere Pro, After Effects, and Final Cut Pro XML project files found below the chosen folder; `.gitignore` rules apply, and hidden folders are included unless ignored.
+The read-only inspector recognizes Unity, Unreal Engine, and Godot project markers. It reports missing expected folders and measures known build/cache folders (`Library`, `Intermediate`, `DerivedDataCache`, `.godot`, `.import`, and related folders) without deleting them. For Unreal projects, it also reports the top-level `EngineAssociation` value from each `.uproject` descriptor. For Godot, it reads the `[application]` `config/features` array from `project.godot`. Some folders, such as Unreal's `Saved`, can also contain backups or logs. It also lists Blender, DaVinci Resolve, Premiere Pro, After Effects, and Final Cut Pro XML project files found below the chosen folder; `.gitignore` rules apply, and hidden folders are included unless ignored.
 
 ## Generate engine-specific Git ignore patterns
 
