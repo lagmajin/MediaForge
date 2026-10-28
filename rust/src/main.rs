@@ -9569,14 +9569,10 @@ fn run_rename(args: &[String]) -> Result<(), String> {
             skipped += 1;
             continue;
         }
-        let extension = source
-            .extension()
-            .and_then(|value| value.to_str())
-            .map(|value| format!(".{}", value.to_ascii_lowercase()))
-            .unwrap_or_else(|| "[no extension]".to_owned());
+        let extension = source.extension().and_then(|value| value.to_str());
         if extension_filter
             .as_ref()
-            .is_some_and(|extensions| !extensions.contains(&extension))
+            .is_some_and(|extensions| !matches_extension_filter(extension, extensions))
         {
             continue;
         }
@@ -10009,14 +10005,10 @@ fn run_sequence(args: &[String]) -> Result<(), String> {
             skipped += 1;
             continue;
         }
-        let extension = source
-            .extension()
-            .and_then(|value| value.to_str())
-            .map(|value| format!(".{}", value.to_ascii_lowercase()))
-            .unwrap_or_else(|| "[no extension]".to_owned());
+        let extension = source.extension().and_then(|value| value.to_str());
         if extension_filter
             .as_ref()
-            .is_some_and(|extensions| !extensions.contains(&extension))
+            .is_some_and(|extensions| !matches_extension_filter(extension, extensions))
         {
             continue;
         }
