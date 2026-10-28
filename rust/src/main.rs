@@ -4826,7 +4826,10 @@ fn summarize_probe_differences(
         "streams[0].channels",
         "streams[0].channel_layout",
     ];
-    let mut values = BTreeMap::<String, BTreeMap<String, Vec<usize>>>::new();
+    let mut values = COMPARE_FIELDS
+        .iter()
+        .map(|field| (*field, BTreeMap::<String, Vec<usize>>::new()))
+        .collect::<Vec<_>>();
     let mut failures = Vec::new();
     let mut successful = 0_usize;
     for (index, success, json_line, probe) in results {
@@ -4848,15 +4851,11 @@ fn summarize_probe_differences(
             0,
             COMPARE_FIELDS,
         )?;
-        for field in COMPARE_FIELDS {
-            let value = fields
-                .get(*field)
-                .cloned()
-                .unwrap_or_else(|| "null".to_owned());
-            values
-                .entry((*field).to_owned())
-                .or_default()
-                .entry(value)
+        for (field_index, field) in COMPARE_FIELDS.iter().enumerate() {
+            let value = fields.get(*field).map(String::as_str).unwrap_or("null");
+            values[field_index]
+                .1
+                .entry(value.to_owned())
                 .or_default()
                 .push(*index);
         }
