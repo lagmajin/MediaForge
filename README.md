@@ -41,6 +41,8 @@ mediaforge storyboard ./Media/shot.mp4 --output ./Media/shot-sheet.jpg
 mediaforge storyboard ./Media/shot.mp4 -o ./Media/shot-sheet.png --interval 5 --columns 6 --rows 4 --width 240
 mediaforge proxy ./Media/shot.mp4 --output ./Proxies/shot-proxy.mp4
 mediaforge proxy ./Media/shot.mp4 -o ./Proxies/shot-proxy.mp4 --max-width 960 --crf 30 --preset ultrafast
+mediaforge extract-audio ./Media/shot.mp4 --output ./Audio/shot.mp3
+mediaforge extract-audio ./Media/shot.mp4 -o ./Audio/shot.wav --format wav --stream 1
 ```
 
 `probe` invokes `ffprobe` directly (without a shell) and returns its JSON containing container and stream metadata such as duration, codec, dimensions, frame rate, and audio channels. `probe-dir` scans video/audio assets and probes them concurrently, emitting one JSON Lines record per file in stable path order. It can filter by extension and limits concurrency with `--jobs`; a failed file is reported as an error record while other files continue. Add `--summary` for concise comparable fields: duration, codec, dimensions, frame rate, sample rate, and channels. `ffprobe` must be available on `PATH`.
@@ -48,6 +50,8 @@ mediaforge proxy ./Media/shot.mp4 -o ./Proxies/shot-proxy.mp4 --max-width 960 --
 `storyboard` creates a contact sheet using `ffmpeg` (also required on `PATH`). It samples at the requested interval (10 seconds by default), with a 5×5 grid of 320-pixel-wide thumbnails by default. JPG, PNG, and WebP outputs are supported. It refuses to overwrite existing files and only publishes the image after FFmpeg finishes successfully.
 
 `proxy` creates an H.264/AAC MP4 suitable for smoother editing. It scales down to at most 1280 pixels wide by default, with CRF 28 and the `veryfast` x264 preset. Lower CRF preserves more quality; faster presets trade compression efficiency for shorter encoding time. Set `--max-width`, `--crf` (0–51), and `--preset` to tune the result. FFmpeg must include libx264 and AAC support. Existing files are never overwritten.
+
+`extract-audio` writes the selected audio stream as MP3 (192k by default), WAV, or FLAC. `--stream` selects a zero-based audio stream; `--bitrate` selects an MP3 bitrate from 64k to 320k. The output extension must match `--format`. FFmpeg must include the selected encoder, and existing files are never overwritten.
 
 To run the Python reference implementation during comparison:
 

@@ -1277,7 +1277,7 @@ fn fraction_ceil_scaled(fraction: &str, multiplier: u128) -> u128 {
 
 fn print_help() {
     println!(
-        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS] [--largest N]\n  mediaforge dupes [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--top-groups N]\n  mediaforge probe <FILE> [--compact]\n  mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--jobs N] [--summary]\n  mediaforge storyboard <VIDEO> --output <IMAGE> [--interval SECONDS] [--columns N] [--rows N] [--width PIXELS]\n  mediaforge proxy <VIDEO> --output <FILE.mp4> [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge project [PATH] [--json]\n  mediaforge gitignore [PATH] [--apply]\n  mediaforge organize [PATH] [--by type|extension] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--apply]\n  mediaforge undo [PATH] [--json]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--include-hidden] [--include-generated] [--dry-run] [--json] [--list]\n  mediaforge --version\n  mediaforge --help"
+        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS] [--largest N]\n  mediaforge dupes [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--top-groups N]\n  mediaforge probe <FILE> [--compact]\n  mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--jobs N] [--summary]\n  mediaforge storyboard <VIDEO> --output <IMAGE> [--interval SECONDS] [--columns N] [--rows N] [--width PIXELS]\n  mediaforge proxy <VIDEO> --output <FILE.mp4> [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge extract-audio <VIDEO> --output <FILE> [--format mp3|wav|flac] [--bitrate RATE] [--stream N]\n  mediaforge project [PATH] [--json]\n  mediaforge gitignore [PATH] [--apply]\n  mediaforge organize [PATH] [--by type|extension] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--apply]\n  mediaforge undo [PATH] [--json]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--include-hidden] [--include-generated] [--dry-run] [--json] [--list]\n  mediaforge --version\n  mediaforge --help"
     );
 }
 
@@ -1876,6 +1876,196 @@ fn run_proxy(args: &[String]) -> Result<(), String> {
     })?;
     println!(
         "Created proxy {} ({})",
+        output.display(),
+        human_size(temporary_size)
+    );
+    Ok(())
+}
+
+fn run_extract_audio(args: &[String]) -> Result<(), String> {
+    let mut input = None;
+    let mut output = None;
+    let mut format = "mp3".to_owned();
+    let mut bitrate = None;
+    let mut stream = 0_u32;
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--output" | "-o" => {
+                output = Some(PathBuf::from(
+                    iter.next()
+                        .ok_or_else(|| "--output requires a file path".to_owned())?,
+                ));
+            }
+            "--format" => {
+                format = iter
+                    .next()
+                    .ok_or_else(|| "--format requires mp3, wav, or flac".to_owned())?
+                    .to_ascii_lowercase();
+            }
+            "--bitrate" => {
+                bitrate = Some(
+                    iter.next()
+                        .ok_or_else(|| "--bitrate requires a value such as 192k".to_owned())?
+                        .clone(),
+                );
+            }
+            "--stream" => {
+                let value = iter.next().ok_or_else(|| {
+                    "--stream requires a zero-based audio stream index".to_owned()
+                })?;
+                stream = value
+                    .parse::<u32>()
+                    .map_err(|_| format!("invalid audio stream index '{value}'"))?;
+            }
+            "--help" | "-h" => {
+                println!(
+                    "Usage: mediaforge extract-audio <VIDEO> --output <FILE> [--format mp3|wav|flac] [--bitrate RATE] [--stream N]\n\nExtract an audio stream with ffmpeg. Defaults to MP3 at 192k from the first audio stream. --bitrate applies to MP3 only; --stream is a zero-based audio stream index. Existing files are never overwritten."
+                );
+                return Ok(());
+            }
+            value if value.starts_with('-') => return Err(format!("unknown option: {value}")),
+            value => {
+                if input.is_some() {
+                    return Err("extract-audio accepts one video file".into());
+                }
+                input = Some(PathBuf::from(value));
+            }
+        }
+    }
+    let input = input.ok_or_else(|| "extract-audio requires a video file".to_owned())?;
+    let output = output.ok_or_else(|| "extract-audio requires --output <FILE>".to_owned())?;
+    if !matches!(format.as_str(), "mp3" | "wav" | "flac") {
+        return Err("--format must be mp3, wav, or flac".to_owned());
+    }
+    if bitrate.is_some() && format != "mp3" {
+        return Err("--bitrate can only be used with --format mp3".to_owned());
+    }
+    let bitrate = bitrate.unwrap_or_else(|| "192k".to_owned());
+    const MP3_BITRATES: &[&str] = &["64k", "96k", "128k", "160k", "192k", "224k", "256k", "320k"];
+    if format == "mp3" && !MP3_BITRATES.contains(&bitrate.as_str()) {
+        return Err(format!(
+            "unsupported MP3 bitrate '{bitrate}'; choose one of {}",
+            MP3_BITRATES.join(", ")
+        ));
+    }
+
+    let input = fs::canonicalize(&input)
+        .map_err(|error| format!("cannot access media file {}: {error}", input.display()))?;
+    if !fs::metadata(&input)
+        .map_err(|error| format!("cannot inspect media file {}: {error}", input.display()))?
+        .is_file()
+    {
+        return Err(format!("expected a media file: {}", input.display()));
+    }
+    let output_name = output
+        .file_name()
+        .ok_or_else(|| "output must name an audio file".to_owned())?;
+    if output
+        .extension()
+        .and_then(|value| value.to_str())
+        .is_none_or(|value| !value.eq_ignore_ascii_case(&format))
+    {
+        return Err(format!("output extension must match --format {format}"));
+    }
+    let parent = output
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let parent = fs::canonicalize(parent).map_err(|error| {
+        format!(
+            "cannot access output directory {}: {error}",
+            parent.display()
+        )
+    })?;
+    let output = parent.join(output_name);
+    if output == input {
+        return Err("audio output must differ from the input file".to_owned());
+    }
+    if entry_state(&output)
+        .map_err(|error| format!("cannot inspect output {}: {error}", output.display()))?
+        != EntryState::Missing
+    {
+        return Err(format!(
+            "output already exists; refusing to overwrite: {}",
+            output.display()
+        ));
+    }
+
+    let stem = output
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("audio");
+    let temporary = parent.join(format!(
+        ".{stem}.mediaforge-{}-{}.tmp.{format}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    ));
+    let mut command = Command::new("ffmpeg");
+    command
+        .args(["-hide_banner", "-loglevel", "error", "-nostdin", "-n", "-i"])
+        .arg(&input)
+        .args(["-map"])
+        .arg(format!("0:a:{stream}"))
+        .args(["-vn", "-sn", "-dn", "-c:a"]);
+    match format.as_str() {
+        "mp3" => {
+            command.arg("libmp3lame").args(["-b:a", bitrate.as_str()]);
+        }
+        "wav" => {
+            command.arg("pcm_s16le");
+        }
+        "flac" => {
+            command.arg("flac");
+        }
+        _ => unreachable!(),
+    }
+    let result = command.arg(&temporary).output().map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            "ffmpeg was not found on PATH. Install FFmpeg to extract audio.".to_owned()
+        } else {
+            format!("could not start ffmpeg: {error}")
+        }
+    })?;
+    if !result.status.success() {
+        let detail = String::from_utf8_lossy(&result.stderr).trim().to_owned();
+        let _ = fs::remove_file(&temporary);
+        return Err(if detail.is_empty() {
+            format!("ffmpeg failed with {}", result.status)
+        } else {
+            format!("ffmpeg failed: {detail}")
+        });
+    }
+    let temporary_size = match fs::metadata(&temporary) {
+        Ok(metadata) => metadata.len(),
+        Err(error) => {
+            let _ = fs::remove_file(&temporary);
+            return Err(format!("could not inspect extracted audio: {error}"));
+        }
+    };
+    if temporary_size == 0 {
+        let _ = fs::remove_file(&temporary);
+        return Err("ffmpeg produced an empty audio file".to_owned());
+    }
+    move_file_no_replace(&temporary, &output).map_err(|error| {
+        let cleanup = fs::remove_file(&temporary);
+        match cleanup {
+            Ok(()) => format!("could not publish audio {}: {error}", output.display()),
+            Err(cleanup_error) if cleanup_error.kind() == io::ErrorKind::NotFound => {
+                format!("could not publish audio {}: {error}", output.display())
+            }
+            Err(cleanup_error) => format!(
+                "could not publish audio {}: {error}; temporary audio remains at {}: {cleanup_error}",
+                output.display(),
+                temporary.display()
+            ),
+        }
+    })?;
+    println!(
+        "Extracted audio {} ({})",
         output.display(),
         human_size(temporary_size)
     );
@@ -4305,6 +4495,7 @@ fn run() -> Result<(), String> {
         Some("probe-dir") => run_probe_dir(&args[1..]),
         Some("storyboard") => run_storyboard(&args[1..]),
         Some("proxy") => run_proxy(&args[1..]),
+        Some("extract-audio") => run_extract_audio(&args[1..]),
         Some("project") => run_project(&args[1..]),
         Some("gitignore") => run_gitignore(&args[1..]),
         Some("organize") => run_organize(&args[1..]),
