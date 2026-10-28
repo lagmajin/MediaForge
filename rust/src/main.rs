@@ -3655,16 +3655,24 @@ fn hash_snapshot_file(
     Ok(hasher.finish())
 }
 
-fn collect_snapshot_entries<'a>(
+fn collect_snapshot_entries(
     root: &Path,
-    records: &'a [SnapshotFileRecord],
+    records: &[SnapshotFileRecord],
     hash_content: bool,
     jobs: usize,
-) -> Result<BTreeMap<&'a str, SnapshotEntry>, String> {
+) -> Result<Vec<SnapshotEntry>, String> {
     if jobs == 0 {
         return Err("snapshot worker count must be greater than zero".to_owned());
     }
-    let mut entries = BTreeMap::new();
+    if let Some(duplicate) = records
+        .windows(2)
+        .find(|pair| pair[0].relative == pair[1].relative)
+    {
+        return Err(format!(
+            "multiple files resolve to the same portable path: {}",
+            duplicate[0].relative
+        ));
+    }
     if hash_content && !records.is_empty() {
         let next = std::sync::atomic::AtomicUsize::new(0);
         let next = &next;
@@ -3697,25 +3705,15 @@ fn collect_snapshot_entries<'a>(
                 }));
             }
             drop(sender);
+            let mut entries = records
+                .iter()
+                .map(|record| snapshot_entry(record, [0; 32]))
+                .collect::<Vec<_>>();
             let mut first_error = None;
             for (index, result) in receiver {
                 match result {
                     Ok(content_hash) => {
-                        let record = &records[index];
-                        if entries
-                            .insert(
-                                record.relative.as_str(),
-                                snapshot_entry(record, content_hash),
-                            )
-                            .is_some()
-                            && first_error.is_none()
-                        {
-                            cancelled.store(true, std::sync::atomic::Ordering::Release);
-                            first_error = Some(format!(
-                                "multiple files resolve to the same portable path: {}",
-                                record.relative
-                            ));
-                        }
+                        entries[index] = snapshot_entry(&records[index], content_hash);
                     }
                     Err(error) if first_error.is_none() => {
                         cancelled.store(true, std::sync::atomic::Ordering::Release);
@@ -3727,25 +3725,18 @@ fn collect_snapshot_entries<'a>(
             for handle in handles {
                 handle.join().expect("snapshot hashing worker panicked");
             }
-            first_error
+            (first_error, entries)
         });
+        let (hash_error, entries) = hash_error;
         if let Some(error) = hash_error {
             return Err(error);
         }
         return Ok(entries);
     }
-    for record in records {
-        if entries
-            .insert(record.relative.as_str(), snapshot_entry(record, [0; 32]))
-            .is_some()
-        {
-            return Err(format!(
-                "multiple files resolve to the same portable path: {}",
-                record.relative
-            ));
-        }
-    }
-    Ok(entries)
+    Ok(records
+        .iter()
+        .map(|record| snapshot_entry(record, [0; 32]))
+        .collect())
 }
 
 fn snapshot_entries_equal(old: SnapshotEntry, new: SnapshotEntry, hash_content: bool) -> bool {
@@ -3754,6 +3745,12 @@ fn snapshot_entries_equal(old: SnapshotEntry, new: SnapshotEntry, hash_content: 
     } else {
         old.size == new.size && old.modified_ns() == new.modified_ns()
     }
+}
+
+fn snapshot_records_contain_path(records: &[SnapshotFileRecord], relative: &str) -> bool {
+    records
+        .binary_search_by(|record| record.relative.as_str().cmp(relative))
+        .is_ok()
 }
 
 fn snapshot_path_is_valid(path: &str) -> bool {
@@ -3918,7 +3915,7 @@ fn snapshot_temp_file(parent: &Path) -> Result<(PathBuf, File), String> {
 fn write_snapshot_manifest(
     output: &Path,
     records: &[SnapshotFileRecord],
-    entries: &BTreeMap<&str, SnapshotEntry>,
+    entries: &[SnapshotEntry],
     include_hidden: bool,
     include_generated: bool,
     hash_content: bool,
@@ -3931,6 +3928,9 @@ fn write_snapshot_manifest(
             "snapshot contains too many entries ({})",
             records.len()
         ));
+    }
+    if records.len() != entries.len() {
+        return Err("snapshot entry count does not match the file scan".to_owned());
     }
     for record in records {
         if !snapshot_path_is_valid(&record.relative) || record.relative.len() > MAX_PATH_BYTES {
@@ -3993,7 +3993,7 @@ fn write_snapshot_manifest(
             .write_all(&[flags])
             .and_then(|()| writer.write_all(&(records.len() as u64).to_le_bytes()))
             .map_err(|error| format!("could not write snapshot options: {error}"))?;
-        for record in records {
+        for (record, entry) in records.iter().zip(entries) {
             let path = record.relative.as_bytes();
             let length = u32::try_from(path.len())
                 .map_err(|_| format!("snapshot path is too long: {}", record.relative))?;
@@ -4002,10 +4002,7 @@ fn write_snapshot_manifest(
                 .and_then(|()| writer.write_all(path))
                 .and_then(|()| writer.write_all(&record.size.to_le_bytes()))
                 .map_err(|error| format!("could not write snapshot entry: {error}"))?;
-            match entries
-                .get(record.relative.as_str())
-                .and_then(|entry| entry.modified_ns())
-            {
+            match entry.modified_ns() {
                 Some(value) => writer
                     .write_all(&[1])
                     .and_then(|()| writer.write_all(&value.to_le_bytes())),
@@ -4014,7 +4011,7 @@ fn write_snapshot_manifest(
             .map_err(|error| format!("could not write snapshot timestamp: {error}"))?;
             if hash_content {
                 writer
-                    .write_all(&entries[record.relative.as_str()].content_hash)
+                    .write_all(&entry.content_hash)
                     .map_err(|error| format!("could not write snapshot content hash: {error}"))?;
             }
         }
@@ -4467,10 +4464,11 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
     let mut modified_size_delta_bytes = 0_i128;
     let mut by_type = BTreeMap::<&'static str, SnapshotTypeStats>::new();
     let mut by_size = BTreeMap::<&'static str, SnapshotSizeStats>::new();
-    for (relative, current) in &current_entries {
+    for (record, current) in records.iter().zip(&current_entries) {
+        let relative = record.relative.as_str();
         let asset_type = classify(Path::new(relative)).as_str();
         let stats = by_type.entry(asset_type).or_default();
-        match old_entries.get(*relative) {
+        match old_entries.get(relative) {
             None => {
                 let size_stats = by_size.entry(size_category(current.size)).or_default();
                 added += 1;
@@ -4497,7 +4495,7 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
         }
     }
     for (relative, previous) in &old_entries {
-        if !current_entries.contains_key(relative.as_str()) {
+        if !snapshot_records_contain_path(&records, relative) {
             removed += 1;
             removed_bytes += u128::from(previous.size);
             let asset_type = classify(Path::new(relative)).as_str();
@@ -4551,8 +4549,9 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
             ],
         )?;
         if !summary_only {
-            for (relative, current) in &current_entries {
-                let old = old_entries.get(*relative).copied();
+            for (record, current) in records.iter().zip(&current_entries) {
+                let relative = record.relative.as_str();
+                let old = old_entries.get(relative).copied();
                 let change = match old {
                     None => "added",
                     Some(previous) if !snapshot_entries_equal(previous, *current, use_hash) => {
@@ -4563,7 +4562,7 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
                 write_snapshot_csv_event(&mut stdout, change, relative, old, Some(*current))?;
             }
             for (relative, old) in &old_entries {
-                if !current_entries.contains_key(relative.as_str()) {
+                if !snapshot_records_contain_path(&records, relative) {
                     write_snapshot_csv_event(&mut stdout, "removed", relative, Some(*old), None)?;
                 }
             }
@@ -4607,8 +4606,9 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
         let stdout = io::stdout();
         let mut output = io::BufWriter::with_capacity(64 * 1024, stdout.lock());
         if !summary_only {
-            for (relative, current) in &current_entries {
-                let old = old_entries.get(*relative);
+            for (record, current) in records.iter().zip(&current_entries) {
+                let relative = record.relative.as_str();
+                let old = old_entries.get(relative);
                 let kind = match old {
                     None => "added",
                     Some(previous) if !snapshot_entries_equal(*previous, *current, use_hash) => {
@@ -4625,7 +4625,7 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
                 )?;
             }
             for (relative, old) in &old_entries {
-                if current_entries.contains_key(relative.as_str()) {
+                if snapshot_records_contain_path(&records, relative) {
                     continue;
                 }
                 write_snapshot_json_event(&mut output, "removed", relative, Some(*old), None)?;
@@ -4699,9 +4699,10 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
             );
         }
         if !summary_only {
-            for (relative, current) in &current_entries {
+            for (record, current) in records.iter().zip(&current_entries) {
+                let relative = record.relative.as_str();
                 let asset_type = classify(Path::new(relative)).as_str();
-                match old_entries.get(*relative) {
+                match old_entries.get(relative) {
                     None => println!(
                         "  added    {asset_type:<9} {:>10}  {relative}",
                         human_size(current.size)
@@ -4715,7 +4716,7 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
                 }
             }
             for (relative, previous) in &old_entries {
-                if !current_entries.contains_key(relative.as_str()) {
+                if !snapshot_records_contain_path(&records, relative) {
                     println!(
                         "  removed  {:<9} {:>10}  {relative}",
                         classify(Path::new(relative)).as_str(),
