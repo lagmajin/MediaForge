@@ -53,6 +53,7 @@ mediaforge scan ./Media
 mediaforge scan ./Game/Content --json
 mediaforge scan . --include-hidden
 mediaforge scan ./Media --type video --min-size 500M
+mediaforge scan ./Media --type video --largest 50 --json
 mediaforge scan ./Media --extension exr,tif
 mediaforge dupes ./Game/Content --include-hidden --min-size 1M
 mediaforge dupes ./Media --type audio --extension wav,aiff
@@ -62,7 +63,7 @@ mediaforge organize ./Media --by type
 mediaforge pack ./Game --output ../Game.tar --dry-run --json
 ```
 
-Hidden folders and common generated/dependency directories (`.git`, `node_modules`, virtual environments) are skipped by default, with directory-name matching that is case-insensitive across platforms. Root and nested `.gitignore` rules are applied during traversal, so ignored directories are pruned. Symlinks are not followed. `scan` and `dupes` accept the same asset `--type` categories and a case-insensitive, comma-separated `--extension` list; use `none` to select files without an extension. The `project` type includes engine assets such as Unity prefabs/assets, Unreal `.uasset` files, and Godot scenes/resources. The duplicate section only groups equal file sizes; it does not claim the files have identical content. JSON output includes file counts, byte totals by type and extension, and relative paths for scripts and other tools.
+Hidden folders and common generated/dependency directories (`.git`, `node_modules`, virtual environments) are skipped by default, with directory-name matching that is case-insensitive across platforms. Root and nested `.gitignore` rules are applied during traversal, so ignored directories are pruned. Symlinks are not followed. `scan` and `dupes` accept the same asset `--type` categories and a case-insensitive, comma-separated `--extension` list; use `none` to select files without an extension. `scan --largest N` controls the number of largest files shown in text or returned in JSON; defaults are 10 in text and 20 in JSON. The `project` type includes engine assets such as Unity prefabs/assets, Unreal `.uasset` files, and Godot scenes/resources. The duplicate section only groups equal file sizes; it does not claim the files have identical content. JSON output includes file counts, byte totals by type and extension, and relative paths for scripts and other tools.
 
 `--min-size` accepts byte values and binary size units (`K`/`KiB`, `M`/`MiB`, `G`/`GiB`, `T`/`TiB`), including decimal fractions. Fractional thresholds are rounded up to the next whole byte.
 

@@ -717,7 +717,7 @@ fn json_string(value: &str) -> String {
     out
 }
 
-fn print_json(root: &Path, records: &[FileRecord]) {
+fn print_json(root: &Path, records: &[FileRecord], largest_limit: usize) {
     let mut by_type: BTreeMap<&str, (u64, u128)> = BTreeMap::new();
     let mut extensions: BTreeMap<&str, usize> = BTreeMap::new();
     let mut extension_bytes: BTreeMap<&str, u128> = BTreeMap::new();
@@ -748,6 +748,7 @@ fn print_json(root: &Path, records: &[FileRecord]) {
     println!("{{");
     println!("  \"root\": {},", json_string(&root.to_string_lossy()));
     println!("  \"files\": {},", records.len());
+    println!("  \"largest_limit\": {largest_limit},");
     println!("  \"total_bytes\": {},", total_bytes);
     println!(
         "  \"total_size\": {},",
@@ -786,8 +787,8 @@ fn print_json(root: &Path, records: &[FileRecord]) {
         println!("    {}: {}{}", json_string(extension), bytes, comma);
     }
     println!("  }},\n  \"largest\": [");
-    for (index, record) in largest.iter().take(20).enumerate() {
-        let comma = if index + 1 == largest.len().min(20) {
+    for (index, record) in largest.iter().take(largest_limit).enumerate() {
+        let comma = if index + 1 == largest.len().min(largest_limit) {
             ""
         } else {
             ","
@@ -821,7 +822,7 @@ fn print_json(root: &Path, records: &[FileRecord]) {
     );
 }
 
-fn print_report(root: &Path, records: &[FileRecord]) {
+fn print_report(root: &Path, records: &[FileRecord], largest_limit: usize) {
     let total_bytes: u128 = records.iter().map(|record| u128::from(record.size)).sum();
     let mut by_type: BTreeMap<&str, (u64, u128)> = BTreeMap::new();
     let mut by_size: HashMap<u64, usize> = HashMap::new();
@@ -851,7 +852,7 @@ fn print_report(root: &Path, records: &[FileRecord]) {
         );
     }
     println!("\nLargest files");
-    for record in largest.iter().take(10) {
+    for record in largest.iter().take(largest_limit) {
         println!("  {:>10}  {}", human_size(record.size), record.relative);
     }
     println!("\nSame-size candidate groups: {candidate_groups} (not content-verified)");
@@ -1083,6 +1084,7 @@ fn run_scan(args: &[String]) -> Result<(), String> {
     let mut kind_filter = None;
     let mut min_size = None;
     let mut extension_filter = None;
+    let mut largest_limit = None;
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
         match arg.as_str() {
@@ -1104,6 +1106,14 @@ fn run_scan(args: &[String]) -> Result<(), String> {
                     .ok_or_else(|| "--min-size requires a value".to_owned())?;
                 min_size = Some(parse_size(value)?);
             }
+            "--largest" => {
+                let value = iter
+                    .next()
+                    .ok_or_else(|| "--largest requires a file count".to_owned())?;
+                largest_limit = Some(value.parse::<usize>().map_err(|_| {
+                    format!("invalid --largest count '{value}'; use a non-negative integer")
+                })?);
+            }
             "--extension" => {
                 let value = iter.next().ok_or_else(|| {
                     "--extension requires a comma-separated extension list".to_owned()
@@ -1112,7 +1122,7 @@ fn run_scan(args: &[String]) -> Result<(), String> {
             }
             "--help" | "-h" => {
                 println!(
-                    "Usage: mediaforge scan [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS]\n\nSummarize media and game assets in a folder. Defaults to the current directory.\n\nTypes: video, audio, image, model, texture, project, other\nExtensions: comma-separated, case-insensitive (for example exr,tif); use none for files without an extension\nSizes: bytes, KiB/MiB/GiB, or K/M/G (for example 500M); fractional values round up to the next byte"
+                    "Usage: mediaforge scan [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS] [--largest N]\n\nSummarize media and game assets in a folder. --largest controls how many biggest files are shown (default: 10 in text, 20 in JSON). Defaults to the current directory.\n\nTypes: video, audio, image, model, texture, project, other\nExtensions: comma-separated, case-insensitive (for example exr,tif); use none for files without an extension\nSizes: bytes, KiB/MiB/GiB, or K/M/G (for example 500M); fractional values round up to the next byte"
                 );
                 return Ok(());
             }
@@ -1143,10 +1153,11 @@ fn run_scan(args: &[String]) -> Result<(), String> {
     if let Some(size) = min_size {
         records.retain(|record| record.size >= size);
     }
+    let largest_limit = largest_limit.unwrap_or(if json { 20 } else { 10 });
     if json {
-        print_json(&root, &records);
+        print_json(&root, &records, largest_limit);
     } else {
-        print_report(&root, &records);
+        print_report(&root, &records, largest_limit);
     }
     Ok(())
 }
@@ -1227,7 +1238,7 @@ fn fraction_ceil_scaled(fraction: &str, multiplier: u128) -> u128 {
 
 fn print_help() {
     println!(
-        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS]\n  mediaforge dupes [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS]\n  mediaforge probe <FILE> [--compact]\n  mediaforge project [PATH] [--json]\n  mediaforge gitignore [PATH] [--apply]\n  mediaforge organize [PATH] [--by type|extension] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--apply]\n  mediaforge undo [PATH] [--json]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--include-hidden] [--include-generated] [--dry-run] [--json] [--list]\n  mediaforge --version\n  mediaforge --help"
+        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS] [--largest N]\n  mediaforge dupes [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS]\n  mediaforge probe <FILE> [--compact]\n  mediaforge project [PATH] [--json]\n  mediaforge gitignore [PATH] [--apply]\n  mediaforge organize [PATH] [--by type|extension] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--apply]\n  mediaforge undo [PATH] [--json]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--include-hidden] [--include-generated] [--dry-run] [--json] [--list]\n  mediaforge --version\n  mediaforge --help"
     );
 }
 
