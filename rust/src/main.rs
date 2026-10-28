@@ -4,9 +4,9 @@ use std::env;
 use std::fmt::Write as FmtWrite;
 use std::fs::{self, File, OpenOptions};
 use std::hash::{DefaultHasher, Hash, Hasher};
-use std::io::{self, BufReader, BufWriter, Cursor, Read, Seek, Write};
+use std::io::{self, BufRead, BufReader, BufWriter, Cursor, Read, Seek, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitCode};
+use std::process::{Command, ExitCode, Stdio};
 use std::sync::{Arc, LazyLock};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -5512,7 +5512,7 @@ fn run_scene_detect(args: &[String]) -> Result<(), String> {
         None
     };
     let filter = format!("select='gt(scene,{threshold})',metadata=mode=print");
-    let result = Command::new("ffmpeg")
+    let mut child = Command::new("ffmpeg")
         .args([
             "-hide_banner",
             "-loglevel",
@@ -5525,7 +5525,9 @@ fn run_scene_detect(args: &[String]) -> Result<(), String> {
         .args([
             "-map", "0:v:0", "-vf", &filter, "-an", "-sn", "-dn", "-f", "null", "-",
         ])
-        .output()
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
         .map_err(|error| {
             if error.kind() == io::ErrorKind::NotFound {
                 "ffmpeg was not found on PATH. Install FFmpeg to detect scene changes.".to_owned()
@@ -5533,18 +5535,38 @@ fn run_scene_detect(args: &[String]) -> Result<(), String> {
                 format!("could not start ffmpeg: {error}")
             }
         })?;
-    if !result.status.success() {
-        let detail = String::from_utf8_lossy(&result.stderr).trim().to_owned();
-        return Err(if detail.is_empty() {
-            format!("ffmpeg failed with {}", result.status)
-        } else {
-            format!("ffmpeg failed: {detail}")
-        });
-    }
-    let diagnostics = String::from_utf8_lossy(&result.stderr);
+    const ERROR_DETAIL_LIMIT: usize = 64 * 1024;
+    let mut diagnostic_detail = Vec::with_capacity(ERROR_DETAIL_LIMIT);
+    let Some(stderr_pipe) = child.stderr.take() else {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err("could not capture ffmpeg diagnostics".to_owned());
+    };
+    let mut stderr = BufReader::with_capacity(64 * 1024, stderr_pipe);
+    let mut line = Vec::with_capacity(256);
     let mut current_time = None;
     let mut cuts = Vec::<SceneCut>::new();
-    for line in diagnostics.lines() {
+    loop {
+        line.clear();
+        let bytes_read = loop {
+            match stderr.read_until(b'\n', &mut line) {
+                Ok(bytes_read) => break bytes_read,
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+                Err(error) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(format!("could not read ffmpeg diagnostics: {error}"));
+                }
+            }
+        };
+        if bytes_read == 0 {
+            break;
+        }
+        if diagnostic_detail.len() < ERROR_DETAIL_LIMIT {
+            let remaining = ERROR_DETAIL_LIMIT - diagnostic_detail.len();
+            diagnostic_detail.extend_from_slice(&line[..line.len().min(remaining)]);
+        }
+        let line = String::from_utf8_lossy(&line);
         if let Some(value) = line.split_once("pts_time:").map(|(_, value)| value) {
             current_time = value
                 .split_whitespace()
@@ -5576,6 +5598,19 @@ fn run_scene_detect(args: &[String]) -> Result<(), String> {
                 }
             }
         }
+    }
+    let status = child
+        .wait()
+        .map_err(|error| format!("could not wait for ffmpeg: {error}"))?;
+    if !status.success() {
+        let detail = String::from_utf8_lossy(&diagnostic_detail)
+            .trim()
+            .to_owned();
+        return Err(if detail.is_empty() {
+            format!("ffmpeg failed with {status}")
+        } else {
+            format!("ffmpeg failed: {detail}")
+        });
     }
     let stdout = io::stdout();
     let mut output = io::BufWriter::with_capacity(64 * 1024, stdout.lock());
