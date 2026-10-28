@@ -320,7 +320,9 @@ fn walk_with_skip_dirs_mode_counted(
         sort_entries(&mut entries);
         for entry in entries {
             let path = entry.path();
-            let name = entry.file_name().to_string_lossy().into_owned();
+            if !include_hidden && is_dot_hidden(&path) {
+                continue;
+            }
             let file_type = match entry.file_type() {
                 Ok(file_type) => file_type,
                 Err(_) if !strict => {
@@ -345,6 +347,8 @@ fn walk_with_skip_dirs_mode_counted(
                 None
             };
             if file_type.is_dir() {
+                let name = entry.file_name();
+                let name = name.to_string_lossy();
                 let child_path_filter_satisfied = path_filter_satisfied
                     || filters.path_contains_lower.iter().all(|needle| {
                         relative_lower
@@ -368,7 +372,7 @@ fn walk_with_skip_dirs_mode_counted(
                     Cow::Owned(rules) => Arc::from(rules),
                 };
                 pending.push((path, child_ignored, child_path_filter_satisfied));
-            } else if file_type.is_file() && !is_ignored(&relative, &active_ignored) {
+            } else if file_type.is_file() {
                 if filters.exclude_path_contains_lower.iter().any(|needle| {
                     relative_lower
                         .as_ref()
@@ -383,9 +387,6 @@ fn walk_with_skip_dirs_mode_counted(
                 {
                     continue;
                 }
-                if !include_hidden && is_dot_hidden(&path) {
-                    continue;
-                }
                 let extension = path
                     .extension()
                     .and_then(|s| s.to_str())
@@ -397,6 +398,9 @@ fn walk_with_skip_dirs_mode_counted(
                         .extensions
                         .is_some_and(|values| !values.contains(&extension))
                 {
+                    continue;
+                }
+                if is_ignored(&relative, &active_ignored) {
                     continue;
                 }
                 let metadata = match entry.metadata() {
