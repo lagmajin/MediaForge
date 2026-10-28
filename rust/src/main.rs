@@ -3580,7 +3580,13 @@ impl Sha256 {
     }
 }
 
-fn hash_snapshot_file(root: &Path, record: &SnapshotFileRecord) -> Result<[u8; 32], String> {
+const SNAPSHOT_HASH_BUFFER_SIZE: usize = 256 * 1024;
+
+fn hash_snapshot_file(
+    root: &Path,
+    record: &SnapshotFileRecord,
+    buffer: &mut [u8; SNAPSHOT_HASH_BUFFER_SIZE],
+) -> Result<[u8; 32], String> {
     let path = root.join(&record.path);
     let mut file = File::open(&path)
         .map_err(|error| format!("cannot read {} for hashing: {error}", path.display()))?;
@@ -3594,9 +3600,8 @@ fn hash_snapshot_file(root: &Path, record: &SnapshotFileRecord) -> Result<[u8; 3
         ));
     }
     let mut hasher = Sha256::new();
-    let mut buffer = [0_u8; 256 * 1024];
     loop {
-        let count = read_retry_interrupted(&mut file, &mut buffer)
+        let count = read_retry_interrupted(&mut file, buffer)
             .map_err(|error| format!("could not hash {}: {error}", path.display()))?;
         if count == 0 {
             break;
@@ -3635,13 +3640,14 @@ fn collect_snapshot_entries<'a>(
             for _ in 0..worker_count {
                 let sender = sender.clone();
                 handles.push(scope.spawn(move || {
+                    let mut buffer = [0_u8; SNAPSHOT_HASH_BUFFER_SIZE];
                     loop {
                         let index = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         let Some(record) = records.get(index) else {
                             break;
                         };
                         if sender
-                            .send((index, hash_snapshot_file(root, record)))
+                            .send((index, hash_snapshot_file(root, record, &mut buffer)))
                             .is_err()
                         {
                             break;
