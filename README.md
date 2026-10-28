@@ -48,6 +48,7 @@ mediaforge proxy-dir ./Media --output-dir ./Proxies --extension mov,mxf --max-wi
 mediaforge proxy-dir ./Media --output-dir ./Proxies --extension mov,mxf --json
 mediaforge extract-audio ./Media/shot.mp4 --output ./Audio/shot.mp3
 mediaforge extract-audio ./Media/shot.mp4 -o ./Audio/shot.wav --format wav --stream 1
+mediaforge extract-audio-dir ./Media --output-dir ./Audio --extension mov,mxf --format mp3 --bitrate 192k --json
 ```
 
 `probe` invokes `ffprobe` directly (without a shell) and returns its JSON containing container and stream metadata such as duration, codec, dimensions, frame rate, and audio channels. Use `--summary` to return only the compact comparison fields: file size, duration, bitrate, codecs, dimensions, pixel and aspect formats, frame rates, and audio layout. `--compact` removes JSON whitespace. `probe-dir` scans video/audio assets and probes them concurrently, emitting one JSON Lines record per file in stable path order. It can filter by extension; `--jobs` controls concurrency from 1 to 32. A failed file is reported as an error record while other files continue. `probe-dir --summary` uses the same compact fields. `ffprobe` must be available on `PATH`.
@@ -69,6 +70,8 @@ preset=ultrafast
 `proxy-dir` applies the same proxy settings to video files in a directory tree, preserving relative folders beneath an existing output directory. It skips files already inside that output directory, never overwrites existing proxies, continues after per-file errors, and returns a nonzero exit status if any file failed. Set `--extension` to limit inputs. Add `--json` for JSON Lines progress, per-file success/error records, and a final summary.
 
 `extract-audio` writes the selected audio stream as MP3 (192k by default), WAV, or FLAC. `--stream` selects a zero-based audio stream; `--bitrate` selects an MP3 bitrate from 64k to 320k. The output extension must match `--format`. FFmpeg must include the selected encoder, and existing files are never overwritten.
+
+`extract-audio-dir` applies those settings to video/audio files in a directory tree and preserves relative folders beneath an existing output directory. It skips inputs already inside that output directory, refuses collisions, and continues after per-file errors. Add `--json` for JSON Lines progress, per-file results, and a final summary.
 
 To run the Python reference implementation during comparison:
 

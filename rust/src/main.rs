@@ -1277,7 +1277,7 @@ fn fraction_ceil_scaled(fraction: &str, multiplier: u128) -> u128 {
 
 fn print_help() {
     println!(
-        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS] [--largest N]\n  mediaforge dupes [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--top-groups N]\n  mediaforge probe <FILE> [--compact] [--summary]\n  mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--jobs N] [--summary]\n  mediaforge storyboard <VIDEO> --output <IMAGE> [--interval SECONDS] [--columns N] [--rows N] [--width PIXELS]\n  mediaforge proxy <VIDEO> --output <FILE.mp4> [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge proxy-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET] [--json]\n  mediaforge proxy-config init [FILE] [--profile fast|balanced|quality] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge extract-audio <VIDEO> --output <FILE> [--format mp3|wav|flac] [--bitrate RATE] [--stream N]\n  mediaforge project [PATH] [--json]\n  mediaforge gitignore [PATH] [--apply]\n  mediaforge organize [PATH] [--by type|extension] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--apply]\n  mediaforge sequence [PATH] [--prefix NAME] [--start N] [--padding N] [--extension EXTENSIONS] [--include-hidden] [--json] [--apply]\n  mediaforge undo [PATH] [--json]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--include-hidden] [--include-generated] [--dry-run] [--json] [--list]\n  mediaforge --version\n  mediaforge --help"
+        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS] [--largest N]\n  mediaforge dupes [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--top-groups N]\n  mediaforge probe <FILE> [--compact] [--summary]\n  mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--jobs N] [--summary]\n  mediaforge storyboard <VIDEO> --output <IMAGE> [--interval SECONDS] [--columns N] [--rows N] [--width PIXELS]\n  mediaforge proxy <VIDEO> --output <FILE.mp4> [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge proxy-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET] [--json]\n  mediaforge proxy-config init [FILE] [--profile fast|balanced|quality] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge extract-audio <VIDEO> --output <FILE> [--format mp3|wav|flac] [--bitrate RATE] [--stream N]\n  mediaforge extract-audio-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--format mp3|wav|flac] [--bitrate RATE] [--stream N] [--json]\n  mediaforge project [PATH] [--json]\n  mediaforge gitignore [PATH] [--apply]\n  mediaforge organize [PATH] [--by type|extension] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--apply]\n  mediaforge sequence [PATH] [--prefix NAME] [--start N] [--padding N] [--extension EXTENSIONS] [--include-hidden] [--json] [--apply]\n  mediaforge undo [PATH] [--json]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--include-hidden] [--include-generated] [--dry-run] [--json] [--list]\n  mediaforge --version\n  mediaforge --help"
     );
 }
 
@@ -2458,6 +2458,7 @@ fn run_extract_audio(args: &[String]) -> Result<(), String> {
     let mut format = "mp3".to_owned();
     let mut bitrate = None;
     let mut stream = 0_u32;
+    let mut quiet = false;
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
         match arg.as_str() {
@@ -2488,6 +2489,7 @@ fn run_extract_audio(args: &[String]) -> Result<(), String> {
                     .parse::<u32>()
                     .map_err(|_| format!("invalid audio stream index '{value}'"))?;
             }
+            "--quiet" => quiet = true,
             "--help" | "-h" => {
                 println!(
                     "Usage: mediaforge extract-audio <VIDEO> --output <FILE> [--format mp3|wav|flac] [--bitrate RATE] [--stream N]\n\nExtract an audio stream with ffmpeg. Defaults to MP3 at 192k from the first audio stream. --bitrate applies to MP3 only; --stream is a zero-based audio stream index. Existing files are never overwritten."
@@ -2634,11 +2636,252 @@ fn run_extract_audio(args: &[String]) -> Result<(), String> {
             ),
         }
     })?;
-    println!(
-        "Extracted audio {} ({})",
-        output.display(),
-        human_size(temporary_size)
-    );
+    if !quiet {
+        println!(
+            "Extracted audio {} ({})",
+            output.display(),
+            human_size(temporary_size)
+        );
+    }
+    Ok(())
+}
+
+fn run_extract_audio_dir(args: &[String]) -> Result<(), String> {
+    let mut path = None;
+    let mut output_root = None;
+    let mut extensions = None;
+    let mut include_hidden = false;
+    let mut format = "mp3".to_owned();
+    let mut bitrate = None;
+    let mut stream = 0_u32;
+    let mut json = false;
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--output-dir" => {
+                output_root =
+                    Some(PathBuf::from(iter.next().ok_or_else(|| {
+                        "--output-dir requires a directory".to_owned()
+                    })?));
+            }
+            "--extension" => {
+                let value = iter.next().ok_or_else(|| {
+                    "--extension requires a comma-separated extension list".to_owned()
+                })?;
+                extensions = Some(parse_extensions(value)?);
+            }
+            "--include-hidden" => include_hidden = true,
+            "--format" => {
+                format = iter
+                    .next()
+                    .ok_or_else(|| "--format requires mp3, wav, or flac".to_owned())?
+                    .to_ascii_lowercase();
+            }
+            "--bitrate" => {
+                bitrate = Some(
+                    iter.next()
+                        .ok_or_else(|| "--bitrate requires a value such as 192k".to_owned())?
+                        .clone(),
+                );
+            }
+            "--stream" => {
+                let value = iter.next().ok_or_else(|| {
+                    "--stream requires a zero-based audio stream index".to_owned()
+                })?;
+                stream = value
+                    .parse::<u32>()
+                    .map_err(|_| format!("invalid audio stream index '{value}'"))?;
+            }
+            "--json" => json = true,
+            "--help" | "-h" => {
+                println!(
+                    "Usage: mediaforge extract-audio-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--format mp3|wav|flac] [--bitrate RATE] [--stream N] [--json]\n\nExtract audio from video and audio assets while preserving relative folders. Defaults to MP3 at 192k from the first audio stream. Existing outputs are never overwritten. The output directory must already exist. --json emits progress and per-file results as JSON Lines."
+                );
+                return Ok(());
+            }
+            value if value.starts_with('-') => return Err(format!("unknown option: {value}")),
+            value => {
+                if path.is_some() {
+                    return Err("extract-audio-dir accepts one input directory".into());
+                }
+                path = Some(PathBuf::from(value));
+            }
+        }
+    }
+    let path = path.ok_or_else(|| "extract-audio-dir requires an input directory".to_owned())?;
+    let output_root =
+        output_root.ok_or_else(|| "extract-audio-dir requires --output-dir <DIR>".to_owned())?;
+    if !matches!(format.as_str(), "mp3" | "wav" | "flac") {
+        return Err("--format must be mp3, wav, or flac".to_owned());
+    }
+    if bitrate.is_some() && format != "mp3" {
+        return Err("--bitrate can only be used with --format mp3".to_owned());
+    }
+    let bitrate = bitrate.unwrap_or_else(|| "192k".to_owned());
+    const MP3_BITRATES: &[&str] = &["64k", "96k", "128k", "160k", "192k", "224k", "256k", "320k"];
+    if format == "mp3" && !MP3_BITRATES.contains(&bitrate.as_str()) {
+        return Err(format!(
+            "unsupported MP3 bitrate '{bitrate}'; choose one of {}",
+            MP3_BITRATES.join(", ")
+        ));
+    }
+    let root = fs::canonicalize(&path)
+        .map_err(|error| format!("cannot access {}: {error}", path.display()))?;
+    if !is_real_directory(&root) {
+        return Err(format!("expected a real directory: {}", root.display()));
+    }
+    let output_root = fs::canonicalize(&output_root).map_err(|error| {
+        format!(
+            "cannot access output directory {}: {error}",
+            output_root.display()
+        )
+    })?;
+    if !is_real_directory(&output_root) {
+        return Err(format!(
+            "expected a real output directory: {}",
+            output_root.display()
+        ));
+    }
+    if root == output_root {
+        return Err("output directory must differ from the input directory".to_owned());
+    }
+    if root.starts_with(&output_root) {
+        return Err("output directory must not contain the input directory".to_owned());
+    }
+    let output_inside_root = output_root.starts_with(&root);
+    let ignored = ignored_by_git(&root)?;
+    let mut records = Vec::new();
+    walk_strict(
+        &root,
+        &root,
+        include_hidden,
+        SKIP_DIRS,
+        &ignored,
+        &mut records,
+    )?;
+    records.retain(|record| matches!(record.kind, Kind::Video | Kind::Audio));
+    if let Some(extensions) = extensions {
+        records.retain(|record| extensions.contains(&record.extension));
+    }
+    records.sort_by(|left, right| left.relative.cmp(&right.relative));
+    if output_inside_root {
+        records.retain(|record| !record.path.starts_with(&output_root));
+    }
+    if records.is_empty() {
+        if json {
+            println!("{{\"type\":\"summary\",\"succeeded\":0,\"failed\":0}}");
+        } else {
+            println!("No media assets found.");
+        }
+        return Ok(());
+    }
+
+    let mut targets = HashSet::new();
+    let mut succeeded = 0_usize;
+    let mut failed = 0_usize;
+    let total = records.len();
+    for (position, record) in records.into_iter().enumerate() {
+        if json {
+            println!(
+                "{{\"type\":\"progress\",\"current\":{},\"total\":{},\"path\":{}}}",
+                position + 1,
+                total,
+                json_string(&record.relative)
+            );
+        } else {
+            println!("Extracting {}/{}: {}", position + 1, total, record.relative);
+        }
+        let mut output_for_record = None::<PathBuf>;
+        let result = (|| -> Result<(), String> {
+            let relative = record
+                .path
+                .strip_prefix(&root)
+                .map_err(|error| format!("cannot relativize input path: {error}"))?;
+            let stem = relative
+                .file_stem()
+                .and_then(|value| value.to_str())
+                .ok_or_else(|| "cannot create an audio output name from this path".to_owned())?;
+            let mut relative_output = relative.to_path_buf();
+            relative_output.set_file_name(format!("{stem}-audio.{format}"));
+            let output = output_root.join(&relative_output);
+            output_for_record = Some(output.clone());
+            if !targets.insert(output.clone()) {
+                return Err(format!(
+                    "multiple source files map to the same audio path: {}",
+                    output.display()
+                ));
+            }
+            if let Some(parent) = output.parent() {
+                fs::create_dir_all(parent).map_err(|error| {
+                    format!(
+                        "could not create audio directory {}: {error}",
+                        parent.display()
+                    )
+                })?;
+            }
+            let source_text = record
+                .path
+                .to_str()
+                .ok_or_else(|| "input path is not valid Unicode".to_owned())?;
+            let output_text = output
+                .to_str()
+                .ok_or_else(|| "output path is not valid Unicode".to_owned())?;
+            let mut audio_args = vec![
+                source_text.to_owned(),
+                "--output".to_owned(),
+                output_text.to_owned(),
+                "--format".to_owned(),
+                format.clone(),
+                "--stream".to_owned(),
+                stream.to_string(),
+                "--quiet".to_owned(),
+            ];
+            if format == "mp3" {
+                audio_args.push("--bitrate".to_owned());
+                audio_args.push(bitrate.clone());
+            }
+            run_extract_audio(&audio_args)
+        })();
+        let output_json = output_for_record
+            .as_ref()
+            .map(|output| json_string(&output.to_string_lossy()))
+            .unwrap_or_else(|| "null".to_owned());
+        match result {
+            Ok(()) => {
+                succeeded += 1;
+                if json {
+                    println!(
+                        "{{\"type\":\"result\",\"path\":{},\"output\":{},\"ok\":true}}",
+                        json_string(&record.relative),
+                        output_json
+                    );
+                } else if let Some(output) = output_for_record {
+                    println!("Created audio {}", output.display());
+                }
+            }
+            Err(error) => {
+                failed += 1;
+                if json {
+                    println!(
+                        "{{\"type\":\"result\",\"path\":{},\"output\":{},\"ok\":false,\"error\":{}}}",
+                        json_string(&record.relative),
+                        output_json,
+                        json_string(&error)
+                    );
+                } else {
+                    eprintln!("mediaforge: {}: {error}", record.relative);
+                }
+            }
+        }
+    }
+    if json {
+        println!("{{\"type\":\"summary\",\"succeeded\":{succeeded},\"failed\":{failed}}}");
+    } else {
+        println!("Audio extraction finished: {succeeded} succeeded, {failed} failed.");
+    }
+    if failed > 0 {
+        return Err(format!("audio extraction failed for {failed} file(s)"));
+    }
     Ok(())
 }
 
@@ -5346,6 +5589,7 @@ fn run() -> Result<(), String> {
         Some("proxy-dir") => run_proxy_dir(&args[1..]),
         Some("proxy-config") => run_proxy_config(&args[1..]),
         Some("extract-audio") => run_extract_audio(&args[1..]),
+        Some("extract-audio-dir") => run_extract_audio_dir(&args[1..]),
         Some("project") => run_project(&args[1..]),
         Some("gitignore") => run_gitignore(&args[1..]),
         Some("organize") => run_organize(&args[1..]),
