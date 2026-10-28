@@ -1150,6 +1150,12 @@ fn global_ignore_file(root: &Path) -> Result<Option<PathBuf>, String> {
                 root.join(path)
             }));
         }
+        Ok(output) if !output.stderr.is_empty() => {
+            return Err(format!(
+                "could not resolve Git's global ignore file: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            ));
+        }
         Ok(_) => {}
         Err(error) if error.kind() == io::ErrorKind::NotFound => {}
         Err(error) => {
