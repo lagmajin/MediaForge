@@ -560,6 +560,21 @@ struct StrictWalkFilters<'a> {
     exclude_path_contains_lower: Option<&'a [String]>,
     omit_absolute_path: bool,
     omit_modified_time: bool,
+    omit_extension: bool,
+}
+
+fn extension_matches_filter(extension: Option<&str>, accepted: &HashSet<String>) -> bool {
+    accepted.iter().any(|candidate| {
+        if candidate == "[no extension]" {
+            extension.is_none()
+        } else {
+            extension.is_some_and(|extension| {
+                candidate
+                    .strip_prefix('.')
+                    .is_some_and(|candidate| candidate.eq_ignore_ascii_case(extension))
+            })
+        }
+    })
 }
 
 fn walk_strict_filtered(
@@ -654,19 +669,24 @@ where
                     values.iter().any(|value| relative_lower.contains(value))
                 })
             {
-                let extension = path
-                    .extension()
-                    .and_then(|value| value.to_str())
-                    .map(|value| format!(".{}", value.to_ascii_lowercase()))
-                    .unwrap_or_else(|| "[no extension]".to_owned());
                 let kind = classify(&path);
-                if filters.kinds.is_some_and(|values| !values.contains(&kind))
-                    || filters
-                        .extensions
-                        .is_some_and(|values| !values.contains(&extension))
+                if filters.kinds.is_some_and(|values| !values.contains(&kind)) {
+                    continue;
+                }
+                let extension_value = path.extension().and_then(|value| value.to_str());
+                if filters
+                    .extensions
+                    .is_some_and(|values| !extension_matches_filter(extension_value, values))
                 {
                     continue;
                 }
+                let extension = if filters.omit_extension {
+                    String::new()
+                } else {
+                    extension_value
+                        .map(|value| format!(".{}", value.to_ascii_lowercase()))
+                        .unwrap_or_else(|| "[no extension]".to_owned())
+                };
                 let metadata = entry
                     .metadata()
                     .map_err(|error| format!("cannot inspect {}: {error}", path.display()))?;
@@ -2291,6 +2311,7 @@ fn run_dupes(args: &[String]) -> Result<(), String> {
         exclude_path_contains_lower: Some(&exclude_path_contains_lower),
         omit_absolute_path: true,
         omit_modified_time: true,
+        omit_extension: true,
     };
     let mut duplicate_sizes = if summary_only {
         let mut by_size = HashMap::<u64, DuplicateSizeBucket<'static>>::new();
@@ -4631,6 +4652,7 @@ fn run_probe_dir(args: &[String]) -> Result<(), String> {
         exclude_path_contains_lower: None,
         omit_absolute_path: false,
         omit_modified_time: false,
+        omit_extension: true,
     };
     walk_strict_filtered(
         &root,
@@ -5380,6 +5402,7 @@ fn run_scene_detect_dir(args: &[String]) -> Result<(), String> {
     let filters = StrictWalkFilters {
         kinds: Some(&kinds),
         extensions: extensions.as_ref(),
+        omit_extension: true,
         ..StrictWalkFilters::default()
     };
     walk_strict_filtered(
@@ -6188,6 +6211,7 @@ fn run_proxy_dir(args: &[String]) -> Result<(), String> {
         kinds: Some(&kinds),
         extensions: extensions.as_ref(),
         excluded_subtree: output_inside_root.then_some(output_root.as_path()),
+        omit_extension: true,
         ..StrictWalkFilters::default()
     };
     walk_strict_filtered(
@@ -6696,6 +6720,7 @@ fn run_extract_audio_dir(args: &[String]) -> Result<(), String> {
         kinds: Some(&kinds),
         extensions: extensions.as_ref(),
         excluded_subtree: output_inside_root.then_some(output_root.as_path()),
+        omit_extension: true,
         ..StrictWalkFilters::default()
     };
     walk_strict_filtered(
@@ -8620,6 +8645,7 @@ fn run_organize(args: &[String]) -> Result<(), String> {
         kinds: kinds.as_ref().map(|values| values.as_slice()),
         extensions: extension_filter.as_ref(),
         min_size: Some(min_size),
+        omit_extension: by != "extension",
         ..StrictWalkFilters::default()
     };
     walk_strict_filtered(
@@ -10323,6 +10349,7 @@ fn run_pack(args: &[String]) -> Result<(), String> {
         exclude_path_contains_lower: Some(&exclude_path_contains_lower),
         omit_absolute_path: false,
         omit_modified_time: false,
+        omit_extension: true,
     };
     walk_strict_filtered(
         &root,
