@@ -1227,7 +1227,7 @@ fn fraction_ceil_scaled(fraction: &str, multiplier: u128) -> u128 {
 
 fn print_help() {
     println!(
-        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS]\n  mediaforge dupes [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS]\n  mediaforge probe <FILE> [--compact]\n  mediaforge project [PATH] [--json]\n  mediaforge gitignore [PATH] [--apply]\n  mediaforge organize [PATH] [--by type|extension] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--json] [--apply]\n  mediaforge undo [PATH]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--include-hidden] [--include-generated] [--dry-run] [--json]\n  mediaforge --version\n  mediaforge --help"
+        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS]\n  mediaforge dupes [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS]\n  mediaforge probe <FILE> [--compact]\n  mediaforge project [PATH] [--json]\n  mediaforge gitignore [PATH] [--apply]\n  mediaforge organize [PATH] [--by type|extension] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--json] [--apply]\n  mediaforge undo [PATH]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--include-hidden] [--include-generated] [--dry-run] [--json]\n  mediaforge --version\n  mediaforge --help"
     );
 }
 
@@ -2550,6 +2550,7 @@ fn run_organize(args: &[String]) -> Result<(), String> {
     let mut kind_filter = None;
     let mut extension_filter = None;
     let mut min_size = 0_u64;
+    let mut include_hidden = false;
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
         match arg.as_str() {
@@ -2561,6 +2562,7 @@ fn run_organize(args: &[String]) -> Result<(), String> {
                     return Err("--by must be 'type' or 'extension'".to_owned());
                 }
             }
+            "--include-hidden" => include_hidden = true,
             "--type" => {
                 let value = iter
                     .next()
@@ -2587,7 +2589,7 @@ fn run_organize(args: &[String]) -> Result<(), String> {
             "--json" => json = true,
             "--help" | "-h" => {
                 println!(
-                    "Usage: mediaforge organize [PATH] [--by type|extension] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--json] [--apply]\n\nPreview an asset organization plan. --type and --extension select files; --min-size uses bytes or K/M/G/T binary units. --json emits the plan and skipped count as JSON. Files are only moved with --apply; a manifest is written so the move can be undone."
+                    "Usage: mediaforge organize [PATH] [--by type|extension] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--json] [--apply]\n\nPreview an asset organization plan. --type and --extension select files; --min-size uses bytes or K/M/G/T binary units. Hidden files are skipped unless --include-hidden is set. --json emits the plan and skipped count as JSON. Files are only moved with --apply; a manifest is written so the move can be undone."
                 );
                 return Ok(());
             }
@@ -2621,7 +2623,14 @@ fn run_organize(args: &[String]) -> Result<(), String> {
 
     let ignored = ignored_by_git(&root)?;
     let mut records = Vec::new();
-    walk_strict(&root, &root, false, SKIP_DIRS, &ignored, &mut records)?;
+    walk_strict(
+        &root,
+        &root,
+        include_hidden,
+        SKIP_DIRS,
+        &ignored,
+        &mut records,
+    )?;
     records.sort_by(|left, right| left.relative.cmp(&right.relative));
     let mut moves = Vec::<PlannedMove>::new();
     let mut skipped = 0usize;
@@ -2684,9 +2693,10 @@ fn run_organize(args: &[String]) -> Result<(), String> {
 
     if json && !apply {
         println!(
-            "{{\n  \"root\": {},\n  \"by\": {},\n  \"applied\": {},\n  \"moves\": [",
+            "{{\n  \"root\": {},\n  \"by\": {},\n  \"include_hidden\": {},\n  \"applied\": {},\n  \"moves\": [",
             json_string(&root.to_string_lossy()),
             json_string(by),
+            if include_hidden { "true" } else { "false" },
             if apply { "true" } else { "false" }
         );
         for (index, movement) in moves.iter().enumerate() {
@@ -2729,9 +2739,10 @@ fn run_organize(args: &[String]) -> Result<(), String> {
     if moves.is_empty() {
         if json {
             println!(
-                "{{\"root\": {}, \"by\": {}, \"applied\": {}, \"moves\": [], \"move_count\": 0, \"moved_count\": 0, \"skipped_count\": {}, \"result\": \"no_changes\"}}",
+                "{{\"root\": {}, \"by\": {}, \"include_hidden\": {}, \"applied\": {}, \"moves\": [], \"move_count\": 0, \"moved_count\": 0, \"skipped_count\": {}, \"result\": \"no_changes\"}}",
                 json_string(&root.to_string_lossy()),
                 json_string(by),
+                if include_hidden { "true" } else { "false" },
                 if apply { "true" } else { "false" },
                 skipped
             );
@@ -2783,9 +2794,10 @@ fn run_organize(args: &[String]) -> Result<(), String> {
     }
     if json {
         println!(
-            "{{\n  \"root\": {},\n  \"by\": {},\n  \"applied\": true,\n  \"moves\": [",
+            "{{\n  \"root\": {},\n  \"by\": {},\n  \"include_hidden\": {},\n  \"applied\": true,\n  \"moves\": [",
             json_string(&root.to_string_lossy()),
-            json_string(by)
+            json_string(by),
+            if include_hidden { "true" } else { "false" }
         );
         for (index, movement) in moves.iter().enumerate() {
             let comma = if index + 1 == moves.len() { "" } else { "," };
