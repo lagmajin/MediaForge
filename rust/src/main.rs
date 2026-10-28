@@ -8798,8 +8798,8 @@ const ORGANIZE_MAGIC_V1: &[u8; 8] = b"MFORG001";
 const ORGANIZE_MANIFEST_TEMP: &str = ".mediaforge-undo.tmp";
 const ORGANIZE_COMPLETE_MARKER: &str = ".mediaforge-undo.complete";
 const TAR_BLOCK_SIZE: usize = 512;
-const TAR_ZERO_BLOCK: [u8; TAR_BLOCK_SIZE] = [0; TAR_BLOCK_SIZE];
-const TAR_END_MARKER: [u8; TAR_BLOCK_SIZE * 2] = [0; TAR_BLOCK_SIZE * 2];
+static TAR_ZERO_BLOCK: [u8; TAR_BLOCK_SIZE] = [0; TAR_BLOCK_SIZE];
+static TAR_END_MARKER: [u8; TAR_BLOCK_SIZE * 2] = [0; TAR_BLOCK_SIZE * 2];
 const TAR_OCTAL_MAX: u64 = 0o77777777777;
 
 #[derive(Clone, Debug)]
