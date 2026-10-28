@@ -2,7 +2,7 @@ use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::env;
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, BufRead, BufReader, Cursor, Read, Seek, Write};
+use std::io::{self, BufRead, BufReader, BufWriter, Cursor, Read, Seek, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 use std::sync::Arc;
@@ -2833,7 +2833,7 @@ fn pax_record(key: &str, value: &str) -> String {
     }
 }
 
-fn write_tar_payload(writer: &mut File, contents: &[u8]) -> io::Result<()> {
+fn write_tar_payload(writer: &mut impl Write, contents: &[u8]) -> io::Result<()> {
     writer.write_all(contents)?;
     let padding = (TAR_BLOCK_SIZE - contents.len() % TAR_BLOCK_SIZE) % TAR_BLOCK_SIZE;
     if padding > 0 {
@@ -2843,7 +2843,7 @@ fn write_tar_payload(writer: &mut File, contents: &[u8]) -> io::Result<()> {
 }
 
 fn pack_file(
-    writer: &mut File,
+    writer: &mut impl Write,
     archive_name: &str,
     record: &FileRecord,
     index: usize,
@@ -3263,7 +3263,8 @@ fn run_pack(args: &[String]) -> Result<(), String> {
             }
         }
     };
-    let (temp_path, mut archive) = temp_path;
+    let (temp_path, archive_file) = temp_path;
+    let mut archive = BufWriter::with_capacity(64 * 1024, archive_file);
     let mut copy_buffer = vec![0_u8; 256 * 1024];
     let write_result = (|| -> Result<(), String> {
         for (index, (record, name)) in entries.iter().enumerate() {
@@ -3273,8 +3274,12 @@ fn run_pack(args: &[String]) -> Result<(), String> {
             .write_all(&[0_u8; TAR_BLOCK_SIZE * 2])
             .map_err(|error| format!("could not finish tar archive: {error}"))?;
         archive
+            .flush()
+            .map_err(|error| format!("could not flush archive: {error}"))?;
+        archive
+            .get_ref()
             .sync_all()
-            .map_err(|error| format!("could not flush archive: {error}"))
+            .map_err(|error| format!("could not persist archive: {error}"))
     })();
     drop(archive);
     if let Err(error) = write_result {
