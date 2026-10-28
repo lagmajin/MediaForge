@@ -5737,8 +5737,8 @@ fn run_scene_detect_dir(args: &[String]) -> Result<(), String> {
     let next = std::sync::atomic::AtomicUsize::new(0);
     let completed = std::sync::atomic::AtomicUsize::new(0);
     let stream_output = std::sync::Mutex::new(());
-    let results =
-        std::sync::Mutex::new(Vec::<(bool, Option<String>)>::with_capacity(records.len()));
+    let failed = std::sync::atomic::AtomicUsize::new(0);
+    let first_output_error = std::sync::Mutex::new(None::<String>);
     std::thread::scope(|scope| {
         for _ in 0..jobs.min(records.len()) {
             scope.spawn(|| {
@@ -5790,7 +5790,7 @@ fn run_scene_detect_dir(args: &[String]) -> Result<(), String> {
                             ),
                         ),
                     };
-                    let output_error = {
+                    let write_error = {
                         let _guard = stream_output
                             .lock()
                             .expect("scene detection output lock poisoned");
@@ -5808,24 +5808,28 @@ fn run_scene_detect_dir(args: &[String]) -> Result<(), String> {
                         .err()
                         .map(|error| error.to_string())
                     };
-                    results
-                        .lock()
-                        .expect("scene detection result mutex poisoned")
-                        .push((success, output_error));
+                    if !success {
+                        failed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    }
+                    if let Some(error) = write_error {
+                        let mut first_error = first_output_error
+                            .lock()
+                            .expect("scene detection output error mutex poisoned");
+                        if first_error.is_none() {
+                            *first_error = Some(error);
+                        }
+                    }
                 }
             });
         }
     });
-    let results = results
+    if let Some(error) = first_output_error
         .into_inner()
-        .map_err(|_| "scene detection results could not be collected".to_owned())?;
-    if let Some(error) = results
-        .iter()
-        .find_map(|(_, output_error)| output_error.as_deref())
+        .map_err(|_| "scene detection output error could not be collected".to_owned())?
     {
         return Err(format!("could not write scene detection output: {error}"));
     }
-    let failed = results.iter().filter(|(success, _)| !success).count();
+    let failed = failed.load(std::sync::atomic::Ordering::Relaxed);
     let stdout = io::stdout();
     let mut stdout = stdout.lock();
     writeln!(
