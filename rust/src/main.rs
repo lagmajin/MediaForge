@@ -1005,20 +1005,6 @@ fn write_json_string(output: &mut impl Write, value: &str) -> io::Result<()> {
     output.write_all(b"\"")
 }
 
-fn json_string_array<'a>(values: impl IntoIterator<Item = &'a str>) -> String {
-    let mut out = String::from("[");
-    let mut first = true;
-    for value in values {
-        if !first {
-            out.push_str(", ");
-        }
-        first = false;
-        append_json_string(&mut out, value);
-    }
-    out.push(']');
-    out
-}
-
 fn scan_filters_json(
     kind_filter: Option<Kind>,
     min_size: Option<u64>,
@@ -2279,19 +2265,31 @@ fn run_dupes(args: &[String]) -> Result<(), String> {
             displayed_groups,
             truncated_groups
         );
+        let stdout = io::stdout();
+        let mut output = io::BufWriter::new(stdout.lock());
         for (index, (size, files)) in groups.iter().take(displayed_groups).enumerate() {
             let comma = if index + 1 == displayed_groups {
                 ""
             } else {
                 ","
             };
-            println!(
-                "    {{\"size_bytes\": {}, \"files\": {}}}{}",
-                size,
-                json_string_array(files.iter().map(String::as_str)),
-                comma
-            );
+            write!(output, "    {{\"size_bytes\": {}, \"files\": [", size)
+                .map_err(|error| format!("could not write duplicate JSON: {error}"))?;
+            for (file_index, file) in files.iter().enumerate() {
+                if file_index > 0 {
+                    output
+                        .write_all(b", ")
+                        .map_err(|error| format!("could not write duplicate JSON: {error}"))?;
+                }
+                write_json_string(&mut output, file)
+                    .map_err(|error| format!("could not write duplicate JSON: {error}"))?;
+            }
+            writeln!(output, "]}}{}", comma)
+                .map_err(|error| format!("could not write duplicate JSON: {error}"))?;
         }
+        output
+            .flush()
+            .map_err(|error| format!("could not write duplicate JSON: {error}"))?;
         println!(
             "  ],\n  \"duplicate_files\": {},\n  \"reclaimable_bytes\": {},\n  \"reclaimable_size\": {}\n}}",
             duplicate_files,
