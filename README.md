@@ -35,9 +35,10 @@ Install FFmpeg separately to use `probe`; the core scanner does not need it:
 ```sh
 mediaforge probe ./Media/shot.mp4
 mediaforge probe ./Media/shot.mp4 --compact
+mediaforge probe-dir ./Media --extension mov,mxf --jobs 4
 ```
 
-This invokes `ffprobe` directly (without a shell) and returns its JSON containing container and stream metadata such as duration, codec, dimensions, frame rate, and audio channels. `ffprobe` must be available on `PATH`.
+`probe` invokes `ffprobe` directly (without a shell) and returns its JSON containing container and stream metadata such as duration, codec, dimensions, frame rate, and audio channels. `probe-dir` scans video/audio assets and probes them concurrently, emitting one JSON Lines record per file in stable path order. It can filter by extension and limits concurrency with `--jobs`; a failed file is reported as an error record while other files continue. `ffprobe` must be available on `PATH`.
 
 To run the Python reference implementation during comparison:
 

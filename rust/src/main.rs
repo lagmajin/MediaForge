@@ -1277,7 +1277,7 @@ fn fraction_ceil_scaled(fraction: &str, multiplier: u128) -> u128 {
 
 fn print_help() {
     println!(
-        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS] [--largest N]\n  mediaforge dupes [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--top-groups N]\n  mediaforge probe <FILE> [--compact]\n  mediaforge project [PATH] [--json]\n  mediaforge gitignore [PATH] [--apply]\n  mediaforge organize [PATH] [--by type|extension] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--apply]\n  mediaforge undo [PATH] [--json]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--include-hidden] [--include-generated] [--dry-run] [--json] [--list]\n  mediaforge --version\n  mediaforge --help"
+        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS] [--largest N]\n  mediaforge dupes [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--top-groups N]\n  mediaforge probe <FILE> [--compact]\n  mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--jobs N]\n  mediaforge project [PATH] [--json]\n  mediaforge gitignore [PATH] [--apply]\n  mediaforge organize [PATH] [--by type|extension] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--apply]\n  mediaforge undo [PATH] [--json]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--include-hidden] [--include-generated] [--dry-run] [--json] [--list]\n  mediaforge --version\n  mediaforge --help"
     );
 }
 
@@ -1311,6 +1311,20 @@ fn run_probe(args: &[String]) -> Result<(), String> {
     let path = fs::canonicalize(&path)
         .map_err(|error| format!("cannot resolve media file {}: {error}", path.display()))?;
 
+    let json = ffprobe_json(&path, pretty)?;
+    let mut stdout = io::stdout().lock();
+    stdout
+        .write_all(json.as_bytes())
+        .map_err(|error| format!("could not write ffprobe output: {error}"))?;
+    if !json.ends_with('\n') {
+        stdout
+            .write_all(b"\n")
+            .map_err(|error| format!("could not finish ffprobe output: {error}"))?;
+    }
+    Ok(())
+}
+
+fn ffprobe_json(path: &Path, pretty: bool) -> Result<String, String> {
     let mut command = Command::new("ffprobe");
     command.args(["-v", "error", "-show_format", "-show_streams"]);
     if pretty {
@@ -1318,7 +1332,7 @@ fn run_probe(args: &[String]) -> Result<(), String> {
     } else {
         command.args(["-of", "json=compact=1"]);
     }
-    let output = command.arg(&path).output().map_err(|error| {
+    let output = command.arg(path).output().map_err(|error| {
         if error.kind() == std::io::ErrorKind::NotFound {
             "ffprobe was not found on PATH. Install FFmpeg and ensure ffprobe is available."
                 .to_owned()
@@ -1336,14 +1350,128 @@ fn run_probe(args: &[String]) -> Result<(), String> {
     }
     let json = String::from_utf8(output.stdout)
         .map_err(|error| format!("ffprobe returned invalid UTF-8: {error}"))?;
-    let mut stdout = io::stdout().lock();
-    stdout
-        .write_all(json.as_bytes())
-        .map_err(|error| format!("could not write ffprobe output: {error}"))?;
-    if !json.ends_with('\n') {
-        stdout
-            .write_all(b"\n")
-            .map_err(|error| format!("could not finish ffprobe output: {error}"))?;
+    Ok(json)
+}
+
+fn run_probe_dir(args: &[String]) -> Result<(), String> {
+    let mut include_hidden = false;
+    let mut extensions = None;
+    let mut jobs = std::thread::available_parallelism()
+        .map(usize::from)
+        .unwrap_or(1);
+    let mut path = None;
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--include-hidden" => include_hidden = true,
+            "--extension" => {
+                let value = iter.next().ok_or_else(|| {
+                    "--extension requires a comma-separated extension list".to_owned()
+                })?;
+                extensions = Some(parse_extensions(value)?);
+            }
+            "--jobs" => {
+                let value = iter
+                    .next()
+                    .ok_or_else(|| "--jobs requires a positive integer".to_owned())?;
+                jobs = value.parse::<usize>().map_err(|_| {
+                    format!("invalid --jobs value '{value}'; use a positive integer")
+                })?;
+                if jobs == 0 {
+                    return Err("--jobs must be greater than zero".to_owned());
+                }
+            }
+            "--help" | "-h" => {
+                println!(
+                    "Usage: mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--jobs N]\n\nProbe video and audio assets in a directory with ffprobe. Emits one JSON Lines record per file. --jobs controls the number of concurrent ffprobe processes."
+                );
+                return Ok(());
+            }
+            value if value.starts_with('-') => return Err(format!("unknown option: {value}")),
+            value => {
+                if path.is_some() {
+                    return Err("probe-dir accepts one directory path".into());
+                }
+                path = Some(PathBuf::from(value));
+            }
+        }
+    }
+    let path = path.ok_or_else(|| "probe-dir requires a directory path".to_owned())?;
+    let root = fs::canonicalize(&path)
+        .map_err(|error| format!("cannot access {}: {error}", path.display()))?;
+    if !root.is_dir() {
+        return Err(format!("expected a directory: {}", root.display()));
+    }
+    let ignored = ignored_by_git(&root)?;
+    let mut records = Vec::new();
+    walk_strict(
+        &root,
+        &root,
+        include_hidden,
+        SKIP_DIRS,
+        &ignored,
+        &mut records,
+    )?;
+    records.retain(|record| matches!(record.kind, Kind::Video | Kind::Audio));
+    if let Some(extensions) = extensions {
+        records.retain(|record| extensions.contains(&record.extension));
+    }
+    records.sort_by(|left, right| left.relative.cmp(&right.relative));
+    if records.is_empty() {
+        return Ok(());
+    }
+
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let results = std::sync::Mutex::new(Vec::<(usize, bool, String)>::with_capacity(records.len()));
+    let worker_count = jobs.min(records.len());
+    std::thread::scope(|scope| {
+        for _ in 0..worker_count {
+            scope.spawn(|| {
+                loop {
+                    let index = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    let Some(record) = records.get(index) else {
+                        break;
+                    };
+                    let result = ffprobe_json(&record.path, false);
+                    let (success, json) = match result {
+                        Ok(probe) => (
+                            true,
+                            format!(
+                                "{{\"path\":{},\"ok\":true,\"probe\":{}}}",
+                                json_string(&record.relative),
+                                probe.trim()
+                            ),
+                        ),
+                        Err(error) => (
+                            false,
+                            format!(
+                                "{{\"path\":{},\"ok\":false,\"error\":{}}}",
+                                json_string(&record.relative),
+                                json_string(&error)
+                            ),
+                        ),
+                    };
+                    results
+                        .lock()
+                        .expect("probe result mutex poisoned")
+                        .push((index, success, json));
+                }
+            });
+        }
+    });
+    let mut results = results
+        .into_inner()
+        .map_err(|_| "probe results could not be collected".to_owned())?;
+    results.sort_by_key(|(index, _, _)| *index);
+    let failures = results.iter().filter(|(_, success, _)| !success).count();
+    let stdout = io::stdout();
+    let mut stdout = stdout.lock();
+    for (_, _, record) in results {
+        writeln!(stdout, "{record}")
+            .map_err(|error| format!("could not write probe results: {error}"))?;
+    }
+    if failures > 0 {
+        return Err(format!("ffprobe failed for {failures} file(s)"));
     }
     Ok(())
 }
@@ -3768,6 +3896,7 @@ fn run() -> Result<(), String> {
         Some("scan") => run_scan(&args[1..]),
         Some("dupes") => run_dupes(&args[1..]),
         Some("probe") => run_probe(&args[1..]),
+        Some("probe-dir") => run_probe_dir(&args[1..]),
         Some("project") => run_project(&args[1..]),
         Some("gitignore") => run_gitignore(&args[1..]),
         Some("organize") => run_organize(&args[1..]),
