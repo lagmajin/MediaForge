@@ -12916,12 +12916,14 @@ fn ffmpeg_encoders() -> Result<HashSet<String>, String> {
 
 fn run_doctor(args: &[String]) -> Result<(), String> {
     let mut json = false;
+    let mut strict = false;
     for arg in args {
         match arg.as_str() {
             "--json" => json = true,
+            "--strict" => strict = true,
             "--help" | "-h" => {
                 println!(
-                    "Usage: mediaforge doctor [--json]\n\nCheck whether ffmpeg and ffprobe are available on PATH, and whether FFmpeg includes the H.264/AAC, MP3, WAV, and FLAC encoders used by MediaForge."
+                    "Usage: mediaforge doctor [--json] [--strict]\n\nCheck whether ffmpeg and ffprobe are available on PATH, and whether FFmpeg includes the H.264/AAC, MP3, WAV, and FLAC encoders used by MediaForge. --strict returns a nonzero exit status if any check fails."
                 );
                 return Ok(());
             }
@@ -12934,6 +12936,11 @@ fn run_doctor(args: &[String]) -> Result<(), String> {
     let encoders = ffmpeg_encoders();
     let has_encoder = |name: &str| encoders.as_ref().is_ok_and(|set| set.contains(name));
     let proxy_ready = ffmpeg.is_ok() && has_encoder("libx264") && has_encoder("aac");
+    let audio_ready = ffmpeg.is_ok()
+        && has_encoder("libmp3lame")
+        && has_encoder("pcm_s16le")
+        && has_encoder("flac");
+    let all_ready = ready && proxy_ready && audio_ready;
     if json {
         let tool_json = |result: &Result<String, String>| match result {
             Ok(version) => format!(
@@ -12945,7 +12952,7 @@ fn run_doctor(args: &[String]) -> Result<(), String> {
         write_json_stdout("doctor JSON", |output| {
             writeln!(
                 output,
-                "{{\"schema_version\":1,\"type\":\"doctor\",\"media_tools_ready\":{ready},\"proxy_ready\":{proxy_ready},\"audio_encoders\":{{\"mp3\":{},\"wav\":{},\"flac\":{}}},\"ffmpeg\":{},\"ffprobe\":{},\"ffmpeg_encoder_check_error\":{}}}",
+                "{{\"schema_version\":1,\"type\":\"doctor\",\"ready\":{all_ready},\"media_tools_ready\":{ready},\"proxy_ready\":{proxy_ready},\"audio_ready\":{audio_ready},\"audio_encoders\":{{\"mp3\":{},\"wav\":{},\"flac\":{}}},\"ffmpeg\":{},\"ffprobe\":{},\"ffmpeg_encoder_check_error\":{}}}",
                 has_encoder("libmp3lame"),
                 has_encoder("pcm_s16le"),
                 has_encoder("flac"),
@@ -12996,6 +13003,17 @@ fn run_doctor(args: &[String]) -> Result<(), String> {
                 "missing"
             }
         );
+        println!(
+            "All media features: {}",
+            if all_ready {
+                "ready"
+            } else {
+                "missing a required executable or encoder"
+            }
+        );
+    }
+    if strict && !all_ready {
+        return Err("doctor found missing required media tools or encoders".to_owned());
     }
     Ok(())
 }
