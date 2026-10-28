@@ -422,10 +422,7 @@ fn walk_with_skip_dirs_mode_counted(
             }
             let needs_relative_lower = !filters.exclude_path_contains_lower.is_empty()
                 || (!path_filter_satisfied && !filters.path_contains_lower.is_empty());
-            let mut relative = (file_type.is_dir()
-                || needs_relative_lower
-                || (file_type.is_file() && !active_ignored.is_empty()))
-            .then(|| {
+            let mut relative = (file_type.is_dir() || needs_relative_lower).then(|| {
                 path.strip_prefix(root)
                     .unwrap_or(&path)
                     .to_string_lossy()
@@ -491,14 +488,16 @@ fn walk_with_skip_dirs_mode_counted(
                 }) {
                     continue;
                 }
-                let relative = relative.take().unwrap_or_else(|| {
-                    path.strip_prefix(root)
-                        .unwrap_or(&path)
-                        .to_string_lossy()
-                        .replace('\\', "/")
-                });
-                if is_ignored(&relative, &active_ignored) {
-                    continue;
+                if !active_ignored.is_empty() {
+                    let relative = relative.get_or_insert_with(|| {
+                        path.strip_prefix(root)
+                            .unwrap_or(&path)
+                            .to_string_lossy()
+                            .replace('\\', "/")
+                    });
+                    if is_ignored(relative, &active_ignored) {
+                        continue;
+                    }
                 }
                 let metadata = match entry.metadata() {
                     Ok(metadata) => metadata,
@@ -519,6 +518,12 @@ fn walk_with_skip_dirs_mode_counted(
                 {
                     continue;
                 }
+                let relative = relative.take().unwrap_or_else(|| {
+                    path.strip_prefix(root)
+                        .unwrap_or(&path)
+                        .to_string_lossy()
+                        .replace('\\', "/")
+                });
                 let extension = extension_value
                     .map(|value| format!(".{}", value.to_ascii_lowercase()))
                     .unwrap_or_else(|| "[no extension]".to_owned());
@@ -713,19 +718,26 @@ where
                 {
                     continue;
                 }
-                let relative = relative.take().unwrap_or_else(|| {
-                    path.strip_prefix(root)
-                        .expect("walked file is below the scan root")
-                        .to_string_lossy()
-                        .replace('\\', "/")
-                });
-                if is_ignored(&relative, &active_ignored)
-                    || filters.exclude_path_contains_lower.is_some_and(|values| {
-                        let relative_lower = relative.to_lowercase();
-                        values.iter().any(|value| relative_lower.contains(value))
-                    })
-                {
-                    continue;
+                let has_path_filter = filters
+                    .exclude_path_contains_lower
+                    .is_some_and(|values| !values.is_empty());
+                if !active_ignored.is_empty() || has_path_filter {
+                    let relative = relative.get_or_insert(
+                        path.strip_prefix(root)
+                            .map_err(|error| {
+                                format!("cannot relativize {}: {error}", path.display())
+                            })?
+                            .to_string_lossy()
+                            .replace('\\', "/"),
+                    );
+                    if is_ignored(relative, &active_ignored)
+                        || filters.exclude_path_contains_lower.is_some_and(|values| {
+                            let relative_lower = relative.to_lowercase();
+                            values.iter().any(|value| relative_lower.contains(value))
+                        })
+                    {
+                        continue;
+                    }
                 }
                 let metadata = entry
                     .metadata()
@@ -739,6 +751,14 @@ where
                 {
                     continue;
                 }
+                let relative = match relative.take() {
+                    Some(relative) => relative,
+                    None => path
+                        .strip_prefix(root)
+                        .map_err(|error| format!("cannot relativize {}: {error}", path.display()))?
+                        .to_string_lossy()
+                        .replace('\\', "/"),
+                };
                 let extension = if filters.omit_extension && filters.extensions.is_none() {
                     String::new()
                 } else {
