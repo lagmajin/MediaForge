@@ -11220,21 +11220,6 @@ fn tar_header(
     Ok(header)
 }
 
-fn pax_record(key: &str, value: &str) -> String {
-    let body_length = key.len() + value.len() + 3;
-    let mut length = body_length + 1;
-    loop {
-        let updated = body_length + length.to_string().len();
-        if updated == length {
-            let mut record = String::with_capacity(length);
-            writeln!(&mut record, "{length} {key}={value}")
-                .expect("writing a PAX record into a String");
-            return record;
-        }
-        length = updated;
-    }
-}
-
 fn write_tar_payload(writer: &mut impl Write, contents: &[u8]) -> io::Result<()> {
     writer.write_all(contents)?;
     let padding = (TAR_BLOCK_SIZE - contents.len() % TAR_BLOCK_SIZE) % TAR_BLOCK_SIZE;
@@ -11305,13 +11290,13 @@ fn pack_file(
     if pax_path || pax_size || pax_mtime {
         let mut pax = String::new();
         if pax_path {
-            pax.push_str(&pax_record("path", archive_name));
+            append_pax_record(&mut pax, "path", archive_name)?;
         }
         if pax_size {
-            pax.push_str(&pax_record("size", &record.size.to_string()));
+            append_pax_record(&mut pax, "size", &record.size.to_string())?;
         }
         if pax_mtime {
-            pax.push_str(&pax_record("mtime", &modified.to_string()));
+            append_pax_record(&mut pax, "mtime", &modified.to_string())?;
         }
         let pax_name = format!("PaxHeaders/MediaForge/{index}");
         let header = tar_header(pax_name.as_bytes(), &[], 0o644, pax.len() as u64, 0, b'x')?;
@@ -11568,6 +11553,16 @@ fn pax_record_encoded_len(key_len: usize, value_len: usize) -> Option<usize> {
         }
         record_len = updated_len;
     }
+}
+
+fn append_pax_record(output: &mut String, key: &str, value: &str) -> Result<(), String> {
+    let record_len = pax_record_encoded_len(key.len(), value.len())
+        .ok_or_else(|| "PAX header size exceeds the supported range".to_owned())?;
+    output
+        .try_reserve(record_len)
+        .map_err(|_| "PAX header exceeds available memory".to_owned())?;
+    writeln!(output, "{record_len} {key}={value}").expect("writing a PAX record into a String");
+    Ok(())
 }
 
 fn estimate_tar_size(entries: &[PackFileRecord]) -> Result<u64, String> {
