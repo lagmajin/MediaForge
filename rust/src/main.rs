@@ -104,7 +104,7 @@ fn human_size(size: u64) -> String {
 }
 
 fn human_size_wide(size: u128) -> String {
-    const UNITS: [&str; 5] = ["B", "KiB", "MiB", "GiB", "TiB"];
+    const UNITS: [&str; 9] = ["B", "KiB", "MiB", "GiB", "TiB", "PiB", "EiB", "ZiB", "YiB"];
     let mut value = size as f64;
     for (index, unit) in UNITS.iter().enumerate() {
         if value < 1024.0 || index == UNITS.len() - 1 {
@@ -1137,25 +1137,53 @@ fn run_probe(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-fn directory_size(root: &Path) -> io::Result<(u64, u64)> {
-    let mut pending = vec![root.to_path_buf()];
+fn directory_size(root: &Path) -> Result<(u64, u64), String> {
+    let root = fs::canonicalize(root)
+        .map_err(|error| format!("cannot access {}: {error}", root.display()))?;
+    let ignored = ignored_by_git(&root)?;
+    let mut pending = vec![(root.clone(), Arc::<[IgnoreRule]>::from(ignored))];
     let mut bytes = 0_u64;
     let mut files = 0_u64;
-    while let Some(directory) = pending.pop() {
-        for entry in fs::read_dir(directory)? {
-            let entry = entry?;
-            let file_type = entry.file_type()?;
+    while let Some((directory, active_ignored)) = pending.pop() {
+        for entry in fs::read_dir(&directory)
+            .map_err(|error| format!("cannot read {}: {error}", directory.display()))?
+        {
+            let entry = entry.map_err(|error| {
+                format!("cannot read entry in {}: {error}", directory.display())
+            })?;
+            let file_type = entry
+                .file_type()
+                .map_err(|error| format!("cannot inspect {}: {error}", entry.path().display()))?;
             if file_type.is_symlink() {
                 continue;
             }
+            let path = entry.path();
+            let relative = path
+                .strip_prefix(&root)
+                .unwrap_or(&path)
+                .to_string_lossy()
+                .replace('\\', "/");
             if file_type.is_dir() {
                 let name = entry.file_name();
-                if !SKIP_DIRS.contains(&name.to_string_lossy().as_ref()) {
-                    pending.push(entry.path());
+                if !SKIP_DIRS.contains(&name.to_string_lossy().as_ref())
+                    && !is_ignored_directory(&relative, &active_ignored)
+                {
+                    let child_rules = extend_ignore_rules(&root, &path, active_ignored.as_ref())?;
+                    let child_ignored = match child_rules {
+                        Cow::Borrowed(_) => Arc::clone(&active_ignored),
+                        Cow::Owned(rules) => Arc::from(rules),
+                    };
+                    pending.push((path, child_ignored));
                 }
             } else if file_type.is_file() {
-                bytes = bytes.saturating_add(entry.metadata()?.len());
-                files += 1;
+                if !is_ignored(&relative, &active_ignored) {
+                    let length = entry
+                        .metadata()
+                        .map_err(|error| format!("cannot inspect {}: {error}", path.display()))?
+                        .len();
+                    bytes = bytes.saturating_add(length);
+                    files = files.saturating_add(1);
+                }
             }
         }
     }
@@ -1580,9 +1608,7 @@ fn run_project(args: &[String]) -> Result<(), String> {
         for cache_name in cache_names {
             let cache_path = root.join(cache_name);
             if cache_path.is_dir() {
-                let (bytes, files) = directory_size(&cache_path).map_err(|error| {
-                    format!("could not inspect {}: {error}", cache_path.display())
-                })?;
+                let (bytes, files) = directory_size(&cache_path)?;
                 caches.push(((*cache_name).to_owned(), bytes, files));
             }
         }
