@@ -1952,19 +1952,14 @@ fn sample_signature_for_path(root: &Path, relative: &str, size: u64) -> Result<u
 
 fn sample_signatures(
     root: &Path,
-    paths: &[Option<String>],
+    paths: &[&str],
     size: u64,
     jobs: usize,
 ) -> Vec<Result<u64, String>> {
     if jobs == 1 || paths.len() < 8 {
         return paths
             .iter()
-            .map(|relative| {
-                let relative = relative
-                    .as_ref()
-                    .expect("duplicate paths are present before sampling");
-                sample_signature_for_path(root, relative, size)
-            })
+            .map(|relative| sample_signature_for_path(root, relative, size))
             .collect();
     }
     let worker_count = jobs.min(paths.len());
@@ -1978,15 +1973,7 @@ fn sample_signatures(
                 scope.spawn(move || {
                     paths[start..end]
                         .iter()
-                        .map(|relative| {
-                            sample_signature_for_path(
-                                root,
-                                relative
-                                    .as_deref()
-                                    .expect("duplicate paths are present before sampling"),
-                                size,
-                            )
-                        })
+                        .map(|relative| sample_signature_for_path(root, relative, size))
                         .collect::<Vec<_>>()
                 })
             })
@@ -2004,21 +1991,21 @@ struct VerifiedDuplicateGroup {
     count: usize,
 }
 
-struct DuplicateSizeBucket {
-    first: Option<String>,
-    duplicates: Option<Vec<Option<String>>>,
+struct DuplicateSizeBucket<'a> {
+    first: Option<&'a str>,
+    duplicates: Option<Vec<&'a str>>,
 }
 
-impl DuplicateSizeBucket {
-    fn push(&mut self, path: String) {
+impl<'a> DuplicateSizeBucket<'a> {
+    fn push(&mut self, path: &'a str) {
         if let Some(paths) = &mut self.duplicates {
-            paths.push(Some(path));
+            paths.push(path);
         } else {
             let first = self
                 .first
                 .take()
                 .expect("single-file size bucket has its first path");
-            self.duplicates = Some(vec![Some(first), Some(path)]);
+            self.duplicates = Some(vec![first, path]);
         }
     }
 }
@@ -2186,15 +2173,15 @@ fn run_dupes(args: &[String]) -> Result<(), String> {
         &filters,
         &mut records,
     )?;
-    let mut by_size = HashMap::<u64, DuplicateSizeBucket>::new();
-    for record in records {
+    let mut by_size = HashMap::<u64, DuplicateSizeBucket<'_>>::new();
+    for record in &records {
         match by_size.entry(record.size) {
             std::collections::hash_map::Entry::Occupied(mut entry) => {
-                entry.get_mut().push(record.relative);
+                entry.get_mut().push(record.relative.as_str());
             }
             std::collections::hash_map::Entry::Vacant(entry) => {
                 entry.insert(DuplicateSizeBucket {
-                    first: Some(record.relative),
+                    first: Some(record.relative.as_str()),
                     duplicates: None,
                 });
             }
@@ -2212,23 +2199,17 @@ fn run_dupes(args: &[String]) -> Result<(), String> {
     let mut total_groups = 0_usize;
     let mut duplicate_files = 0_usize;
     let mut reclaimable = 0_u128;
-    for (size, mut paths) in duplicate_sizes {
+    for (size, paths) in duplicate_sizes {
         let mut by_sample: HashMap<u64, Vec<VerifiedDuplicateGroup>> = HashMap::new();
         let signatures = sample_signatures(&root, &paths, size, jobs);
         for (index, signature) in signatures.into_iter().enumerate() {
-            let relative = paths[index]
-                .as_ref()
-                .expect("duplicate paths are present until their group is finalized");
+            let relative = paths[index];
             let signature = signature?;
             let candidate = root.join(relative);
             let candidates = by_sample.entry(signature).or_default();
             let mut matched = false;
             for group in candidates.iter_mut() {
-                let representative = root.join(
-                    paths[group.representative]
-                        .as_ref()
-                        .expect("representative path is present until its group is finalized"),
-                );
+                let representative = root.join(paths[group.representative]);
                 match files_identical(&representative, &candidate) {
                     Ok(true) => {
                         group.count += 1;
@@ -2271,11 +2252,7 @@ fn run_dupes(args: &[String]) -> Result<(), String> {
             if let Some(file_indices) = group.files {
                 let files = file_indices
                     .into_iter()
-                    .map(|index| {
-                        paths[index]
-                            .take()
-                            .expect("duplicate group owns each path at most once")
-                    })
+                    .map(|index| paths[index].to_owned())
                     .collect();
                 let candidate = DuplicateOutputGroup { size, files };
                 if let Some(limit) = top_groups {
