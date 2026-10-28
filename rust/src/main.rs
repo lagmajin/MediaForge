@@ -5682,7 +5682,7 @@ fn fraction_ceil_scaled(fraction: &str, multiplier: u128) -> u128 {
 
 fn print_help() {
     println!(
-        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge doctor [--json] [--strict]\n  mediaforge scan-config <init|validate|show> [FILE] [--json]\n  mediaforge scan [PATH] [--json|--csv] [--compact] [--csv-info] [--show-filters] [--include-hidden] [--strict] [--no-same-size] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--modified-since UNIX_SECONDS] [--modified-until UNIX_SECONDS] [--modified-within DURATION] [--path-contains TEXT ...] [--exclude-path-contains TEXT ...] [--extension EXTENSIONS ...] [--largest N] [--sort path|size|modified] [--settings FILE]\n  mediaforge dupes [PATH] [--json] [--compact] [--summary] [--include-hidden] [--exclude-path-contains TEXT ...] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--top-groups N] [--jobs N]\n  mediaforge probe <FILE> [--compact] [--summary]\n  mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--type video|audio] [--min-size SIZE] [--max-size SIZE] [--jobs N] [--summary] [--compare] [--csv]\n  mediaforge storyboard <VIDEO> --output <IMAGE> [--interval SECONDS] [--columns N] [--rows N] [--width PIXELS]\n  mediaforge scene-detect-dir <PATH> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--summary] [--fps RATE] [--extension EXTENSIONS] [--include-hidden] [--jobs N]\n  mediaforge scene-detect <VIDEO> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--summary] [--format jsonl|csv] [--fps RATE]\n  mediaforge proxy <VIDEO> --output <FILE.mp4> [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge proxy-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET] [--jobs N] [--skip-existing] [--json] [--summary]\n  mediaforge proxy-config init [FILE] [--profile fast|balanced|quality] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge extract-audio <VIDEO> --output <FILE> [--format mp3|wav|flac] [--bitrate RATE] [--stream N]\n  mediaforge extract-audio-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--format mp3|wav|flac] [--bitrate RATE] [--stream N] [--jobs N] [--skip-existing] [--json] [--summary]\n  mediaforge snapshot [PATH] (--output FILE [--overwrite] | --diff FILE [--update]) [--json|--csv] [--compact] [--summary] [--include-hidden] [--include-generated] [--hash] [--jobs N] [--fail-on-change]\n  mediaforge project [PATH] [--json] [--compact] [--no-cache-sizes] [--no-editor-files]\n  mediaforge unity-meta [PROJECT_PATH] [--json] [--compact] [--summary] [--sidecars-only] [--include-hidden]\n  mediaforge gitignore [PATH] [--apply] [--json] [--compact]\n  mediaforge organize [PATH] [--by type|extension|size] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--compact] [--summary] [--apply]\n  mediaforge rename [PATH] [--replace OLD NEW] [--prefix TEXT] [--suffix TEXT] [--extension-case keep|lower|upper] [--extension EXTENSIONS] [--include-hidden] [--json] [--compact] [--summary] [--apply]
+        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge doctor [--json] [--strict]\n  mediaforge scan-config <init|validate|show> [FILE] [--json]\n  mediaforge scan [PATH] [--json|--csv] [--compact] [--csv-info] [--show-filters] [--include-hidden] [--strict] [--no-same-size] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--modified-since UNIX_SECONDS] [--modified-until UNIX_SECONDS] [--modified-within DURATION] [--path-contains TEXT ...] [--exclude-path-contains TEXT ...] [--extension EXTENSIONS ...] [--largest N] [--sort path|size|modified] [--settings FILE]\n  mediaforge dupes [PATH] [--json] [--compact] [--summary] [--include-hidden] [--exclude-path-contains TEXT ...] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--top-groups N] [--jobs N]\n  mediaforge probe <FILE> [--compact] [--summary]\n  mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--type video|audio] [--min-size SIZE] [--max-size SIZE] [--jobs N] [--summary] [--compare] [--compare-summary] [--csv]\n  mediaforge storyboard <VIDEO> --output <IMAGE> [--interval SECONDS] [--columns N] [--rows N] [--width PIXELS]\n  mediaforge scene-detect-dir <PATH> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--summary] [--fps RATE] [--extension EXTENSIONS] [--include-hidden] [--jobs N]\n  mediaforge scene-detect <VIDEO> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--summary] [--format jsonl|csv] [--fps RATE]\n  mediaforge proxy <VIDEO> --output <FILE.mp4> [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge proxy-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET] [--jobs N] [--skip-existing] [--json] [--summary]\n  mediaforge proxy-config init [FILE] [--profile fast|balanced|quality] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge extract-audio <VIDEO> --output <FILE> [--format mp3|wav|flac] [--bitrate RATE] [--stream N]\n  mediaforge extract-audio-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--format mp3|wav|flac] [--bitrate RATE] [--stream N] [--jobs N] [--skip-existing] [--json] [--summary]\n  mediaforge snapshot [PATH] (--output FILE [--overwrite] | --diff FILE [--update]) [--json|--csv] [--compact] [--summary] [--include-hidden] [--include-generated] [--hash] [--jobs N] [--fail-on-change]\n  mediaforge project [PATH] [--json] [--compact] [--no-cache-sizes] [--no-editor-files]\n  mediaforge unity-meta [PROJECT_PATH] [--json] [--compact] [--summary] [--sidecars-only] [--include-hidden]\n  mediaforge gitignore [PATH] [--apply] [--json] [--compact]\n  mediaforge organize [PATH] [--by type|extension|size] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--compact] [--summary] [--apply]\n  mediaforge rename [PATH] [--replace OLD NEW] [--prefix TEXT] [--suffix TEXT] [--extension-case keep|lower|upper] [--extension EXTENSIONS] [--include-hidden] [--json] [--compact] [--summary] [--apply]
   mediaforge sequence [PATH] [--prefix NAME] [--start N] [--padding N] [--extension EXTENSIONS] [--include-hidden] [--natural] [--json] [--compact] [--summary] [--apply]\n  mediaforge undo [PATH] [--json] [--compact]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--exclude-path-contains TEXT ...] [--include-hidden] [--include-generated] [--dry-run] [--json] [--compact] [--list]\n  mediaforge --version\n  mediaforge --help"
     );
 }
@@ -5927,6 +5927,11 @@ enum ProbeRetainedData {
     CompareValues(Vec<String>),
 }
 
+struct ProbeCompareGroup {
+    file_count: usize,
+    paths: Option<Vec<usize>>,
+}
+
 fn probe_selected_values(probe: &str, selected_fields: &[&str]) -> Result<Vec<String>, String> {
     let selected_indices = selected_fields
         .iter()
@@ -5971,10 +5976,11 @@ const PROBE_CSV_FIELDS: &[&str] = &[
 fn summarize_probe_differences(
     records: &[FilePathRecord],
     results: &[(usize, bool, String, Option<ProbeRetainedData>)],
+    include_paths: bool,
 ) -> Result<(), String> {
     let mut values = PROBE_COMPARE_FIELDS
         .iter()
-        .map(|field| (*field, BTreeMap::<String, Vec<usize>>::new()))
+        .map(|field| (*field, BTreeMap::<String, ProbeCompareGroup>::new()))
         .collect::<Vec<_>>();
     let mut failures = Vec::new();
     let mut successful = 0_usize;
@@ -5988,11 +5994,17 @@ fn summarize_probe_differences(
             return Err("missing successful ffprobe comparison values".to_owned());
         };
         for (field_index, value) in fields.iter().enumerate() {
-            values[field_index]
+            let group = values[field_index]
                 .1
                 .entry(value.clone())
-                .or_default()
-                .push(*index);
+                .or_insert_with(|| ProbeCompareGroup {
+                    file_count: 0,
+                    paths: include_paths.then(Vec::new),
+                });
+            group.file_count += 1;
+            if let Some(paths) = &mut group.paths {
+                paths.push(*index);
+            }
         }
     }
     let varying: Vec<_> = values
@@ -6005,8 +6017,8 @@ fn summarize_probe_differences(
     let result = (|| -> io::Result<()> {
         write!(
             output,
-            "{{\"files\":{},\"successful\":{successful},\"failed\":{failed},\"varying_fields\":[",
-            records.len()
+            "{{\"files\":{},\"successful\":{successful},\"failed\":{failed},\"paths_included\":{include_paths},\"varying_fields\":[",
+            records.len(),
         )?;
         for (field_index, (field, groups)) in varying.iter().enumerate() {
             if field_index > 0 {
@@ -6015,18 +6027,27 @@ fn summarize_probe_differences(
             output.write_all(b"{\"field\":")?;
             write_json_string(&mut output, field)?;
             output.write_all(b",\"values\":[")?;
-            for (value_index, (value, paths)) in groups.iter().enumerate() {
+            for (value_index, (value, group)) in groups.iter().enumerate() {
                 if value_index > 0 {
                     output.write_all(b",")?;
                 }
-                write!(output, "{{\"value\":{value},\"files\":[")?;
-                for (path_index, record_index) in paths.iter().enumerate() {
-                    if path_index > 0 {
-                        output.write_all(b",")?;
+                write!(
+                    output,
+                    "{{\"value\":{value},\"file_count\":{},\"files\":",
+                    group.file_count
+                )?;
+                if let Some(paths) = &group.paths {
+                    output.write_all(b"[")?;
+                    for (path_index, record_index) in paths.iter().enumerate() {
+                        if path_index > 0 {
+                            output.write_all(b",")?;
+                        }
+                        write_json_string(&mut output, &records[*record_index].relative)?;
                     }
-                    write_json_string(&mut output, &records[*record_index].relative)?;
+                    output.write_all(b"]}")?;
+                } else {
+                    output.write_all(b"null}")?;
                 }
-                output.write_all(b"]}")?;
             }
             output.write_all(b"]}")?;
         }
@@ -6191,6 +6212,7 @@ fn run_probe_dir(args: &[String]) -> Result<(), String> {
     let mut include_hidden = false;
     let mut summary = false;
     let mut compare = false;
+    let mut compare_summary = false;
     let mut csv = false;
     let mut selected_kind = None;
     let mut extensions = None;
@@ -6209,6 +6231,11 @@ fn run_probe_dir(args: &[String]) -> Result<(), String> {
             "--csv" => csv = true,
             "--compare" => {
                 compare = true;
+                summary = true;
+            }
+            "--compare-summary" => {
+                compare = true;
+                compare_summary = true;
                 summary = true;
             }
             "--type" => {
@@ -6257,7 +6284,7 @@ fn run_probe_dir(args: &[String]) -> Result<(), String> {
             }
             "--help" | "-h" => {
                 println!(
-                    "Usage: mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--type video|audio] [--min-size SIZE] [--max-size SIZE] [--jobs N] [--summary] [--compare] [--csv]\n\nProbe video and audio assets in a directory with ffprobe. Streams one JSON Lines result per file as probing finishes, with a completion counter. --csv writes one row per file with common video/audio metadata; failed probes are included with an error. --type filters to video or audio assets and selects only that stream type in the report. --min-size and --max-size filter file sizes before probing and accept bytes or K/M/G/T units. --jobs controls concurrent ffprobe processes (1–32). --summary selects compact fields. --compare implies --summary and emits only first-stream media-spec fields that differ across files, grouped by value. Use --type to compare video or audio streams consistently."
+                    "Usage: mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--type video|audio] [--min-size SIZE] [--max-size SIZE] [--jobs N] [--summary] [--compare] [--compare-summary] [--csv]\n\nProbe video and audio assets in a directory with ffprobe. Streams one JSON Lines result per file as probing finishes, with a completion counter. --csv writes one row per file with common video/audio metadata; failed probes are included with an error. --type filters to video or audio assets and selects only that stream type in the report. --min-size and --max-size filter file sizes before probing and accept bytes or K/M/G/T units. --jobs controls concurrent ffprobe processes (1–32). --summary selects compact fields. --compare implies --summary and emits only first-stream media-spec fields that differ across files, grouped by value. --compare-summary adds counts per value and omits path lists while retaining failures. Use --type to compare video or audio streams consistently."
                 );
                 return Ok(());
             }
@@ -6324,7 +6351,8 @@ fn run_probe_dir(args: &[String]) -> Result<(), String> {
             let stdout = io::stdout();
             writeln!(
                 stdout.lock(),
-                "{{\"files\":0,\"successful\":0,\"failed\":0,\"varying_fields\":[],\"failures\":[]}}"
+                "{{\"files\":0,\"successful\":0,\"failed\":0,\"paths_included\":{},\"varying_fields\":[],\"failures\":[]}}",
+                !compare_summary
             )
             .map_err(|error| format!("could not write probe comparison JSON: {error}"))?;
         }
@@ -6456,7 +6484,7 @@ fn run_probe_dir(args: &[String]) -> Result<(), String> {
     }
     let failures = failures.load(std::sync::atomic::Ordering::Relaxed);
     if compare {
-        summarize_probe_differences(&records, &results)?;
+        summarize_probe_differences(&records, &results, !compare_summary)?;
     }
     if failures > 0 {
         return Err(format!("ffprobe failed for {failures} file(s)"));
