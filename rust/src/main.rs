@@ -1021,6 +1021,24 @@ struct PlannedMove {
     to: String,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum EntryState {
+    Missing,
+    File,
+    Other,
+}
+
+fn entry_state(path: &Path) -> io::Result<EntryState> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => {
+            Ok(EntryState::File)
+        }
+        Ok(_) => Ok(EntryState::Other),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(EntryState::Missing),
+        Err(error) => Err(error),
+    }
+}
+
 fn validate_relative_path(value: &str) -> Result<PathBuf, String> {
     let path = Path::new(value);
     if value.is_empty()
@@ -1094,7 +1112,12 @@ fn reject_symlink_components(root: &Path, relative: &Path) -> Result<(), String>
 fn write_organize_manifest(root: &Path, moves: &[PlannedMove]) -> Result<(), String> {
     let manifest = root.join(ORGANIZE_MANIFEST);
     let temporary = root.join(ORGANIZE_MANIFEST_TEMP);
-    if fs::symlink_metadata(&manifest).is_ok() || fs::symlink_metadata(&temporary).is_ok() {
+    if entry_state(&manifest).map_err(|error| format!("cannot inspect undo manifest: {error}"))?
+        != EntryState::Missing
+        || entry_state(&temporary)
+            .map_err(|error| format!("cannot inspect temporary undo manifest: {error}"))?
+            != EntryState::Missing
+    {
         return Err(format!(
             "an organize undo manifest or recovery file already exists under {}; run 'mediaforge undo {}' first",
             manifest.display(),
@@ -1443,7 +1466,9 @@ fn run_organize(args: &[String]) -> Result<(), String> {
             continue;
         };
         let to = validate_portable_relative_path(&to_text)?;
-        if !destinations.insert(to.clone()) || fs::symlink_metadata(root.join(&to)).is_ok() {
+        let destination_state = entry_state(&root.join(&to))
+            .map_err(|error| format!("cannot inspect destination {}: {error}", to.display()))?;
+        if !destinations.insert(to.clone()) || destination_state != EntryState::Missing {
             skipped += 1;
             continue;
         }
@@ -1488,7 +1513,11 @@ fn run_organize(args: &[String]) -> Result<(), String> {
         let to = validate_relative_path(&movement.to)?;
         reject_symlink_components(&root, &from)?;
         reject_symlink_components(&root, &to)?;
-        if !root.join(&from).is_file() || fs::symlink_metadata(root.join(&to)).is_ok() {
+        let source_state = entry_state(&root.join(&from))
+            .map_err(|error| format!("cannot inspect source {}: {error}", from.display()))?;
+        let destination_state = entry_state(&root.join(&to))
+            .map_err(|error| format!("cannot inspect destination {}: {error}", to.display()))?;
+        if source_state != EntryState::File || destination_state != EntryState::Missing {
             return Err(format!(
                 "file plan changed since preview; refusing to apply: {}",
                 movement.from
@@ -1553,9 +1582,11 @@ fn run_undo(args: &[String]) -> Result<(), String> {
         let to = root.join(validate_relative_path(&movement.to)?);
         reject_symlink_components(&root, &PathBuf::from(&movement.from))?;
         reject_symlink_components(&root, &PathBuf::from(&movement.to))?;
-        let from_exists = fs::symlink_metadata(&from).is_ok();
-        let to_exists = fs::symlink_metadata(&to).is_ok();
-        if !from_exists && to_exists {
+        let from_state = entry_state(&from)
+            .map_err(|error| format!("cannot inspect original path {}: {error}", from.display()))?;
+        let to_state = entry_state(&to)
+            .map_err(|error| format!("cannot inspect organized path {}: {error}", to.display()))?;
+        if from_state == EntryState::Missing && to_state == EntryState::File {
             let parent = from
                 .parent()
                 .ok_or_else(|| "source has no parent directory".to_owned())?;
@@ -1567,15 +1598,21 @@ fn run_undo(args: &[String]) -> Result<(), String> {
             } else {
                 restored += 1;
             }
-        } else if from_exists && to_exists {
+        } else if from_state == EntryState::File && to_state == EntryState::File {
             eprintln!(
                 "mediaforge: conflict; both source and organized file exist: {}",
                 movement.from
             );
             conflicts += 1;
-        } else if !from_exists && !to_exists {
+        } else if from_state == EntryState::Missing && to_state == EntryState::Missing {
             eprintln!(
                 "mediaforge: missing both source and organized file: {}",
+                movement.from
+            );
+            conflicts += 1;
+        } else if from_state == EntryState::Other || to_state == EntryState::Other {
+            eprintln!(
+                "mediaforge: conflict; an expected file path is occupied by a non-file: {}",
                 movement.from
             );
             conflicts += 1;
@@ -1886,7 +1923,9 @@ fn run_pack(args: &[String]) -> Result<(), String> {
     if output_path.starts_with(&root) {
         return Err("archive output must be outside the input directory".to_owned());
     }
-    let output_exists = fs::symlink_metadata(&output_path).is_ok();
+    let output_exists = entry_state(&output_path)
+        .map_err(|error| format!("cannot inspect output {}: {error}", output_path.display()))?
+        != EntryState::Missing;
     if output_exists && !dry_run {
         return Err(format!(
             "output already exists; refusing to overwrite: {}",
