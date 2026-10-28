@@ -235,30 +235,157 @@ fn walk_strict(
     Ok(())
 }
 
-fn ignored_by_git(root: &Path) -> HashSet<String> {
-    let Ok(text) = fs::read_to_string(root.join(".gitignore")) else {
-        return HashSet::new();
-    };
-    text.lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty() && !line.starts_with('#') && !line.starts_with('!'))
-        .map(|line| {
-            line.trim_start_matches('/')
-                .trim_end_matches('/')
-                .replace('\\', "/")
-        })
-        .collect()
+#[derive(Debug)]
+struct IgnoreRule {
+    pattern: String,
+    negated: bool,
+    anchored: bool,
+    directory_only: bool,
+    has_slash: bool,
 }
 
-fn is_ignored(relative: &str, patterns: &HashSet<String>) -> bool {
-    patterns.iter().any(|pattern| {
-        if pattern.contains('*') || pattern.contains('?') || pattern.contains('[') {
-            return false;
-        }
-        relative == pattern
-            || relative.starts_with(&format!("{pattern}/"))
-            || relative.split('/').any(|part| part == pattern)
+fn ignored_by_git(root: &Path) -> Vec<IgnoreRule> {
+    let Ok(text) = fs::read_to_string(root.join(".gitignore")) else {
+        return Vec::new();
+    };
+    text.lines().filter_map(parse_ignore_rule).collect()
+}
+
+fn parse_ignore_rule(line: &str) -> Option<IgnoreRule> {
+    let mut pattern = line.trim_end_matches('\r');
+    if pattern.is_empty() || pattern.starts_with('#') {
+        return None;
+    }
+    let negated = pattern.starts_with('!');
+    if negated {
+        pattern = &pattern[1..];
+    }
+    if pattern.is_empty() {
+        return None;
+    }
+    let pattern = pattern.replace("\\#", "#").replace("\\!", "!");
+    let anchored = pattern.starts_with('/');
+    let mut pattern = pattern.trim_start_matches('/').replace('\\', "/");
+    let directory_only = pattern.ends_with('/');
+    pattern = pattern.trim_end_matches('/').to_owned();
+    if pattern.is_empty() {
+        return None;
+    }
+    let has_slash = pattern.contains('/');
+    Some(IgnoreRule {
+        pattern,
+        negated,
+        anchored,
+        directory_only,
+        has_slash,
     })
+}
+
+fn glob_matches(pattern: &str, value: &str) -> bool {
+    let pattern: Vec<char> = pattern.chars().collect();
+    let value: Vec<char> = value.chars().collect();
+    let mut memo = HashMap::<(usize, usize), bool>::new();
+    fn matches(
+        pattern: &[char],
+        value: &[char],
+        p: usize,
+        v: usize,
+        memo: &mut HashMap<(usize, usize), bool>,
+    ) -> bool {
+        if let Some(result) = memo.get(&(p, v)) {
+            return *result;
+        }
+        let result = if p == pattern.len() {
+            v == value.len()
+        } else {
+            match pattern[p] {
+                '*' => {
+                    let double = p + 1 < pattern.len() && pattern[p + 1] == '*';
+                    let next = p + if double { 2 } else { 1 };
+                    matches(pattern, value, next, v, memo)
+                        || (v < value.len()
+                            && (double || value[v] != '/')
+                            && matches(pattern, value, p, v + 1, memo))
+                }
+                '?' => {
+                    v < value.len()
+                        && value[v] != '/'
+                        && matches(pattern, value, p + 1, v + 1, memo)
+                }
+                '[' => {
+                    let close = pattern[p + 1..].iter().position(|ch| *ch == ']');
+                    if let Some(offset) = close {
+                        let end = p + 1 + offset;
+                        if v >= value.len() || value[v] == '/' {
+                            false
+                        } else {
+                            let mut members = &pattern[p + 1..end];
+                            let negated =
+                                members.first().is_some_and(|ch| *ch == '!' || *ch == '^');
+                            if negated {
+                                members = &members[1..];
+                            }
+                            let mut included = false;
+                            let mut index = 0;
+                            while index < members.len() {
+                                if index + 2 < members.len() && members[index + 1] == '-' {
+                                    included |= members[index] <= value[v]
+                                        && value[v] <= members[index + 2];
+                                    index += 3;
+                                } else {
+                                    included |= members[index] == value[v];
+                                    index += 1;
+                                }
+                            }
+                            (included != negated) && matches(pattern, value, end + 1, v + 1, memo)
+                        }
+                    } else {
+                        v < value.len()
+                            && value[v] == '['
+                            && matches(pattern, value, p + 1, v + 1, memo)
+                    }
+                }
+                ch => {
+                    v < value.len() && ch == value[v] && matches(pattern, value, p + 1, v + 1, memo)
+                }
+            }
+        };
+        memo.insert((p, v), result);
+        result
+    }
+    matches(&pattern, &value, 0, 0, &mut memo)
+}
+
+fn rule_matches_path(rule: &IgnoreRule, relative: &str) -> bool {
+    let parts: Vec<_> = relative.split('/').collect();
+    for end in 1..=parts.len() {
+        let prefix = parts[..end].join("/");
+        let is_directory = end < parts.len();
+        if rule.directory_only && !is_directory {
+            continue;
+        }
+        if rule.has_slash || rule.anchored {
+            if glob_matches(&rule.pattern, &prefix) {
+                return true;
+            }
+        } else if parts[..end]
+            .iter()
+            .any(|part| glob_matches(&rule.pattern, part))
+        {
+            return true;
+        }
+    }
+    false
+}
+
+fn is_ignored(relative: &str, rules: &[IgnoreRule]) -> bool {
+    let mut ignored = false;
+    for rule in rules {
+        if rule_matches_path(rule, relative) {
+            ignored = !rule.negated;
+        }
+    }
+    ignored
 }
 
 fn json_string(value: &str) -> String {
@@ -470,10 +597,12 @@ fn run_dupes(args: &[String]) -> Result<(), String> {
     }
     let mut records = Vec::new();
     walk(&root, &root, include_hidden, &mut records);
-    if !include_hidden {
-        let ignored = ignored_by_git(&root);
-        records.retain(|record| !is_ignored(&record.relative, &ignored));
-    }
+    let ignored = if include_hidden {
+        Vec::new()
+    } else {
+        ignored_by_git(&root)
+    };
+    records.retain(|record| !is_ignored(&record.relative, &ignored));
     let mut by_size: BTreeMap<u64, Vec<String>> = BTreeMap::new();
     for record in records.into_iter().filter(|record| record.size >= min_size) {
         by_size
@@ -614,15 +743,13 @@ fn run_scan(args: &[String]) -> Result<(), String> {
         return Err(format!("expected a directory: {}", root.display()));
     }
     let ignored = if include_hidden {
-        HashSet::new()
+        Vec::new()
     } else {
         ignored_by_git(&root)
     };
     let mut records = Vec::new();
     walk(&root, &root, include_hidden, &mut records);
-    if !ignored.is_empty() {
-        records.retain(|record| !is_ignored(&record.relative, &ignored));
-    }
+    records.retain(|record| !is_ignored(&record.relative, &ignored));
     if let Some(kind) = kind_filter {
         records.retain(|record| record.kind.as_str() == kind);
     }
