@@ -10938,7 +10938,7 @@ fn run_pack(args: &[String]) -> Result<(), String> {
     };
     let (temp_path, archive_file) = temp_path;
     let mut archive = BufWriter::with_capacity(64 * 1024, archive_file);
-    let mut copy_buffer = vec![0_u8; 256 * 1024];
+    let mut copy_buffer = vec![0_u8; 1024 * 1024];
     let mut archive_bytes = 0_u64;
     let write_result = (|| -> Result<(), String> {
         for (index, (record, name)) in entries.iter().enumerate() {
