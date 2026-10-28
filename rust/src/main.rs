@@ -420,19 +420,27 @@ fn walk_with_skip_dirs_mode_counted(
             if file_type.is_symlink() {
                 continue;
             }
-            let relative = path
-                .strip_prefix(root)
-                .unwrap_or(&path)
-                .to_string_lossy()
-                .replace('\\', "/");
-            let relative_lower = if !filters.exclude_path_contains_lower.is_empty()
-                || (!path_filter_satisfied && !filters.path_contains_lower.is_empty())
-            {
-                Some(relative.to_lowercase())
-            } else {
-                None
-            };
+            let needs_relative_lower = !filters.exclude_path_contains_lower.is_empty()
+                || (!path_filter_satisfied && !filters.path_contains_lower.is_empty());
+            let mut relative = (file_type.is_dir()
+                || needs_relative_lower
+                || (file_type.is_file() && !active_ignored.is_empty()))
+            .then(|| {
+                path.strip_prefix(root)
+                    .unwrap_or(&path)
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            });
+            let relative_lower = needs_relative_lower.then(|| {
+                relative
+                    .as_ref()
+                    .expect("filtered paths are materialized")
+                    .to_lowercase()
+            });
             if file_type.is_dir() {
+                let relative = relative
+                    .as_deref()
+                    .expect("directory paths are materialized");
                 let name = entry.file_name();
                 let name = name.to_string_lossy();
                 let child_path_filter_satisfied = path_filter_satisfied
@@ -443,7 +451,7 @@ fn walk_with_skip_dirs_mode_counted(
                     });
                 if directory_name_matches(&name, skip_dirs)
                     || (!include_hidden && is_hidden(&path))
-                    || is_ignored_directory(&relative, &active_ignored)
+                    || is_ignored_directory(relative, &active_ignored)
                     || filters.exclude_path_contains_lower.iter().any(|needle| {
                         relative_lower
                             .as_ref()
@@ -477,13 +485,19 @@ fn walk_with_skip_dirs_mode_counted(
                 if filters.kind.is_some_and(|filter| filter != kind) {
                     continue;
                 }
-                if is_ignored(&relative, &active_ignored) {
-                    continue;
-                }
                 let extension_value = path.extension().and_then(|value| value.to_str());
                 if filters.extensions.is_some_and(|extensions| {
                     !matches_extension_filter(extension_value, extensions)
                 }) {
+                    continue;
+                }
+                let relative = relative.take().unwrap_or_else(|| {
+                    path.strip_prefix(root)
+                        .unwrap_or(&path)
+                        .to_string_lossy()
+                        .replace('\\', "/")
+                });
+                if is_ignored(&relative, &active_ignored) {
                     continue;
                 }
                 let metadata = match entry.metadata() {
@@ -652,17 +666,25 @@ where
             if file_type.is_symlink() {
                 continue;
             }
-            let relative = path
-                .strip_prefix(root)
-                .map_err(|error| format!("cannot relativize {}: {error}", path.display()))?
-                .to_string_lossy()
-                .replace('\\', "/");
+            let mut relative = if file_type.is_dir() {
+                Some(
+                    path.strip_prefix(root)
+                        .map_err(|error| format!("cannot relativize {}: {error}", path.display()))?
+                        .to_string_lossy()
+                        .replace('\\', "/"),
+                )
+            } else {
+                None
+            };
             if file_type.is_dir() {
+                let relative = relative
+                    .as_deref()
+                    .expect("directory paths are materialized");
                 let name = entry.file_name();
                 let name = name.to_string_lossy();
                 if directory_name_matches(&name, skip_dirs)
                     || (!include_hidden && is_hidden(&path))
-                    || is_ignored_directory(&relative, &active_ignored)
+                    || is_ignored_directory(relative, &active_ignored)
                     || filters
                         .excluded_subtree
                         .is_some_and(|excluded| path.starts_with(excluded))
@@ -679,13 +701,7 @@ where
                     Cow::Owned(rules) => Arc::from(rules),
                 };
                 pending.push((path, child_ignored));
-            } else if file_type.is_file()
-                && !is_ignored(&relative, &active_ignored)
-                && !filters.exclude_path_contains_lower.is_some_and(|values| {
-                    let relative_lower = relative.to_lowercase();
-                    values.iter().any(|value| relative_lower.contains(value))
-                })
-            {
+            } else if file_type.is_file() {
                 let kind = classify(&path);
                 if filters.kinds.is_some_and(|values| !values.contains(&kind)) {
                     continue;
@@ -694,6 +710,20 @@ where
                 if filters
                     .extensions
                     .is_some_and(|values| !matches_extension_filter(extension_value, values))
+                {
+                    continue;
+                }
+                let relative = relative.take().unwrap_or_else(|| {
+                    path.strip_prefix(root)
+                        .expect("walked file is below the scan root")
+                        .to_string_lossy()
+                        .replace('\\', "/")
+                });
+                if is_ignored(&relative, &active_ignored)
+                    || filters.exclude_path_contains_lower.is_some_and(|values| {
+                        let relative_lower = relative.to_lowercase();
+                        values.iter().any(|value| relative_lower.contains(value))
+                    })
                 {
                     continue;
                 }
