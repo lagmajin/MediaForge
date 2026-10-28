@@ -212,21 +212,23 @@ Organization is a preview unless `--apply` is supplied. Use `--type`, `--extensi
 mediaforge sequence ./Media --prefix shot --extension mov,mxf
 mediaforge sequence ./Media --prefix shot --start 100 --padding 5 --extension mov,mxf --apply
 mediaforge sequence ./Frames --prefix shot --natural --extension png --apply
+mediaforge sequence ./Frames --prefix shot --natural --extension png --json --compact
 mediaforge undo ./Media
 ```
 
-`sequence` previews an alphabetical renaming plan for regular files directly inside the directory. It preserves extensions, skips hidden files by default, ignores Git-ignored paths, and skips any destination that already exists. Matching Unity `.meta` sidecars are moved with their assets so GUIDs stay attached. JSON preview output includes up to 100 skipped destination examples with a reason and a truncation flag. Use `--natural` to sort digit runs by numeric value, so `frame2.png` comes before `frame10.png`; the default remains alphabetical. Use `--apply` to rename; the shared recovery manifest lets `undo` restore the operation. Only one file operation can be pending per directory so the undo history stays unambiguous.
+Add `--compact` with `--json` to emit the plan without formatting whitespace, keeping paths unchanged. `sequence` previews an alphabetical renaming plan for regular files directly inside the directory. It preserves extensions, skips hidden files by default, ignores Git-ignored paths, and skips any destination that already exists. Matching Unity `.meta` sidecars are moved with their assets so GUIDs stay attached. JSON preview output includes up to 100 skipped destination examples with a reason and a truncation flag. Use `--natural` to sort digit runs by numeric value, so `frame2.png` comes before `frame10.png`; the default remains alphabetical. Use `--apply` to rename; the shared recovery manifest lets `undo` restore the operation. Only one file operation can be pending per directory so the undo history stays unambiguous.
 
 ## Batch rename assets
 
 ```sh
 mediaforge rename ./Assets --replace old new --prefix PRJ_ --extension-case lower --extension fbx,obj
 mediaforge rename ./Frames --replace "shot " "shot_" --json
+mediaforge rename ./Frames --replace "shot " "shot_" --json --compact
 mediaforge rename ./Assets --suffix _final --apply
 mediaforge undo ./Assets
 ```
 
-`rename` previews filename transformations for regular files directly inside the directory. Repeated `--replace OLD NEW` rules run in order against the filename stem; `--prefix` and `--suffix` wrap the transformed stem, while `--extension-case lower|upper` normalizes the extension. When a matching `<asset>.meta` sidecar exists, it is included in the same plan and moved before its asset so Unity keeps the asset's GUID and references. `--extension` filters assets, hidden files are skipped unless requested, and Git-ignored files are excluded. Existing destinations are skipped to prevent overwrites. Use `--apply` to rename; the shared recovery manifest lets `undo` restore original names.
+Add `--compact` with `--json` to omit formatting whitespace while preserving paths and string contents. `rename` previews filename transformations for regular files directly inside the directory. Repeated `--replace OLD NEW` rules run in order against the filename stem; `--prefix` and `--suffix` wrap the transformed stem, while `--extension-case lower|upper` normalizes the extension. When a matching `<asset>.meta` sidecar exists, it is included in the same plan and moved before its asset so Unity keeps the asset's GUID and references. `--extension` filters assets, hidden files are skipped unless requested, and Git-ignored files are excluded. Existing destinations are skipped to prevent overwrites. Use `--apply` to rename; the shared recovery manifest lets `undo` restore original names.
 
 ## Pack a project for handoff
 

@@ -5675,8 +5675,8 @@ fn fraction_ceil_scaled(fraction: &str, multiplier: u128) -> u128 {
 
 fn print_help() {
     println!(
-        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge doctor [--json] [--strict]\n  mediaforge scan-config <init|validate|show> [FILE] [--json]\n  mediaforge scan [PATH] [--json|--csv] [--compact] [--csv-info] [--show-filters] [--include-hidden] [--strict] [--no-same-size] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--modified-since UNIX_SECONDS] [--modified-until UNIX_SECONDS] [--modified-within DURATION] [--path-contains TEXT ...] [--exclude-path-contains TEXT ...] [--extension EXTENSIONS ...] [--largest N] [--sort path|size|modified] [--settings FILE]\n  mediaforge dupes [PATH] [--json] [--compact] [--summary] [--include-hidden] [--exclude-path-contains TEXT ...] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--top-groups N] [--jobs N]\n  mediaforge probe <FILE> [--compact] [--summary]\n  mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--type video|audio] [--min-size SIZE] [--max-size SIZE] [--jobs N] [--summary] [--compare] [--csv]\n  mediaforge storyboard <VIDEO> --output <IMAGE> [--interval SECONDS] [--columns N] [--rows N] [--width PIXELS]\n  mediaforge scene-detect-dir <PATH> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--summary] [--fps RATE] [--extension EXTENSIONS] [--include-hidden] [--jobs N]\n  mediaforge scene-detect <VIDEO> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--format jsonl|csv] [--fps RATE]\n  mediaforge proxy <VIDEO> --output <FILE.mp4> [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge proxy-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET] [--jobs N] [--skip-existing] [--json]\n  mediaforge proxy-config init [FILE] [--profile fast|balanced|quality] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge extract-audio <VIDEO> --output <FILE> [--format mp3|wav|flac] [--bitrate RATE] [--stream N]\n  mediaforge extract-audio-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--format mp3|wav|flac] [--bitrate RATE] [--stream N] [--jobs N] [--skip-existing] [--json]\n  mediaforge snapshot [PATH] (--output FILE [--overwrite] | --diff FILE [--update]) [--json|--csv] [--summary] [--include-hidden] [--include-generated] [--hash] [--jobs N] [--fail-on-change]\n  mediaforge project [PATH] [--json] [--compact] [--no-cache-sizes] [--no-editor-files]\n  mediaforge unity-meta [PROJECT_PATH] [--json] [--compact] [--summary] [--sidecars-only] [--include-hidden]\n  mediaforge gitignore [PATH] [--apply] [--json]\n  mediaforge organize [PATH] [--by type|extension|size] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--compact] [--apply]\n  mediaforge rename [PATH] [--replace OLD NEW] [--prefix TEXT] [--suffix TEXT] [--extension-case keep|lower|upper] [--extension EXTENSIONS] [--include-hidden] [--json] [--apply]
-  mediaforge sequence [PATH] [--prefix NAME] [--start N] [--padding N] [--extension EXTENSIONS] [--include-hidden] [--natural] [--json] [--apply]\n  mediaforge undo [PATH] [--json]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--exclude-path-contains TEXT ...] [--include-hidden] [--include-generated] [--dry-run] [--json] [--compact] [--list]\n  mediaforge --version\n  mediaforge --help"
+        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge doctor [--json] [--strict]\n  mediaforge scan-config <init|validate|show> [FILE] [--json]\n  mediaforge scan [PATH] [--json|--csv] [--compact] [--csv-info] [--show-filters] [--include-hidden] [--strict] [--no-same-size] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--modified-since UNIX_SECONDS] [--modified-until UNIX_SECONDS] [--modified-within DURATION] [--path-contains TEXT ...] [--exclude-path-contains TEXT ...] [--extension EXTENSIONS ...] [--largest N] [--sort path|size|modified] [--settings FILE]\n  mediaforge dupes [PATH] [--json] [--compact] [--summary] [--include-hidden] [--exclude-path-contains TEXT ...] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--top-groups N] [--jobs N]\n  mediaforge probe <FILE> [--compact] [--summary]\n  mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--type video|audio] [--min-size SIZE] [--max-size SIZE] [--jobs N] [--summary] [--compare] [--csv]\n  mediaforge storyboard <VIDEO> --output <IMAGE> [--interval SECONDS] [--columns N] [--rows N] [--width PIXELS]\n  mediaforge scene-detect-dir <PATH> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--summary] [--fps RATE] [--extension EXTENSIONS] [--include-hidden] [--jobs N]\n  mediaforge scene-detect <VIDEO> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--format jsonl|csv] [--fps RATE]\n  mediaforge proxy <VIDEO> --output <FILE.mp4> [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge proxy-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET] [--jobs N] [--skip-existing] [--json]\n  mediaforge proxy-config init [FILE] [--profile fast|balanced|quality] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge extract-audio <VIDEO> --output <FILE> [--format mp3|wav|flac] [--bitrate RATE] [--stream N]\n  mediaforge extract-audio-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--format mp3|wav|flac] [--bitrate RATE] [--stream N] [--jobs N] [--skip-existing] [--json]\n  mediaforge snapshot [PATH] (--output FILE [--overwrite] | --diff FILE [--update]) [--json|--csv] [--summary] [--include-hidden] [--include-generated] [--hash] [--jobs N] [--fail-on-change]\n  mediaforge project [PATH] [--json] [--compact] [--no-cache-sizes] [--no-editor-files]\n  mediaforge unity-meta [PROJECT_PATH] [--json] [--compact] [--summary] [--sidecars-only] [--include-hidden]\n  mediaforge gitignore [PATH] [--apply] [--json]\n  mediaforge organize [PATH] [--by type|extension|size] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--compact] [--apply]\n  mediaforge rename [PATH] [--replace OLD NEW] [--prefix TEXT] [--suffix TEXT] [--extension-case keep|lower|upper] [--extension EXTENSIONS] [--include-hidden] [--json] [--compact] [--apply]
+  mediaforge sequence [PATH] [--prefix NAME] [--start N] [--padding N] [--extension EXTENSIONS] [--include-hidden] [--natural] [--json] [--compact] [--apply]\n  mediaforge undo [PATH] [--json]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--exclude-path-contains TEXT ...] [--include-hidden] [--include-generated] [--dry-run] [--json] [--compact] [--list]\n  mediaforge --version\n  mediaforge --help"
     );
 }
 
@@ -11379,6 +11379,7 @@ fn run_rename(args: &[String]) -> Result<(), String> {
     let mut include_hidden = false;
     let mut apply = false;
     let mut json = false;
+    let mut compact = false;
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
         match arg.as_str() {
@@ -11423,9 +11424,10 @@ fn run_rename(args: &[String]) -> Result<(), String> {
             "--include-hidden" => include_hidden = true,
             "--apply" => apply = true,
             "--json" => json = true,
+            "--compact" => compact = true,
             "--help" | "-h" => {
                 println!(
-                    "Usage: mediaforge rename [PATH] [--replace OLD NEW] [--prefix TEXT] [--suffix TEXT] [--extension-case keep|lower|upper] [--extension EXTENSIONS] [--include-hidden] [--json] [--apply]\n\nPreview filename changes for files directly inside PATH. Repeated --replace rules run in order; prefix and suffix apply to the filename stem. Matching .meta sidecars are included and moved before their assets to preserve Unity GUIDs. Extensions are preserved unless --extension-case changes their case. The default is preview; --apply renames files and records an undo manifest for 'mediaforge undo PATH'."
+                    "Usage: mediaforge rename [PATH] [--replace OLD NEW] [--prefix TEXT] [--suffix TEXT] [--extension-case keep|lower|upper] [--extension EXTENSIONS] [--include-hidden] [--json] [--compact] [--apply]\n\nPreview filename changes for files directly inside PATH. Repeated --replace rules run in order; prefix and suffix apply to the filename stem. Matching .meta sidecars are included and moved before their assets to preserve Unity GUIDs. Extensions are preserved unless --extension-case changes their case. --compact removes formatting whitespace from JSON output and requires --json. The default is preview; --apply renames files and records an undo manifest for 'mediaforge undo PATH'."
                 );
                 return Ok(());
             }
@@ -11437,6 +11439,9 @@ fn run_rename(args: &[String]) -> Result<(), String> {
                 path = Some(PathBuf::from(value));
             }
         }
+    }
+    if compact && !json {
+        return Err("--compact can only be used with --json".to_owned());
     }
     if replacements.is_empty() && prefix.is_empty() && suffix.is_empty() && extension_case == "keep"
     {
@@ -11693,6 +11698,7 @@ fn run_rename(args: &[String]) -> Result<(), String> {
     }
     if json && !apply {
         write_json_stdout("rename JSON", |output| {
+            let mut output = JsonWhitespaceWriter::new(output, compact);
             writeln!(
                 output,
                 "{{\n  \"root\": {},\n  \"applied\": false,\n  \"moves\": [",
@@ -11757,6 +11763,7 @@ fn run_rename(args: &[String]) -> Result<(), String> {
     if moves.is_empty() {
         if json {
             write_json_stdout("rename JSON", |output| {
+                let mut output = JsonWhitespaceWriter::new(output, compact);
                 writeln!(
                     output,
                     "{{\"root\":{},\"applied\":true,\"moves\":[],\"move_count\":0,\"renamed_count\":0,\"skipped_count\":{skipped},\"result\":\"no_changes\"}}",
@@ -11828,6 +11835,7 @@ fn run_rename(args: &[String]) -> Result<(), String> {
     write_organize_complete_marker(&root)?;
     if json {
         write_json_stdout("rename JSON", |output| {
+            let mut output = JsonWhitespaceWriter::new(output, compact);
             writeln!(
                 output,
                 "{{\"root\":{},\"applied\":true,\"move_count\":{},\"renamed_count\":{renamed},\"skipped_count\":{skipped},\"result\":\"applied\",\"undo_manifest\":{}}}",
@@ -11855,6 +11863,7 @@ fn run_sequence(args: &[String]) -> Result<(), String> {
     let mut natural = false;
     let mut apply = false;
     let mut json = false;
+    let mut compact = false;
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
         match arg.as_str() {
@@ -11890,9 +11899,10 @@ fn run_sequence(args: &[String]) -> Result<(), String> {
             "--natural" => natural = true,
             "--apply" => apply = true,
             "--json" => json = true,
+            "--compact" => compact = true,
             "--help" | "-h" => {
                 println!(
-                    "Usage: mediaforge sequence [PATH] [--prefix NAME] [--start N] [--padding N] [--extension EXTENSIONS] [--include-hidden] [--natural] [--json] [--apply]\n\nPreview a stable renumbering of files directly inside PATH. Alphabetical order is the default; --natural sorts digit runs by numeric value (for example frame2 before frame10). Extensions are preserved. Matching Unity .meta sidecars move with their assets to preserve GUIDs. The operation skips destination collisions and can be undone with 'mediaforge undo PATH'."
+                    "Usage: mediaforge sequence [PATH] [--prefix NAME] [--start N] [--padding N] [--extension EXTENSIONS] [--include-hidden] [--natural] [--json] [--compact] [--apply]\n\nPreview a stable renumbering of files directly inside PATH. Alphabetical order is the default; --natural sorts digit runs by numeric value (for example frame2 before frame10). Extensions are preserved. Matching Unity .meta sidecars move with their assets to preserve GUIDs. --compact removes formatting whitespace from JSON output and requires --json. The operation skips destination collisions and can be undone with 'mediaforge undo PATH'."
                 );
                 return Ok(());
             }
@@ -11904,6 +11914,9 @@ fn run_sequence(args: &[String]) -> Result<(), String> {
                 path = Some(PathBuf::from(value));
             }
         }
+    }
+    if compact && !json {
+        return Err("--compact can only be used with --json".to_owned());
     }
     if prefix.is_empty()
         || !prefix
@@ -12116,6 +12129,7 @@ fn run_sequence(args: &[String]) -> Result<(), String> {
 
     if json && !apply {
         write_json_stdout("sequence JSON", |output| {
+            let mut output = JsonWhitespaceWriter::new(output, compact);
             writeln!(
                 output,
                 "{{\n  \"root\": {},\n  \"prefix\": {},\n  \"applied\": false,\n  \"moves\": [",
@@ -12182,6 +12196,7 @@ fn run_sequence(args: &[String]) -> Result<(), String> {
     if moves.is_empty() {
         if json {
             write_json_stdout("sequence JSON", |output| {
+                let mut output = JsonWhitespaceWriter::new(output, compact);
                 writeln!(
                     output,
                     "{{\"root\": {}, \"prefix\": {}, \"applied\": true, \"moves\": [], \"move_count\": 0, \"renamed_count\": 0, \"skipped_count\": {}, \"result\": \"no_changes\"}}",
@@ -12229,6 +12244,7 @@ fn run_sequence(args: &[String]) -> Result<(), String> {
     write_organize_complete_marker(&root)?;
     if json {
         write_json_stdout("sequence JSON", |output| {
+            let mut output = JsonWhitespaceWriter::new(output, compact);
             writeln!(
                 output,
                 "{{\n  \"root\": {},\n  \"prefix\": {},\n  \"applied\": true,\n  \"moves\": [",
