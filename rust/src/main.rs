@@ -8293,7 +8293,7 @@ fn run_unity_meta(args: &[String]) -> Result<(), String> {
     let mut orphan_meta = Vec::<String>::new();
     let mut missing_guid = Vec::<String>::new();
     let mut invalid_guid = Vec::<String>::new();
-    let mut guid_paths = BTreeMap::<String, Vec<String>>::new();
+    let mut guid_paths = HashMap::<String, (String, Option<Vec<String>>)>::new();
     let assets_meta = unity_meta_sidecar(&assets);
     if !is_real_file(&assets_meta) {
         missing_meta.push("Assets".to_owned());
@@ -8306,10 +8306,9 @@ fn run_unity_meta(args: &[String]) -> Result<(), String> {
             )
         })?;
         match unity_meta_guid(&contents) {
-            Ok(Some(guid)) => guid_paths
-                .entry(guid)
-                .or_default()
-                .push("Assets.meta".to_owned()),
+            Ok(Some(guid)) => {
+                guid_paths.insert(guid, ("Assets.meta".to_owned(), None));
+            }
             Ok(None) => missing_guid.push("Assets.meta".to_owned()),
             Err(()) => invalid_guid.push("Assets.meta".to_owned()),
         }
@@ -8387,7 +8386,17 @@ fn run_unity_meta(args: &[String]) -> Result<(), String> {
                             )
                         })?;
                         match unity_meta_guid(&contents) {
-                            Ok(Some(guid)) => guid_paths.entry(guid).or_default().push(relative),
+                            Ok(Some(guid)) => match guid_paths.entry(guid) {
+                                std::collections::hash_map::Entry::Vacant(entry) => {
+                                    entry.insert((relative, None));
+                                }
+                                std::collections::hash_map::Entry::Occupied(mut entry) => {
+                                    let (first, duplicates) = entry.get_mut();
+                                    let paths = duplicates
+                                        .get_or_insert_with(|| vec![std::mem::take(first)]);
+                                    paths.push(relative);
+                                }
+                            },
                             Ok(None) => missing_guid.push(relative),
                             Err(()) => invalid_guid.push(relative),
                         }
@@ -8407,8 +8416,9 @@ fn run_unity_meta(args: &[String]) -> Result<(), String> {
     invalid_guid.sort();
     let mut duplicate_guids = guid_paths
         .into_iter()
-        .filter(|(_, paths)| paths.len() > 1)
+        .filter_map(|(guid, (_, paths))| paths.map(|paths| (guid, paths)))
         .collect::<Vec<_>>();
+    duplicate_guids.sort_unstable_by(|left, right| left.0.cmp(&right.0));
     for (_, paths) in &mut duplicate_guids {
         paths.sort();
     }
