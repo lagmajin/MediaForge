@@ -2374,6 +2374,11 @@ fn run_pack(args: &[String]) -> Result<(), String> {
     let requested_name = output
         .file_name()
         .ok_or_else(|| "output must name a file".to_owned())?;
+    let requested_name_text = requested_name
+        .to_str()
+        .ok_or_else(|| "archive output filename must be valid UTF-8".to_owned())?;
+    validate_archive_component(requested_name_text)
+        .map_err(|error| format!("invalid archive output filename: {error}"))?;
     let requested_parent = output
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
