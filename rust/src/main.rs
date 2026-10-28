@@ -96,6 +96,11 @@ struct FileRecord {
     extension: String,
 }
 
+struct FilePathRecord {
+    relative: String,
+    path: PathBuf,
+}
+
 struct ScanTraversalFilters<'a> {
     kind: Option<Kind>,
     min_size: Option<u64>,
@@ -707,6 +712,32 @@ fn walk_strict_filtered(
     )
 }
 
+fn walk_strict_paths(
+    root: &Path,
+    current: &Path,
+    include_hidden: bool,
+    skip_dirs: &[&str],
+    ignored: &[IgnoreRule],
+    filters: &StrictWalkFilters<'_>,
+    records: &mut Vec<FilePathRecord>,
+) -> Result<(), String> {
+    walk_strict_filtered_with_callback(
+        root,
+        current,
+        include_hidden,
+        skip_dirs,
+        ignored,
+        filters,
+        |record| {
+            records.push(FilePathRecord {
+                relative: record.relative,
+                path: record.path,
+            });
+            Ok(())
+        },
+    )
+}
+
 fn walk_strict_filtered_with_callback<F>(
     root: &Path,
     current: &Path,
@@ -829,7 +860,7 @@ where
                         .to_string_lossy()
                         .replace('\\', "/"),
                 };
-                let extension = if filters.omit_extension && filters.extensions.is_none() {
+                let extension = if filters.omit_extension {
                     String::new()
                 } else {
                     extension_value
@@ -4762,7 +4793,7 @@ fn collect_json_scalars(
 }
 
 fn summarize_probe_differences(
-    records: &[FileRecord],
+    records: &[FilePathRecord],
     results: &[(usize, bool, String, Option<String>)],
 ) -> Result<(), String> {
     const COMPARE_FIELDS: &[&str] = &[
@@ -5044,7 +5075,7 @@ fn run_probe_dir(args: &[String]) -> Result<(), String> {
         return Err(format!("expected a directory: {}", root.display()));
     }
     let ignored = ignored_by_git(&root)?;
-    let mut records = Vec::new();
+    let mut records = Vec::<FilePathRecord>::new();
     let selected_kinds =
         selected_kind.map_or_else(|| vec![Kind::Video, Kind::Audio], |kind| vec![kind]);
     let filters = StrictWalkFilters {
@@ -5056,10 +5087,10 @@ fn run_probe_dir(args: &[String]) -> Result<(), String> {
         excluded_subtree: None,
         exclude_path_contains_lower: None,
         omit_absolute_path: false,
-        omit_modified_time: false,
+        omit_modified_time: true,
         omit_extension: true,
     };
-    walk_strict_filtered(
+    walk_strict_paths(
         &root,
         &root,
         include_hidden,
@@ -5947,15 +5978,16 @@ fn run_scene_detect_dir(args: &[String]) -> Result<(), String> {
         return Err(format!("expected a directory: {}", root.display()));
     }
     let ignored = ignored_by_git(&root)?;
-    let mut records = Vec::new();
+    let mut records = Vec::<FilePathRecord>::new();
     let kinds = [Kind::Video];
     let filters = StrictWalkFilters {
         kinds: Some(&kinds),
         extensions: extensions.as_ref(),
         omit_extension: true,
+        omit_modified_time: true,
         ..StrictWalkFilters::default()
     };
-    walk_strict_filtered(
+    walk_strict_paths(
         &root,
         &root,
         include_hidden,
@@ -6760,16 +6792,17 @@ fn run_proxy_dir(args: &[String]) -> Result<(), String> {
     }
     let output_inside_root = output_root.starts_with(&root);
     let ignored = ignored_by_git(&root)?;
-    let mut records = Vec::new();
+    let mut records = Vec::<FilePathRecord>::new();
     let kinds = [Kind::Video];
     let filters = StrictWalkFilters {
         kinds: Some(&kinds),
         extensions: extensions.as_ref(),
         excluded_subtree: output_inside_root.then_some(output_root.as_path()),
         omit_extension: true,
+        omit_modified_time: true,
         ..StrictWalkFilters::default()
     };
-    walk_strict_filtered(
+    walk_strict_paths(
         &root,
         &root,
         include_hidden,
@@ -7291,16 +7324,17 @@ fn run_extract_audio_dir(args: &[String]) -> Result<(), String> {
     }
     let output_inside_root = output_root.starts_with(&root);
     let ignored = ignored_by_git(&root)?;
-    let mut records = Vec::new();
+    let mut records = Vec::<FilePathRecord>::new();
     let kinds = [Kind::Video, Kind::Audio];
     let filters = StrictWalkFilters {
         kinds: Some(&kinds),
         extensions: extensions.as_ref(),
         excluded_subtree: output_inside_root.then_some(output_root.as_path()),
         omit_extension: true,
+        omit_modified_time: true,
         ..StrictWalkFilters::default()
     };
-    walk_strict_filtered(
+    walk_strict_paths(
         &root,
         &root,
         include_hidden,
