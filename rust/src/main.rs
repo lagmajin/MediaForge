@@ -1227,7 +1227,7 @@ fn fraction_ceil_scaled(fraction: &str, multiplier: u128) -> u128 {
 
 fn print_help() {
     println!(
-        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS]\n  mediaforge dupes [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS]\n  mediaforge probe <FILE> [--compact]\n  mediaforge project [PATH] [--json]\n  mediaforge gitignore [PATH] [--apply]\n  mediaforge organize [PATH] [--by type|extension] [--json] [--apply]\n  mediaforge undo [PATH]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--include-hidden] [--include-generated] [--dry-run] [--json]\n  mediaforge --version\n  mediaforge --help"
+        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS]\n  mediaforge dupes [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS]\n  mediaforge probe <FILE> [--compact]\n  mediaforge project [PATH] [--json]\n  mediaforge gitignore [PATH] [--apply]\n  mediaforge organize [PATH] [--by type|extension] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--json] [--apply]\n  mediaforge undo [PATH]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--include-hidden] [--include-generated] [--dry-run] [--json]\n  mediaforge --version\n  mediaforge --help"
     );
 }
 
@@ -2547,6 +2547,9 @@ fn run_organize(args: &[String]) -> Result<(), String> {
     let mut by = "type";
     let mut apply = false;
     let mut json = false;
+    let mut kind_filter = None;
+    let mut extension_filter = None;
+    let mut min_size = 0_u64;
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
         match arg.as_str() {
@@ -2558,11 +2561,33 @@ fn run_organize(args: &[String]) -> Result<(), String> {
                     return Err("--by must be 'type' or 'extension'".to_owned());
                 }
             }
+            "--type" => {
+                let value = iter
+                    .next()
+                    .ok_or_else(|| "--type requires a value".to_owned())?;
+                kind_filter = Some(parse_asset_kind(value).ok_or_else(|| {
+                    format!(
+                        "unknown asset type '{value}'; choose video, audio, image, model, texture, project, or other"
+                    )
+                })?);
+            }
+            "--extension" => {
+                let value = iter.next().ok_or_else(|| {
+                    "--extension requires a comma-separated extension list".to_owned()
+                })?;
+                extension_filter = Some(parse_extensions(value)?);
+            }
+            "--min-size" => {
+                let value = iter
+                    .next()
+                    .ok_or_else(|| "--min-size requires a value".to_owned())?;
+                min_size = parse_size(value)?;
+            }
             "--apply" => apply = true,
             "--json" => json = true,
             "--help" | "-h" => {
                 println!(
-                    "Usage: mediaforge organize [PATH] [--by type|extension] [--json] [--apply]\n\nPreview an asset organization plan. --json emits the plan and skipped count as JSON. Files are only moved with --apply; a manifest is written so the move can be undone."
+                    "Usage: mediaforge organize [PATH] [--by type|extension] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--json] [--apply]\n\nPreview an asset organization plan. --type and --extension select files; --min-size uses bytes or K/M/G/T binary units. --json emits the plan and skipped count as JSON. Files are only moved with --apply; a manifest is written so the move can be undone."
                 );
                 return Ok(());
             }
@@ -2602,6 +2627,14 @@ fn run_organize(args: &[String]) -> Result<(), String> {
     let mut skipped = 0usize;
     let mut destinations = HashSet::<PathBuf>::new();
     for record in records {
+        if kind_filter.is_some_and(|kind| record.kind != kind)
+            || extension_filter
+                .as_ref()
+                .is_some_and(|extensions| !extensions.contains(&record.extension))
+            || record.size < min_size
+        {
+            continue;
+        }
         let relative = match record.path.strip_prefix(&root) {
             Ok(relative) => relative,
             Err(_) => {

@@ -99,12 +99,12 @@ mediaforge gitignore ./Game --apply
 ```sh
 mediaforge organize ./Media --by type
 mediaforge organize ./Media --by extension
-mediaforge organize ./Media --by type --json
+mediaforge organize ./Media --by type --type video --min-size 500M --json
 mediaforge organize ./Media --by type --apply
 mediaforge undo ./Media
 ```
 
-Organization is a preview unless `--apply` is supplied. Add `--json` to emit one machine-readable JSON object with the full move plan and counts; with `--apply`, the object reports the completed move count and undo manifest path. Moves preserve paths below the new type/extension folder, skip destination collisions, and refuse symlink paths. Before moving anything, MediaForge writes a `.mediaforge-undo` recovery manifest with portable `/` separators. `undo` restores files only when the original location is clear; it retains the manifest if a conflict needs manual handling. Older manifests are still readable; ambiguous old records are handled conservatively and may need manual conflict resolution. It never deletes source files.
+Organization is a preview unless `--apply` is supplied. Use `--type`, `--extension`, and `--min-size` to limit which files are organized; for example, `--type video --min-size 500M` selects large video assets. Add `--json` to emit one machine-readable JSON object with the filtered move plan and counts; with `--apply`, the object reports the completed move count and undo manifest path. Moves preserve paths below the new type/extension folder, skip destination collisions, and refuse symlink paths. Before moving anything, MediaForge writes a `.mediaforge-undo` recovery manifest with portable `/` separators. `undo` restores files only when the original location is clear; it retains the manifest if a conflict needs manual handling. Older manifests are still readable; ambiguous old records are handled conservatively and may need manual conflict resolution. It never deletes source files.
 
 ## Pack a project for handoff
 
