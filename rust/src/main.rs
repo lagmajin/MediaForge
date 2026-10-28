@@ -295,7 +295,7 @@ fn sort_entries(entries: &mut Vec<fs::DirEntry>) {
             (lowercase_name, original_name, entry)
         })
         .collect::<Vec<_>>();
-    keyed.sort_by(|(left_lower, left_name, _), (right_lower, right_name, _)| {
+    keyed.sort_unstable_by(|(left_lower, left_name, _), (right_lower, right_name, _)| {
         left_lower
             .cmp(right_lower)
             .then_with(|| left_name.cmp(right_name))
