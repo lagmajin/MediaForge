@@ -8758,10 +8758,13 @@ fn unity_meta_target(path: &Path) -> Option<PathBuf> {
 
 fn unity_meta_target_exists_in_directory(
     target: &Path,
-    siblings: &HashMap<std::ffi::OsString, (bool, bool)>,
+    sibling_entries: &HashSet<std::ffi::OsString>,
 ) -> bool {
-    if let Some((is_file, is_directory)) = target.file_name().and_then(|name| siblings.get(name)) {
-        return *is_file || *is_directory;
+    if target
+        .file_name()
+        .is_some_and(|name| sibling_entries.contains(name))
+    {
+        return true;
     }
     is_real_file(target) || is_real_directory(target)
 }
@@ -8943,7 +8946,7 @@ fn run_unity_meta(args: &[String]) -> Result<(), String> {
             })
             .collect::<Result<Vec<_>, _>>()?;
         // Each output list is sorted after traversal, so per-directory sorting is redundant.
-        let mut sibling_types = HashMap::with_capacity(entries.len());
+        let mut sibling_entries = HashSet::with_capacity(entries.len());
         let mut sibling_sidecars_lowercase = HashSet::with_capacity(entries.len() / 2);
         let mut entry_types = Vec::with_capacity(entries.len());
         for entry in &entries {
@@ -8954,7 +8957,7 @@ fn run_unity_meta(args: &[String]) -> Result<(), String> {
                 )
             })?;
             if file_type.is_file() || file_type.is_dir() {
-                sibling_types.insert(entry.file_name(), (file_type.is_file(), file_type.is_dir()));
+                sibling_entries.insert(entry.file_name());
             }
             if file_type.is_file() {
                 let file_name = entry.file_name();
@@ -9021,7 +9024,7 @@ fn run_unity_meta(args: &[String]) -> Result<(), String> {
                 }
                 if let Some(target) = meta_target {
                     checked = checked.saturating_add(1);
-                    if !unity_meta_target_exists_in_directory(&target, &sibling_types) {
+                    if !unity_meta_target_exists_in_directory(&target, &sibling_entries) {
                         orphan_meta_count += 1;
                         if !summary {
                             orphan_meta.push(relative);
