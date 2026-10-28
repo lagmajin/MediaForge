@@ -1462,7 +1462,7 @@ fn scan_filters_json(
         || "null".to_owned(),
         |extensions| {
             let mut extensions = extensions.iter().collect::<Vec<_>>();
-            extensions.sort();
+            extensions.sort_unstable();
             format!(
                 "[{}]",
                 extensions
@@ -1770,7 +1770,7 @@ fn print_json(
     }
     write_scan_json_line!("  }},\n  \"extensions\": {{");
     let mut ext_sorted: Vec<_> = extensions.iter().collect();
-    ext_sorted.sort_by(|a, b| b.1.0.cmp(&a.1.0).then_with(|| a.0.cmp(b.0)));
+    ext_sorted.sort_unstable_by(|a, b| b.1.0.cmp(&a.1.0).then_with(|| a.0.cmp(b.0)));
     for (index, (extension, (count, _))) in ext_sorted.iter().enumerate() {
         let comma = if index + 1 == ext_sorted.len() {
             ""
@@ -2961,7 +2961,7 @@ fn run_dupes(args: &[String]) -> Result<(), String> {
             .map(|group| (group.size, group.files)),
     );
     if !summary_only {
-        groups.sort_by(|left, right| {
+        groups.sort_unstable_by(|left, right| {
             (u128::from(right.0) * right.1.len().saturating_sub(1) as u128)
                 .cmp(&(u128::from(left.0) * left.1.len().saturating_sub(1) as u128))
                 .then_with(|| right.0.cmp(&left.0))
@@ -3297,7 +3297,7 @@ fn run_scan(args: &[String]) -> Result<(), String> {
                     .cmp(&std::cmp::Reverse(right.size))
                     .then_with(|| compare_paths_case_insensitive(&left.relative, &right.relative))
             }),
-            ScanCsvSort::Path => records.sort_by(|a, b| a.relative.cmp(&b.relative)),
+            ScanCsvSort::Path => records.sort_unstable_by(|a, b| a.relative.cmp(&b.relative)),
             ScanCsvSort::Modified => records.sort_unstable_by(|left, right| {
                 std::cmp::Reverse(
                     left.modified
@@ -4328,7 +4328,7 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
     if let Some(excluded) = excluded {
         records.retain(|record| record.path != excluded);
     }
-    records.sort_by(|left, right| left.relative.cmp(&right.relative));
+    records.sort_unstable_by(|left, right| left.relative.cmp(&right.relative));
     let current_entries = collect_snapshot_entries(&records, use_hash, jobs)?;
     if let Some(output) = output_abs {
         write_snapshot_manifest(
@@ -5308,7 +5308,7 @@ fn run_probe_dir(args: &[String]) -> Result<(), String> {
     )?;
     let stream_results = !csv && !compare;
     if !stream_results {
-        records.sort_by(|left, right| left.relative.cmp(&right.relative));
+        records.sort_unstable_by(|left, right| left.relative.cmp(&right.relative));
     }
     if records.is_empty() {
         if csv {
@@ -7088,7 +7088,7 @@ fn run_proxy_dir(args: &[String]) -> Result<(), String> {
         &filters,
         &mut records,
     )?;
-    records.sort_by(|left, right| left.relative.cmp(&right.relative));
+    records.sort_unstable_by(|left, right| left.relative.cmp(&right.relative));
     if records.is_empty() {
         if json {
             println!("{{\"type\":\"summary\",\"succeeded\":0,\"skipped\":0,\"failed\":0}}");
@@ -7644,7 +7644,7 @@ fn run_extract_audio_dir(args: &[String]) -> Result<(), String> {
         &filters,
         &mut records,
     )?;
-    records.sort_by(|left, right| left.relative.cmp(&right.relative));
+    records.sort_unstable_by(|left, right| left.relative.cmp(&right.relative));
     if records.is_empty() {
         if json {
             println!("{{\"type\":\"summary\",\"succeeded\":0,\"skipped\":0,\"failed\":0}}");
@@ -8217,7 +8217,7 @@ fn run_project(args: &[String]) -> Result<(), String> {
             unreal_files.push((project_file, association));
         }
     }
-    unreal_files.sort_by(|left, right| compare_paths_case_insensitive(&left.0, &right.0));
+    unreal_files.sort_unstable_by(|left, right| compare_paths_case_insensitive(&left.0, &right.0));
     if !unreal_files.is_empty() {
         engines.push((
             "Unreal Engine",
@@ -8318,7 +8318,7 @@ fn run_project(args: &[String]) -> Result<(), String> {
             }
         }
     }
-    project_files.sort_by(|left, right| compare_paths_case_insensitive(&left.0, &right.0));
+    project_files.sort_unstable_by(|left, right| compare_paths_case_insensitive(&left.0, &right.0));
 
     let mut missing = Vec::<(&str, &str)>::new();
     let mut caches = Vec::<(String, u64, u64)>::new();
@@ -9864,7 +9864,7 @@ fn run_organize(args: &[String]) -> Result<(), String> {
         &filters,
         &mut records,
     )?;
-    records.sort_by(|left, right| left.relative.cmp(&right.relative));
+    records.sort_unstable_by(|left, right| left.relative.cmp(&right.relative));
     let mut moves = Vec::<PlannedMove>::new();
     let mut skipped = 0usize;
     let mut destinations = HashSet::<PathBuf>::new();
@@ -10725,7 +10725,7 @@ fn run_sequence(args: &[String]) -> Result<(), String> {
                 (name, entry)
             })
             .collect::<Vec<_>>();
-        keyed.sort_by(|(left, _), (right, _)| natural_name_cmp(left, right));
+        keyed.sort_unstable_by(|(left, _), (right, _)| natural_name_cmp(left, right));
         entries.extend(keyed.into_iter().map(|(_, entry)| entry));
     } else {
         sort_entries(&mut entries);
