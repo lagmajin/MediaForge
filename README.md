@@ -116,6 +116,7 @@ mediaforge scan ./Game --csv --csv-info --sort size --type texture 2>scan-info.j
 mediaforge scan ./Media --extension exr --extension tif
 mediaforge dupes ./Game/Content --include-hidden --min-size 1M
 mediaforge dupes ./Media --type audio --extension wav,aiff
+mediaforge dupes ./Media --json --compact
 mediaforge project ./Game
 mediaforge gitignore ./Game
 mediaforge organize ./Media --by type
@@ -139,7 +140,7 @@ Dot-prefixed hidden files/folders and common generated/dependency directories (`
 
 ## Find exact duplicates
 
-`dupes` groups candidates by file size, compares small samples from the beginning, middle, and end to skip obvious non-matches, then verifies remaining candidates byte-for-byte in streaming chunks. It reports reclaimable space without loading entire video files into memory. Sample reads run concurrently; `--jobs N` controls 1–64 workers and defaults to up to four (use `--jobs 1` for a busy or slower disk). `--min-size` and `--max-size` can bound the sizes examined, helping skip large files that are not relevant to a particular cleanup. Repeat `--exclude-path-contains TEXT` to exclude any matching relative path case-insensitively; matching directories are pruned before traversal, and JSON records the filters. `--top-groups N` limits the displayed groups and sorts by reclaimable space; all eligible files are still checked, and summary totals cover every verified group. `--summary` is shorthand for verifying all candidates while returning no duplicate paths, useful when a script or AI only needs the aggregate counts and reclaimable bytes. JSON reports the size bounds and total, returned, and omitted group counts. It never deletes or modifies files. Unlike the summary `scan`, `dupes`, `organize`, and `pack` stop with an error if a directory or file cannot be inspected, so they do not silently present an incomplete result as complete.
+`dupes` groups candidates by file size, compares small samples from the beginning, middle, and end to skip obvious non-matches, then verifies remaining candidates byte-for-byte in streaming chunks. It reports reclaimable space without loading entire video files into memory. Sample reads run concurrently; `--jobs N` controls 1–64 workers and defaults to up to four (use `--jobs 1` for a busy or slower disk). `--min-size` and `--max-size` can bound the sizes examined, helping skip large files that are not relevant to a particular cleanup. Repeat `--exclude-path-contains TEXT` to exclude any matching relative path case-insensitively; matching directories are pruned before traversal, and JSON records the filters. `--top-groups N` limits the displayed groups and sorts by reclaimable space; all eligible files are still checked, and summary totals cover every verified group. `--summary` is shorthand for verifying all candidates while returning no duplicate paths, useful when a script or AI only needs the aggregate counts and reclaimable bytes. JSON reports the size bounds and total, returned, and omitted group counts. Add `--compact` with `--json` to remove formatting whitespace while preserving paths and string contents. It never deletes or modifies files. Unlike the summary `scan`, `dupes`, `organize`, and `pack` stop with an error if a directory or file cannot be inspected, so they do not silently present an incomplete result as complete.
 
 ```sh
 mediaforge dupes ./Media
