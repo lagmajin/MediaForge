@@ -3278,6 +3278,50 @@ fn register_portable_archive_path(
     Ok(())
 }
 
+fn padded_tar_size(size: u64) -> Result<u64, String> {
+    size.checked_add(TAR_BLOCK_SIZE as u64 - 1)
+        .map(|size| size / TAR_BLOCK_SIZE as u64 * TAR_BLOCK_SIZE as u64)
+        .ok_or_else(|| "estimated archive size exceeds the supported range".to_owned())
+}
+
+fn estimate_tar_size(entries: &[(&FileRecord, String)]) -> Result<u64, String> {
+    let mut total = (TAR_BLOCK_SIZE * 2) as u64;
+    for (record, archive_name) in entries {
+        let pax_path = ustar_name(archive_name.as_bytes()).is_none();
+        let modified = record
+            .modified
+            .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+            .map_or(0, |duration| duration.as_secs());
+        let pax_size = record.size > TAR_OCTAL_MAX;
+        let pax_mtime = modified > TAR_OCTAL_MAX;
+
+        if pax_path || pax_size || pax_mtime {
+            let mut pax = String::new();
+            if pax_path {
+                pax.push_str(&pax_record("path", archive_name));
+            }
+            if pax_size {
+                pax.push_str(&pax_record("size", &record.size.to_string()));
+            }
+            if pax_mtime {
+                pax.push_str(&pax_record("mtime", &modified.to_string()));
+            }
+            let pax_size = u64::try_from(pax.len())
+                .map_err(|_| "PAX header size exceeds the supported range".to_owned())?;
+            total = total
+                .checked_add(TAR_BLOCK_SIZE as u64)
+                .and_then(|total| padded_tar_size(pax_size).ok()?.checked_add(total))
+                .ok_or_else(|| "estimated archive size exceeds the supported range".to_owned())?;
+        }
+
+        total = total
+            .checked_add(TAR_BLOCK_SIZE as u64)
+            .and_then(|total| padded_tar_size(record.size).ok()?.checked_add(total))
+            .ok_or_else(|| "estimated archive size exceeds the supported range".to_owned())?;
+    }
+    Ok(total)
+}
+
 fn print_pack_json(
     root: &Path,
     output: &Path,
@@ -3287,6 +3331,7 @@ fn print_pack_json(
     min_size: u64,
     files: usize,
     input_bytes: u64,
+    estimated_archive_bytes: u64,
     archive_bytes: Option<u64>,
 ) {
     println!("{{");
@@ -3298,6 +3343,7 @@ fn print_pack_json(
     println!("  \"min_size_bytes\": {min_size},");
     println!("  \"files\": {files},");
     println!("  \"input_bytes\": {input_bytes},");
+    println!("  \"estimated_archive_bytes\": {estimated_archive_bytes},");
     println!(
         "  \"input_size\": {},",
         json_string(&human_size(input_bytes))
@@ -3460,11 +3506,13 @@ fn run_pack(args: &[String]) -> Result<(), String> {
             .checked_add(record.size)
             .ok_or_else(|| "total input size exceeds the supported range".to_owned())?;
     }
+    let estimated_archive_bytes = estimate_tar_size(&entries)?;
     if !json {
         println!(
-            "Pack plan: {} file(s), {} uncompressed",
+            "Pack plan: {} file(s), {} input · estimated archive {}",
             entries.len(),
-            human_size(total_bytes)
+            human_size(total_bytes),
+            human_size(estimated_archive_bytes)
         );
         for (record, name) in entries.iter().take(30) {
             println!("  {}  {name}", human_size(record.size));
@@ -3488,6 +3536,7 @@ fn run_pack(args: &[String]) -> Result<(), String> {
                 min_size,
                 entries.len(),
                 total_bytes,
+                estimated_archive_bytes,
                 None,
             );
             return Ok(());
@@ -3593,6 +3642,7 @@ fn run_pack(args: &[String]) -> Result<(), String> {
             min_size,
             entries.len(),
             total_bytes,
+            estimated_archive_bytes,
             Some(archive_size),
         );
     } else {
