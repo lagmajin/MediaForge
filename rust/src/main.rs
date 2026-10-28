@@ -303,10 +303,6 @@ fn has_hidden_attribute(path: &Path) -> bool {
     }
 }
 
-fn is_hidden(path: &Path) -> bool {
-    is_dot_hidden(path) || has_hidden_attribute(path)
-}
-
 fn directory_name_matches(name: &str, candidates: &[&str]) -> bool {
     candidates
         .iter()
@@ -8710,7 +8706,7 @@ fn run_unity_meta(args: &[String]) -> Result<(), String> {
         }
         for (entry, file_type) in entries.into_iter().zip(entry_types) {
             let entry_path = entry.path();
-            if file_type.is_symlink() {
+            if file_type.is_symlink() || (!include_hidden && is_dot_hidden(&entry_path)) {
                 continue;
             }
             let relative = entry_path
@@ -8720,7 +8716,7 @@ fn run_unity_meta(args: &[String]) -> Result<(), String> {
                 .replace('\\', "/");
             if file_type.is_dir() {
                 if is_ignored_directory(&relative, &active_rules)
-                    || (!include_hidden && is_hidden(&entry_path))
+                    || (!include_hidden && has_hidden_attribute(&entry_path))
                 {
                     continue;
                 }
@@ -8739,7 +8735,7 @@ fn run_unity_meta(args: &[String]) -> Result<(), String> {
                 pending.push((entry_path, child_rules));
             } else if file_type.is_file() {
                 if is_ignored(&relative, &active_rules)
-                    || (!include_hidden && is_hidden(&entry_path))
+                    || (!include_hidden && has_hidden_attribute(&entry_path))
                 {
                     continue;
                 }
