@@ -96,6 +96,13 @@ struct FileRecord {
     extension: String,
 }
 
+struct SnapshotFileRecord {
+    relative: String,
+    path: PathBuf,
+    size: u64,
+    modified: Option<std::time::SystemTime>,
+}
+
 struct ScanFileRecord {
     relative: String,
     size: u64,
@@ -3439,7 +3446,7 @@ struct SnapshotSizeStats {
     modified_size_delta_bytes: i128,
 }
 
-fn snapshot_entry(record: &FileRecord, content_hash: [u8; 32]) -> SnapshotEntry {
+fn snapshot_entry(record: &SnapshotFileRecord, content_hash: [u8; 32]) -> SnapshotEntry {
     let modified_ns =
         record.modified.map(
             |modified| match modified.duration_since(std::time::UNIX_EPOCH) {
@@ -3566,7 +3573,7 @@ impl Sha256 {
     }
 }
 
-fn hash_snapshot_file(root: &Path, record: &FileRecord) -> Result<[u8; 32], String> {
+fn hash_snapshot_file(root: &Path, record: &SnapshotFileRecord) -> Result<[u8; 32], String> {
     let path = root.join(&record.path);
     let mut file = File::open(&path)
         .map_err(|error| format!("cannot read {} for hashing: {error}", path.display()))?;
@@ -3603,7 +3610,7 @@ fn hash_snapshot_file(root: &Path, record: &FileRecord) -> Result<[u8; 32], Stri
 
 fn collect_snapshot_entries<'a>(
     root: &Path,
-    records: &'a [FileRecord],
+    records: &'a [SnapshotFileRecord],
     hash_content: bool,
     jobs: usize,
 ) -> Result<BTreeMap<&'a str, SnapshotEntry>, String> {
@@ -3852,7 +3859,7 @@ fn snapshot_temp_file(parent: &Path) -> Result<(PathBuf, File), String> {
 
 fn write_snapshot_manifest(
     output: &Path,
-    records: &[FileRecord],
+    records: &[SnapshotFileRecord],
     entries: &BTreeMap<&str, SnapshotEntry>,
     include_hidden: bool,
     include_generated: bool,
@@ -4331,19 +4338,27 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
     } else {
         SNAPSHOT_SKIP_DIRS
     };
-    let mut records = Vec::new();
+    let mut records = Vec::<SnapshotFileRecord>::new();
     let filters = StrictWalkFilters {
         store_relative_path: true,
         ..StrictWalkFilters::default()
     };
-    walk_strict_filtered(
+    walk_strict_filtered_with_callback(
         &root,
         &root,
         use_hidden,
         skip_dirs,
         &ignored,
         &filters,
-        &mut records,
+        |record| {
+            records.push(SnapshotFileRecord {
+                relative: record.relative,
+                path: record.path,
+                size: record.size,
+                modified: record.modified,
+            });
+            Ok(())
+        },
     )?;
     if let Some(excluded_relative) = excluded
         .as_deref()
