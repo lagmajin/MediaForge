@@ -2486,6 +2486,16 @@ struct SnapshotTypeStats {
     modified_size_delta_bytes: i128,
 }
 
+#[derive(Default)]
+struct SnapshotSizeStats {
+    added: usize,
+    removed: usize,
+    modified: usize,
+    added_bytes: u128,
+    removed_bytes: u128,
+    modified_size_delta_bytes: i128,
+}
+
 fn snapshot_entry(record: &FileRecord, content_hash: Option<[u8; 32]>) -> SnapshotEntry {
     let modified_ns =
         record.modified.map(
@@ -3108,7 +3118,7 @@ fn snapshot_csv_event(
         new.and_then(|entry| entry.modified_ns)
             .map_or(String::new(), |value| value.to_string()),
     ];
-    values.resize(15, String::new());
+    values.resize(16, String::new());
     values
 }
 
@@ -3317,26 +3327,33 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
     let mut removed_bytes = 0_u128;
     let mut modified_size_delta_bytes = 0_i128;
     let mut by_type = BTreeMap::<&'static str, SnapshotTypeStats>::new();
+    let mut by_size = BTreeMap::<&'static str, SnapshotSizeStats>::new();
     for (relative, current) in &current_entries {
         let asset_type = classify(Path::new(relative)).as_str();
         let stats = by_type.entry(asset_type).or_default();
         match old_entries.get(relative) {
             None => {
+                let size_stats = by_size.entry(size_category(current.size)).or_default();
                 added += 1;
                 stats.added += 1;
                 added_bytes += u128::from(current.size);
                 stats.added_bytes += u128::from(current.size);
+                size_stats.added += 1;
+                size_stats.added_bytes += u128::from(current.size);
             }
             Some(previous) if snapshot_entries_equal(*previous, *current, use_hash) => {
                 unchanged += 1;
                 stats.unchanged += 1;
             }
             Some(previous) => {
+                let size_stats = by_size.entry(size_category(current.size)).or_default();
                 modified += 1;
                 stats.modified += 1;
                 let size_delta = i128::from(current.size) - i128::from(previous.size);
                 modified_size_delta_bytes += size_delta;
                 stats.modified_size_delta_bytes += size_delta;
+                size_stats.modified += 1;
+                size_stats.modified_size_delta_bytes += size_delta;
             }
         }
     }
@@ -3348,6 +3365,9 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
             let stats = by_type.entry(asset_type).or_default();
             stats.removed += 1;
             stats.removed_bytes += u128::from(previous.size);
+            let size_stats = by_size.entry(size_category(previous.size)).or_default();
+            size_stats.removed += 1;
+            size_stats.removed_bytes += u128::from(previous.size);
         }
     }
     if update_baseline {
@@ -3386,6 +3406,7 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
                 "added_bytes".to_owned(),
                 "removed_bytes".to_owned(),
                 "modified_size_delta_bytes".to_owned(),
+                "size_bucket".to_owned(),
             ],
         )?;
         if !summary_only {
@@ -3412,7 +3433,7 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
                 }
             }
         }
-        let mut summary = vec!["summary".to_owned(); 15];
+        let mut summary = vec!["summary".to_owned(); 16];
         summary[8] = added.to_string();
         summary[9] = removed.to_string();
         summary[10] = modified.to_string();
@@ -3422,7 +3443,7 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
         summary[14] = modified_size_delta_bytes.to_string();
         write_snapshot_csv_row(&mut stdout, &summary)?;
         for (asset_type, stats) in &by_type {
-            let mut type_summary = vec!["type_summary".to_owned(); 15];
+            let mut type_summary = vec!["type_summary".to_owned(); 16];
             type_summary[1] = (*asset_type).to_owned();
             type_summary[8] = stats.added.to_string();
             type_summary[9] = stats.removed.to_string();
@@ -3432,6 +3453,17 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
             type_summary[13] = stats.removed_bytes.to_string();
             type_summary[14] = stats.modified_size_delta_bytes.to_string();
             write_snapshot_csv_row(&mut stdout, &type_summary)?;
+        }
+        for (bucket, stats) in &by_size {
+            let mut size_summary = vec!["size_summary".to_owned(); 16];
+            size_summary[8] = stats.added.to_string();
+            size_summary[9] = stats.removed.to_string();
+            size_summary[10] = stats.modified.to_string();
+            size_summary[12] = stats.added_bytes.to_string();
+            size_summary[13] = stats.removed_bytes.to_string();
+            size_summary[14] = stats.modified_size_delta_bytes.to_string();
+            size_summary[15] = (*bucket).to_owned();
+            write_snapshot_csv_row(&mut stdout, &size_summary)?;
         }
     } else if json {
         if !summary_only {
@@ -3489,8 +3521,24 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
             })
             .collect::<Vec<_>>()
             .join(",");
+        let size_summary = by_size
+            .iter()
+            .map(|(bucket, stats)| {
+                format!(
+                    "{{\"size_bucket\":{},\"added\":{},\"removed\":{},\"modified\":{},\"added_bytes\":{},\"removed_bytes\":{},\"modified_size_delta_bytes\":{}}}",
+                    json_string(bucket),
+                    stats.added,
+                    stats.removed,
+                    stats.modified,
+                    stats.added_bytes,
+                    stats.removed_bytes,
+                    stats.modified_size_delta_bytes
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",");
         println!(
-            "{{\"type\":\"summary\",\"files\":{},\"added\":{added},\"removed\":{removed},\"modified\":{modified},\"unchanged\":{unchanged},\"added_bytes\":{added_bytes},\"removed_bytes\":{removed_bytes},\"modified_size_delta_bytes\":{modified_size_delta_bytes},\"by_asset_type\":[{type_summary}]}}",
+            "{{\"type\":\"summary\",\"files\":{},\"added\":{added},\"removed\":{removed},\"modified\":{modified},\"unchanged\":{unchanged},\"added_bytes\":{added_bytes},\"removed_bytes\":{removed_bytes},\"modified_size_delta_bytes\":{modified_size_delta_bytes},\"by_asset_type\":[{type_summary}],\"by_size_bucket\":[{size_summary}]}}",
             records.len()
         );
     } else {
@@ -3505,6 +3553,12 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
             println!(
                 "  {asset_type:<9} +{} -{} ~{} ={}",
                 stats.added, stats.removed, stats.modified, stats.unchanged
+            );
+        }
+        for (bucket, stats) in &by_size {
+            println!(
+                "  {bucket:<18} +{} -{} ~{}",
+                stats.added, stats.removed, stats.modified
             );
         }
         if !summary_only {
