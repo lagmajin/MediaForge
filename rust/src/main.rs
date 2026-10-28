@@ -2418,32 +2418,43 @@ where
         return Ok(());
     }
     let worker_count = jobs.min(paths.len());
-    let chunk_size = paths.len().div_ceil(worker_count);
-    let results = std::thread::scope(|scope| {
-        let handles = paths
-            .chunks(chunk_size)
-            .map(|chunk| {
-                scope.spawn(move || {
-                    chunk
-                        .iter()
-                        .map(|relative| sample_signature_for_path(root, relative.as_ref(), size))
-                        .collect::<Vec<_>>()
-                })
-            })
-            .collect::<Vec<_>>();
-        handles
-            .into_iter()
-            .map(|handle| handle.join().expect("duplicate sampling worker panicked"))
-            .collect::<Vec<_>>()
-    });
-    let mut index = 0;
-    for chunk_results in results {
-        for result in chunk_results {
-            visit(index, result)?;
-            index += 1;
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let (sender, receiver) = std::sync::mpsc::sync_channel(worker_count.saturating_mul(2));
+    let first_error = std::thread::scope(|scope| {
+        let mut handles = Vec::with_capacity(worker_count);
+        for _ in 0..worker_count {
+            let sender = sender.clone();
+            let next = &next;
+            handles.push(scope.spawn(move || {
+                loop {
+                    let index = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    let Some(relative) = paths.get(index) else {
+                        break;
+                    };
+                    let result = sample_signature_for_path(root, relative.as_ref(), size);
+                    if sender.send((index, result)).is_err() {
+                        break;
+                    }
+                }
+            }));
         }
-    }
-    Ok(())
+        drop(sender);
+        let mut first_error = None;
+        for (index, result) in receiver {
+            if let Err(error) = visit(index, result)
+                && first_error
+                    .as_ref()
+                    .is_none_or(|(first_index, _)| index < *first_index)
+            {
+                first_error = Some((index, error));
+            }
+        }
+        for handle in handles {
+            handle.join().expect("duplicate sampling worker panicked");
+        }
+        first_error
+    });
+    first_error.map_or(Ok(()), |(_, error)| Err(error))
 }
 
 struct VerifiedDuplicateGroup {
@@ -2787,6 +2798,8 @@ fn run_dupes(args: &[String]) -> Result<(), String> {
             duplicate_files += group.count;
             reclaimable += u128::from(size) * group.count.saturating_sub(1) as u128;
             if let Some(file_indices) = group.files {
+                let mut file_indices = file_indices;
+                file_indices.sort_unstable();
                 let files = file_indices
                     .into_iter()
                     .map(|index| paths[index].to_string())
