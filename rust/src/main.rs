@@ -274,7 +274,7 @@ fn walk_strict(
 
 #[derive(Debug)]
 struct IgnoreRule {
-    pattern: String,
+    pattern: Vec<char>,
     negated: bool,
     anchored: bool,
     directory_only: bool,
@@ -313,7 +313,7 @@ fn parse_ignore_rule(line: &str) -> Option<IgnoreRule> {
     }
     let has_slash = pattern.contains('/');
     Some(IgnoreRule {
-        pattern,
+        pattern: pattern.chars().collect(),
         negated,
         anchored,
         directory_only,
@@ -321,8 +321,7 @@ fn parse_ignore_rule(line: &str) -> Option<IgnoreRule> {
     })
 }
 
-fn glob_matches(pattern: &str, value: &str) -> bool {
-    let pattern: Vec<char> = pattern.chars().collect();
+fn glob_matches(pattern: &[char], value: &str) -> bool {
     let value: Vec<char> = value.chars().collect();
     let mut memo = HashMap::<(usize, usize), bool>::new();
     fn matches(
@@ -398,20 +397,19 @@ fn glob_matches(pattern: &str, value: &str) -> bool {
 
 fn rule_matches_path(rule: &IgnoreRule, relative: &str, target_is_directory: bool) -> bool {
     let parts: Vec<_> = relative.split('/').collect();
+    if !rule.has_slash && !rule.anchored {
+        return parts.iter().enumerate().any(|(index, part)| {
+            let is_directory = index + 1 < parts.len() || target_is_directory;
+            (!rule.directory_only || is_directory) && glob_matches(&rule.pattern, part)
+        });
+    }
     for end in 1..=parts.len() {
         let prefix = parts[..end].join("/");
         let is_directory = end < parts.len() || target_is_directory;
         if rule.directory_only && !is_directory {
             continue;
         }
-        if rule.has_slash || rule.anchored {
-            if glob_matches(&rule.pattern, &prefix) {
-                return true;
-            }
-        } else if parts[..end]
-            .iter()
-            .any(|part| glob_matches(&rule.pattern, part))
-        {
+        if glob_matches(&rule.pattern, &prefix) {
             return true;
         }
     }
