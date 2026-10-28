@@ -4693,9 +4693,10 @@ fn json_string_end(bytes: &[u8], start: usize) -> Result<usize, String> {
 fn collect_json_scalars(
     bytes: &[u8],
     index: &mut usize,
-    prefix: &str,
+    prefix: &mut String,
     fields: &mut HashMap<String, String>,
     depth: usize,
+    selected_fields: &[&str],
 ) -> Result<(), String> {
     if depth > 64 {
         return Err("ffprobe JSON nesting is too deep".to_owned());
@@ -4723,12 +4724,13 @@ fn collect_json_scalars(
                     return Err("invalid JSON object in ffprobe output".to_owned());
                 }
                 *index += 1;
-                let field = if prefix.is_empty() {
-                    key.to_owned()
-                } else {
-                    format!("{prefix}.{key}")
-                };
-                collect_json_scalars(bytes, index, &field, fields, depth + 1)?;
+                let previous_length = prefix.len();
+                if previous_length > 0 {
+                    prefix.push('.');
+                }
+                prefix.push_str(key);
+                collect_json_scalars(bytes, index, prefix, fields, depth + 1, selected_fields)?;
+                prefix.truncate(previous_length);
                 skip_json_whitespace(bytes, index);
                 match bytes.get(*index) {
                     Some(b',') => *index += 1,
@@ -4749,8 +4751,11 @@ fn collect_json_scalars(
                     *index += 1;
                     return Ok(());
                 }
-                let field = format!("{prefix}[{element}]");
-                collect_json_scalars(bytes, index, &field, fields, depth + 1)?;
+                let previous_length = prefix.len();
+                prefix.push('[');
+                write!(prefix, "{element}]").expect("writing a JSON array index to a String");
+                collect_json_scalars(bytes, index, prefix, fields, depth + 1, selected_fields)?;
+                prefix.truncate(previous_length);
                 element += 1;
                 skip_json_whitespace(bytes, index);
                 match bytes.get(*index) {
@@ -4766,9 +4771,9 @@ fn collect_json_scalars(
         Some(b'"') => {
             let start = *index;
             *index = json_string_end(bytes, start)?;
-            if !prefix.is_empty() {
+            if selected_fields.contains(&prefix.as_str()) {
                 fields.insert(
-                    prefix.to_owned(),
+                    prefix.clone(),
                     String::from_utf8_lossy(&bytes[start..*index]).into_owned(),
                 );
             }
@@ -4784,9 +4789,9 @@ fn collect_json_scalars(
             if start == *index {
                 return Err("invalid JSON scalar in ffprobe output".to_owned());
             }
-            if !prefix.is_empty() {
+            if selected_fields.contains(&prefix.as_str()) {
                 fields.insert(
-                    prefix.to_owned(),
+                    prefix.clone(),
                     String::from_utf8_lossy(&bytes[start..*index]).into_owned(),
                 );
             }
@@ -4829,9 +4834,16 @@ fn summarize_probe_differences(
         let probe = probe
             .as_ref()
             .ok_or_else(|| "missing successful ffprobe result".to_owned())?;
-        let mut fields = HashMap::with_capacity(32);
+        let mut fields = HashMap::with_capacity(COMPARE_FIELDS.len());
         let mut cursor = 0;
-        collect_json_scalars(probe.as_bytes(), &mut cursor, "", &mut fields, 0)?;
+        collect_json_scalars(
+            probe.as_bytes(),
+            &mut cursor,
+            &mut String::with_capacity(64),
+            &mut fields,
+            0,
+            COMPARE_FIELDS,
+        )?;
         for field in COMPARE_FIELDS {
             let value = fields
                 .get(*field)
@@ -4944,32 +4956,40 @@ fn print_probe_csv_row(
     error: &str,
     probe: Option<&str>,
 ) -> Result<(), String> {
-    let mut fields = HashMap::with_capacity(32);
+    const CSV_FIELDS: &[&str] = &[
+        "format.format_name",
+        "format.duration",
+        "streams[0].codec_type",
+        "streams[0].codec_name",
+        "streams[0].profile",
+        "streams[0].width",
+        "streams[0].height",
+        "streams[0].avg_frame_rate",
+        "streams[0].pix_fmt",
+        "streams[0].sample_rate",
+        "streams[0].channels",
+        "streams[0].channel_layout",
+        "format.size",
+        "format.bit_rate",
+    ];
+    let mut fields = HashMap::with_capacity(CSV_FIELDS.len());
     if let Some(probe) = probe {
         let mut cursor = 0;
-        collect_json_scalars(probe.as_bytes(), &mut cursor, "", &mut fields, 0)?;
+        collect_json_scalars(
+            probe.as_bytes(),
+            &mut cursor,
+            &mut String::with_capacity(64),
+            &mut fields,
+            0,
+            CSV_FIELDS,
+        )?;
     }
     let mut first = true;
     let result = (|| -> io::Result<()> {
         write_csv_column(output, &mut first, path)?;
         write_csv_column(output, &mut first, if ok { "true" } else { "false" })?;
         write_csv_column(output, &mut first, error)?;
-        for name in [
-            "format.format_name",
-            "format.duration",
-            "streams[0].codec_type",
-            "streams[0].codec_name",
-            "streams[0].profile",
-            "streams[0].width",
-            "streams[0].height",
-            "streams[0].avg_frame_rate",
-            "streams[0].pix_fmt",
-            "streams[0].sample_rate",
-            "streams[0].channels",
-            "streams[0].channel_layout",
-            "format.size",
-            "format.bit_rate",
-        ] {
+        for name in CSV_FIELDS {
             write_csv_column(output, &mut first, &probe_csv_value(&fields, name))?;
         }
         output.write_all(b"\n")
