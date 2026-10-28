@@ -7967,13 +7967,15 @@ fn godot_project_features(contents: &str) -> Vec<String> {
 
 fn run_project(args: &[String]) -> Result<(), String> {
     let mut json = false;
+    let mut cache_sizes = true;
     let mut path = None;
     for arg in args {
         match arg.as_str() {
             "--json" => json = true,
+            "--no-cache-sizes" => cache_sizes = false,
             "--help" | "-h" => {
                 println!(
-                    "Usage: mediaforge project [PATH] [--json]\n\nInspect Unity, Unreal, Godot, Blender and video-editor project markers and report generated cache sizes. This command is read-only."
+                    "Usage: mediaforge project [PATH] [--json] [--no-cache-sizes]\n\nInspect Unity, Unreal, Godot, Blender and video-editor project markers and report generated cache sizes. --no-cache-sizes skips recursive cache folder measurement for a faster marker-only inspection. This command is read-only."
                 );
                 return Ok(());
             }
@@ -8164,10 +8166,12 @@ fn run_project(args: &[String]) -> Result<(), String> {
             }
         }
         for cache_name in cache_names {
-            let cache_path = root.join(cache_name);
-            if is_real_directory(&cache_path) {
-                let (bytes, files) = directory_size(&cache_path)?;
-                caches.push(((*cache_name).to_owned(), bytes, files));
+            if cache_sizes {
+                let cache_path = root.join(cache_name);
+                if is_real_directory(&cache_path) {
+                    let (bytes, files) = directory_size(&cache_path)?;
+                    caches.push(((*cache_name).to_owned(), bytes, files));
+                }
             }
         }
     }
@@ -8231,7 +8235,9 @@ fn run_project(args: &[String]) -> Result<(), String> {
                 write_json_string(&mut writer, missing_path)?;
                 writer.write_all(b"}")?;
             }
-            writer.write_all(b"\n  ],\n  \"known_build_or_cache_dirs\": [\n")?;
+            writer.write_all(b"\n  ],\n  \"cache_sizes_included\": ")?;
+            writer.write_all(if cache_sizes { b"true" } else { b"false" })?;
+            writer.write_all(b",\n  \"known_build_or_cache_dirs\": [\n")?;
             for (index, (name, bytes, files)) in caches.iter().enumerate() {
                 if index > 0 {
                     writer.write_all(b",\n")?;
@@ -8294,6 +8300,9 @@ fn run_project(args: &[String]) -> Result<(), String> {
             for (name, bytes, files) in &caches {
                 println!("  {name:<20} {:>10}  ({files} files)", human_size(*bytes));
             }
+        }
+        if !cache_sizes {
+            println!("\nCache size measurement skipped.");
         }
         if !project_files.is_empty() {
             println!("\nEditor project files");

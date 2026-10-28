@@ -154,6 +154,8 @@ mediaforge dupes ./Media --type video --max-size 2G --top-groups 20 --jobs 4
 ```sh
 mediaforge project ./Game
 mediaforge project ./Game --json
+mediaforge project ./Game --no-cache-sizes --json
+mediaforge project ./Game --no-cache-sizes --json
 mediaforge unity-meta ./Game --json
 mediaforge snapshot ./Game --output ./Game.mfs
 mediaforge snapshot ./Game --output ./Game-content.mfs --hash
