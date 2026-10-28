@@ -130,6 +130,14 @@ fn directory_name_matches(name: &str, candidates: &[&str]) -> bool {
         .any(|candidate| name.eq_ignore_ascii_case(candidate))
 }
 
+fn is_real_directory(path: &Path) -> bool {
+    fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_dir())
+}
+
+fn is_real_file(path: &Path) -> bool {
+    fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_file())
+}
+
 fn sort_entries(entries: &mut [fs::DirEntry]) {
     entries.sort_by_cached_key(|entry| {
         let name = entry.file_name().to_string_lossy().into_owned();
@@ -1226,8 +1234,10 @@ fn run_probe(args: &[String]) -> Result<(), String> {
 }
 
 fn directory_size(root: &Path) -> Result<(u64, u64), String> {
-    let root = fs::canonicalize(root)
-        .map_err(|error| format!("cannot access {}: {error}", root.display()))?;
+    if !is_real_directory(root) {
+        return Err(format!("expected a real directory: {}", root.display()));
+    }
+    let root = root.to_path_buf();
     let ignored = ignored_by_git(&root)?;
     let mut pending = vec![(root.clone(), Arc::<[IgnoreRule]>::from(ignored))];
     let mut bytes = 0_u64;
@@ -1531,7 +1541,9 @@ fn run_project(args: &[String]) -> Result<(), String> {
     }
 
     let mut engines = Vec::<(&str, Vec<&str>, Vec<&str>)>::new();
-    if root.join("Assets").is_dir() || root.join("ProjectSettings/ProjectVersion.txt").is_file() {
+    if is_real_directory(&root.join("Assets"))
+        || is_real_file(&root.join("ProjectSettings/ProjectVersion.txt"))
+    {
         engines.push((
             "Unity",
             vec!["Assets", "ProjectSettings"],
@@ -1539,9 +1551,11 @@ fn run_project(args: &[String]) -> Result<(), String> {
         ));
     }
     let unity_version_path = root.join("ProjectSettings/ProjectVersion.txt");
-    let unity_version_contents = match fs::read_to_string(&unity_version_path) {
-        Ok(contents) => Some(contents),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+    let unity_version_contents = match is_real_file(&unity_version_path)
+        .then(|| fs::read_to_string(&unity_version_path))
+        .transpose()
+    {
+        Ok(contents) => contents,
         Err(error) => {
             return Err(format!(
                 "cannot read Unity version file {}: {error}",
@@ -1604,7 +1618,7 @@ fn run_project(args: &[String]) -> Result<(), String> {
         ));
     }
     let godot_project_path = root.join("project.godot");
-    let godot_features = if godot_project_path.is_file() {
+    let godot_features = if is_real_file(&godot_project_path) {
         let contents = fs::read_to_string(&godot_project_path).map_err(|error| {
             format!(
                 "cannot read Godot project file {}: {error}",
@@ -1695,7 +1709,7 @@ fn run_project(args: &[String]) -> Result<(), String> {
         }
         for cache_name in cache_names {
             let cache_path = root.join(cache_name);
-            if cache_path.is_dir() {
+            if is_real_directory(&cache_path) {
                 let (bytes, files) = directory_size(&cache_path)?;
                 caches.push(((*cache_name).to_owned(), bytes, files));
             }
@@ -1895,8 +1909,8 @@ fn run_gitignore(args: &[String]) -> Result<(), String> {
         .map(|entry| entry.map_err(|error| format!("cannot read project directory entry: {error}")))
         .collect::<Result<Vec<_>, _>>()?;
     sort_entries(&mut entries);
-    let unity =
-        root.join("Assets").is_dir() || root.join("ProjectSettings/ProjectVersion.txt").is_file();
+    let unity = is_real_directory(&root.join("Assets"))
+        || is_real_file(&root.join("ProjectSettings/ProjectVersion.txt"));
     let mut unreal = false;
     for entry in &entries {
         let file_type = entry
@@ -1912,7 +1926,7 @@ fn run_gitignore(args: &[String]) -> Result<(), String> {
             break;
         }
     }
-    let godot = root.join("project.godot").is_file();
+    let godot = is_real_file(&root.join("project.godot"));
     if !unity && !unreal && !godot {
         return Err("no Unity, Unreal, or Godot project marker found".to_owned());
     }
