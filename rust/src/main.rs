@@ -5331,6 +5331,14 @@ struct SceneCut {
     score: f64,
 }
 
+struct SceneDetection {
+    input: PathBuf,
+    cuts: Vec<SceneCut>,
+    duration: Option<f64>,
+    fps: f64,
+    nominal_fps: u32,
+}
+
 struct SceneSegment {
     index: usize,
     start: f64,
@@ -5430,70 +5438,14 @@ fn probe_video_timing(path: &Path) -> Result<VideoTiming, String> {
     Ok(VideoTiming { duration, fps })
 }
 
-fn run_scene_detect(args: &[String]) -> Result<(), String> {
-    let mut input = None;
-    let mut threshold = 0.4_f64;
-    let mut min_gap = 1.0_f64;
-    let mut segments = false;
-    let mut fps_override = None;
-    let mut output_format = "jsonl";
-    let mut iter = args.iter();
-    while let Some(arg) = iter.next() {
-        match arg.as_str() {
-            "--threshold" => {
-                let value = iter
-                    .next()
-                    .ok_or_else(|| "--threshold requires a value from 0 to 1".to_owned())?;
-                threshold = value
-                    .parse::<f64>()
-                    .map_err(|_| format!("invalid scene threshold '{value}'"))?;
-                if !threshold.is_finite() || !(0.0..=1.0).contains(&threshold) {
-                    return Err("--threshold must be between 0 and 1".to_owned());
-                }
-            }
-            "--min-gap" => {
-                let value = iter
-                    .next()
-                    .ok_or_else(|| "--min-gap requires seconds".to_owned())?;
-                min_gap = value
-                    .parse::<f64>()
-                    .map_err(|_| format!("invalid minimum gap '{value}'"))?;
-                if !min_gap.is_finite() || min_gap < 0.0 {
-                    return Err("--min-gap must be a non-negative number of seconds".to_owned());
-                }
-            }
-            "--format" => {
-                output_format = iter
-                    .next()
-                    .ok_or_else(|| "--format requires jsonl or csv".to_owned())?;
-                if output_format != "jsonl" && output_format != "csv" {
-                    return Err("--format must be 'jsonl' or 'csv'".to_owned());
-                }
-            }
-            "--fps" => {
-                let value = iter
-                    .next()
-                    .ok_or_else(|| "--fps requires a rate such as 30 or 30000/1001".to_owned())?;
-                fps_override = Some(parse_requested_fps(value)?);
-            }
-            "--segments" => segments = true,
-            "--help" | "-h" => {
-                println!(
-                    "Usage: mediaforge scene-detect <VIDEO> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--format jsonl|csv] [--fps RATE]\n\nFind likely cuts with FFmpeg's scene score. Defaults: threshold 0.4 and at least 1 second between results. JSON Lines is the default; CSV writes a header and one row per cut. --segments turns cut points into contiguous start/end intervals spanning the video. Frame numbers use the probed average rate; --fps overrides it (for example 30000/1001)."
-                );
-                return Ok(());
-            }
-            value if value.starts_with('-') => return Err(format!("unknown option: {value}")),
-            value => {
-                if input.is_some() {
-                    return Err("scene-detect accepts one video file".to_owned());
-                }
-                input = Some(PathBuf::from(value));
-            }
-        }
-    }
-    let input = input.ok_or_else(|| "scene-detect requires a video file".to_owned())?;
-    let input = fs::canonicalize(&input)
+fn detect_scene_cuts(
+    input: &Path,
+    threshold: f64,
+    min_gap: f64,
+    fps_override: Option<f64>,
+    segments: bool,
+) -> Result<SceneDetection, String> {
+    let input = fs::canonicalize(input)
         .map_err(|error| format!("cannot access video {}: {error}", input.display()))?;
     if !fs::metadata(&input)
         .map_err(|error| format!("cannot inspect video {}: {error}", input.display()))?
@@ -5612,30 +5564,182 @@ fn run_scene_detect(args: &[String]) -> Result<(), String> {
             format!("ffmpeg failed: {detail}")
         });
     }
-    let stdout = io::stdout();
-    let mut output = io::BufWriter::with_capacity(64 * 1024, stdout.lock());
-    let output_result = (|| -> io::Result<()> {
-        if let Some(duration) = duration {
-            let mut intervals = Vec::with_capacity(cuts.len() + 1);
-            let mut start = 0.0_f64;
-            for cut in &cuts {
-                if cut.seconds > start && cut.seconds < duration {
-                    intervals.push(SceneSegment {
-                        index: intervals.len() + 1,
-                        start,
-                        end: cut.seconds,
-                    });
-                    start = cut.seconds;
-                }
-            }
-            if start < duration {
+    Ok(SceneDetection {
+        input,
+        cuts,
+        duration,
+        fps,
+        nominal_fps,
+    })
+}
+
+fn write_scene_detection_json(
+    output: &mut impl Write,
+    detection: &SceneDetection,
+    threshold: f64,
+    min_gap: f64,
+) -> io::Result<()> {
+    let source = json_string(&detection.input.to_string_lossy());
+    if let Some(duration) = detection.duration {
+        let mut intervals = Vec::with_capacity(detection.cuts.len() + 1);
+        let mut start = 0.0_f64;
+        for cut in &detection.cuts {
+            if cut.seconds > start && cut.seconds < duration {
                 intervals.push(SceneSegment {
                     index: intervals.len() + 1,
                     start,
-                    end: duration,
+                    end: cut.seconds,
                 });
+                start = cut.seconds;
             }
-            if output_format == "csv" {
+        }
+        if start < duration {
+            intervals.push(SceneSegment {
+                index: intervals.len() + 1,
+                start,
+                end: duration,
+            });
+        }
+        for interval in &intervals {
+            writeln!(
+                output,
+                "{{\"type\":\"segment\",\"path\":{source},\"segment\":{},\"start_timecode\":{},\"start_seconds\":{:.6},\"start_frame\":{},\"end_timecode\":{},\"end_seconds\":{:.6},\"end_frame\":{},\"duration_seconds\":{:.6},\"fps\":{:.6},\"nominal_fps\":{}}}",
+                interval.index,
+                json_string(&scene_timecode(interval.start)),
+                interval.start,
+                (interval.start * detection.fps).round() as u64,
+                json_string(&scene_timecode(interval.end)),
+                interval.end,
+                (interval.end * detection.fps).round() as u64,
+                interval.end - interval.start,
+                detection.fps,
+                detection.nominal_fps
+            )?;
+        }
+        writeln!(
+            output,
+            "{{\"type\":\"summary\",\"path\":{source},\"segments\":{},\"scene_cuts\":{},\"duration_seconds\":{duration:.6},\"fps\":{:.6},\"nominal_fps\":{},\"threshold\":{threshold:.6},\"min_gap_seconds\":{min_gap:.6}}}",
+            intervals.len(),
+            detection.cuts.len(),
+            detection.fps,
+            detection.nominal_fps
+        )?;
+    } else {
+        for cut in &detection.cuts {
+            writeln!(
+                output,
+                "{{\"type\":\"scene\",\"path\":{source},\"timecode\":{},\"time_seconds\":{:.6},\"frame\":{},\"fps\":{:.6},\"nominal_fps\":{},\"score\":{:.6}}}",
+                json_string(&scene_timecode(cut.seconds)),
+                cut.seconds,
+                (cut.seconds * detection.fps).round() as u64,
+                detection.fps,
+                detection.nominal_fps,
+                cut.score
+            )?;
+        }
+        writeln!(
+            output,
+            "{{\"type\":\"summary\",\"path\":{source},\"cuts\":{},\"fps\":{:.6},\"nominal_fps\":{},\"threshold\":{threshold:.6},\"min_gap_seconds\":{min_gap:.6}}}",
+            detection.cuts.len(),
+            detection.fps,
+            detection.nominal_fps
+        )?;
+    }
+    Ok(())
+}
+
+fn run_scene_detect(args: &[String]) -> Result<(), String> {
+    let mut input = None;
+    let mut threshold = 0.4_f64;
+    let mut min_gap = 1.0_f64;
+    let mut segments = false;
+    let mut fps_override = None;
+    let mut output_format = "jsonl";
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--threshold" => {
+                let value = iter
+                    .next()
+                    .ok_or_else(|| "--threshold requires a value from 0 to 1".to_owned())?;
+                threshold = value
+                    .parse::<f64>()
+                    .map_err(|_| format!("invalid scene threshold '{value}'"))?;
+                if !threshold.is_finite() || !(0.0..=1.0).contains(&threshold) {
+                    return Err("--threshold must be between 0 and 1".to_owned());
+                }
+            }
+            "--min-gap" => {
+                let value = iter
+                    .next()
+                    .ok_or_else(|| "--min-gap requires seconds".to_owned())?;
+                min_gap = value
+                    .parse::<f64>()
+                    .map_err(|_| format!("invalid minimum gap '{value}'"))?;
+                if !min_gap.is_finite() || min_gap < 0.0 {
+                    return Err("--min-gap must be a non-negative number of seconds".to_owned());
+                }
+            }
+            "--format" => {
+                output_format = iter
+                    .next()
+                    .ok_or_else(|| "--format requires jsonl or csv".to_owned())?;
+                if output_format != "jsonl" && output_format != "csv" {
+                    return Err("--format must be 'jsonl' or 'csv'".to_owned());
+                }
+            }
+            "--fps" => {
+                let value = iter
+                    .next()
+                    .ok_or_else(|| "--fps requires a rate such as 30 or 30000/1001".to_owned())?;
+                fps_override = Some(parse_requested_fps(value)?);
+            }
+            "--segments" => segments = true,
+            "--help" | "-h" => {
+                println!(
+                    "Usage: mediaforge scene-detect <VIDEO> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--format jsonl|csv] [--fps RATE]\n\nFind likely cuts with FFmpeg's scene score. Defaults: threshold 0.4 and at least 1 second between results. JSON Lines is the default; CSV writes a header and one row per cut. --segments turns cut points into contiguous start/end intervals spanning the video. Frame numbers use the probed average rate; --fps overrides it (for example 30000/1001)."
+                );
+                return Ok(());
+            }
+            value if value.starts_with('-') => return Err(format!("unknown option: {value}")),
+            value => {
+                if input.is_some() {
+                    return Err("scene-detect accepts one video file".to_owned());
+                }
+                input = Some(PathBuf::from(value));
+            }
+        }
+    }
+    let input = input.ok_or_else(|| "scene-detect requires a video file".to_owned())?;
+    let detection = detect_scene_cuts(&input, threshold, min_gap, fps_override, segments)?;
+    let input = &detection.input;
+    let cuts = &detection.cuts;
+    let duration = detection.duration;
+    let fps = detection.fps;
+    let stdout = io::stdout();
+    let mut output = io::BufWriter::with_capacity(64 * 1024, stdout.lock());
+    let output_result = (|| -> io::Result<()> {
+        if output_format == "csv" {
+            if let Some(duration) = duration {
+                let mut intervals = Vec::with_capacity(cuts.len() + 1);
+                let mut start = 0.0_f64;
+                for cut in cuts {
+                    if cut.seconds > start && cut.seconds < duration {
+                        intervals.push(SceneSegment {
+                            index: intervals.len() + 1,
+                            start,
+                            end: cut.seconds,
+                        });
+                        start = cut.seconds;
+                    }
+                }
+                if start < duration {
+                    intervals.push(SceneSegment {
+                        index: intervals.len() + 1,
+                        start,
+                        end: duration,
+                    });
+                }
                 output.write_all(b"path,segment,start_timecode,start_seconds,start_frame,end_timecode,end_seconds,end_frame,duration_seconds,fps\n")?;
                 for interval in &intervals {
                     write_csv_field(&mut output, &input.to_string_lossy())?;
@@ -5658,60 +5762,23 @@ fn run_scene_detect(args: &[String]) -> Result<(), String> {
                     )?;
                 }
             } else {
-                let source = json_string(&input.to_string_lossy());
-                for interval in &intervals {
+                output.write_all(b"path,timecode,time_seconds,frame,fps,score\n")?;
+                for cut in cuts {
+                    write_csv_field(&mut output, &input.to_string_lossy())?;
+                    output.write_all(b",")?;
+                    write_csv_field(&mut output, &scene_timecode(cut.seconds))?;
                     writeln!(
                         output,
-                        "{{\"type\":\"segment\",\"path\":{source},\"segment\":{},\"start_timecode\":{},\"start_seconds\":{:.6},\"start_frame\":{},\"end_timecode\":{},\"end_seconds\":{:.6},\"end_frame\":{},\"duration_seconds\":{:.6},\"fps\":{fps:.6},\"nominal_fps\":{nominal_fps}}}",
-                        interval.index,
-                        json_string(&scene_timecode(interval.start)),
-                        interval.start,
-                        (interval.start * fps).round() as u64,
-                        json_string(&scene_timecode(interval.end)),
-                        interval.end,
-                        (interval.end * fps).round() as u64,
-                        interval.end - interval.start
+                        ",{:.6},{},{:.6},{:.6}",
+                        cut.seconds,
+                        (cut.seconds * fps).round() as u64,
+                        fps,
+                        cut.score
                     )?;
                 }
-                writeln!(
-                    output,
-                    "{{\"type\":\"summary\",\"path\":{source},\"segments\":{},\"scene_cuts\":{},\"duration_seconds\":{duration:.6},\"fps\":{fps:.6},\"nominal_fps\":{nominal_fps},\"threshold\":{threshold:.6},\"min_gap_seconds\":{min_gap:.6}}}",
-                    intervals.len(),
-                    cuts.len()
-                )?;
-            }
-        } else if output_format == "csv" {
-            output.write_all(b"path,timecode,time_seconds,frame,fps,score\n")?;
-            for cut in &cuts {
-                write_csv_field(&mut output, &input.to_string_lossy())?;
-                output.write_all(b",")?;
-                write_csv_field(&mut output, &scene_timecode(cut.seconds))?;
-                writeln!(
-                    output,
-                    ",{:.6},{},{:.6},{:.6}",
-                    cut.seconds,
-                    (cut.seconds * fps).round() as u64,
-                    fps,
-                    cut.score
-                )?;
             }
         } else {
-            let source = json_string(&input.to_string_lossy());
-            for cut in &cuts {
-                writeln!(
-                    output,
-                    "{{\"type\":\"scene\",\"path\":{source},\"timecode\":{},\"time_seconds\":{:.6},\"frame\":{},\"fps\":{fps:.6},\"nominal_fps\":{nominal_fps},\"score\":{:.6}}}",
-                    json_string(&scene_timecode(cut.seconds)),
-                    cut.seconds,
-                    (cut.seconds * fps).round() as u64,
-                    cut.score
-                )?;
-            }
-            writeln!(
-                output,
-                "{{\"type\":\"summary\",\"path\":{source},\"cuts\":{},\"fps\":{fps:.6},\"nominal_fps\":{nominal_fps},\"threshold\":{threshold:.6},\"min_gap_seconds\":{min_gap:.6}}}",
-                cuts.len()
-            )?;
+            write_scene_detection_json(&mut output, &detection, threshold, min_gap)?;
         }
         Ok(())
     })();
@@ -5826,11 +5893,6 @@ fn run_scene_detect_dir(args: &[String]) -> Result<(), String> {
     )?;
     records.sort_by(|left, right| left.relative.cmp(&right.relative));
 
-    let executable = env::current_exe()
-        .map_err(|error| format!("could not locate the mediaforge executable: {error}"))?;
-    let threshold_arg = threshold.to_string();
-    let min_gap_arg = min_gap.to_string();
-    let fps_arg = fps.map(|rate| rate.to_string());
     let next = std::sync::atomic::AtomicUsize::new(0);
     let completed = std::sync::atomic::AtomicUsize::new(0);
     let stream_output = std::sync::Mutex::new(());
@@ -5844,46 +5906,39 @@ fn run_scene_detect_dir(args: &[String]) -> Result<(), String> {
                     let Some(record) = records.get(index) else {
                         break;
                     };
-                    let mut command = Command::new(&executable);
-                    command
-                        .arg("scene-detect")
-                        .arg(&record.path)
-                        .args(["--threshold", threshold_arg.as_str()])
-                        .args(["--min-gap", min_gap_arg.as_str()])
-                        .args(["--format", "jsonl"]);
-                    if segments {
-                        command.arg("--segments");
-                    }
-                    if let Some(fps) = fps_arg.as_deref() {
-                        command.args(["--fps", fps]);
-                    }
-                    let result = command.output();
+                    let result = detect_scene_cuts(&record.path, threshold, min_gap, fps, segments);
                     let (success, output) = match result {
-                        Ok(output) if output.status.success() => {
-                            (true, String::from_utf8_lossy(&output.stdout).into_owned())
-                        }
-                        Ok(output) => {
-                            let message = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-                            let message = if message.is_empty() {
-                                format!("scene-detect exited with {}", output.status)
-                            } else {
-                                message
-                            };
-                            (
-                                false,
-                                format!(
-                                    "{{\"type\":\"error\",\"path\":{},\"error\":{}}}\n",
-                                    json_string(&record.path.to_string_lossy()),
-                                    json_string(&message)
+                        Ok(detection) => {
+                            let mut output = Vec::new();
+                            match write_scene_detection_json(
+                                &mut output,
+                                &detection,
+                                threshold,
+                                min_gap,
+                            ) {
+                                Ok(()) => (
+                                    true,
+                                    String::from_utf8(output)
+                                        .expect("JSON scene output is valid UTF-8"),
                                 ),
-                            )
+                                Err(error) => (
+                                    false,
+                                    format!(
+                                        "{{\"type\":\"error\",\"path\":{},\"error\":{}}}\n",
+                                        json_string(&record.path.to_string_lossy()),
+                                        json_string(&format!(
+                                            "could not format scene output: {error}"
+                                        ))
+                                    ),
+                                ),
+                            }
                         }
                         Err(error) => (
                             false,
                             format!(
                                 "{{\"type\":\"error\",\"path\":{},\"error\":{}}}\n",
                                 json_string(&record.path.to_string_lossy()),
-                                json_string(&format!("could not start scene-detect: {error}"))
+                                json_string(&format!("mediaforge: {error}"))
                             ),
                         ),
                     };
