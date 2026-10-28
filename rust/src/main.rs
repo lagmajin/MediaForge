@@ -4617,11 +4617,11 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
 }
 
 fn parse_size(value: &str) -> Result<u64, String> {
-    let normalized = value.trim().to_ascii_lowercase();
-    let split = normalized
+    let trimmed = value.trim();
+    let split = trimmed
         .find(|ch: char| !ch.is_ascii_digit() && ch != '.')
-        .unwrap_or(normalized.len());
-    let (number, unit) = normalized.split_at(split);
+        .unwrap_or(trimmed.len());
+    let (number, unit) = trimmed.split_at(split);
     let (whole, fraction) = number.split_once('.').unwrap_or((number, ""));
     if whole.is_empty() && fraction.is_empty()
         || !whole.bytes().all(|digit| digit.is_ascii_digit())
@@ -4629,13 +4629,44 @@ fn parse_size(value: &str) -> Result<u64, String> {
     {
         return Err(format!("invalid size: {value}"));
     }
-    let multiplier = match unit.trim() {
-        "" | "b" => 1_u128,
-        "k" | "kb" | "kib" => 1024,
-        "m" | "mb" | "mib" => 1024_u128.pow(2),
-        "g" | "gb" | "gib" => 1024_u128.pow(3),
-        "t" | "tb" | "tib" => 1024_u128.pow(4),
-        other => return Err(format!("unknown size unit '{other}' in '{value}'")),
+    let unit = unit.trim();
+    let multiplier = match unit {
+        "" => 1_u128,
+        value if value.eq_ignore_ascii_case("b") => 1,
+        value
+            if value.eq_ignore_ascii_case("k")
+                || value.eq_ignore_ascii_case("kb")
+                || value.eq_ignore_ascii_case("kib") =>
+        {
+            1024
+        }
+        value
+            if value.eq_ignore_ascii_case("m")
+                || value.eq_ignore_ascii_case("mb")
+                || value.eq_ignore_ascii_case("mib") =>
+        {
+            1024_u128.pow(2)
+        }
+        value
+            if value.eq_ignore_ascii_case("g")
+                || value.eq_ignore_ascii_case("gb")
+                || value.eq_ignore_ascii_case("gib") =>
+        {
+            1024_u128.pow(3)
+        }
+        value
+            if value.eq_ignore_ascii_case("t")
+                || value.eq_ignore_ascii_case("tb")
+                || value.eq_ignore_ascii_case("tib") =>
+        {
+            1024_u128.pow(4)
+        }
+        other => {
+            return Err(format!(
+                "unknown size unit '{}' in '{value}'",
+                other.to_ascii_lowercase()
+            ));
+        }
     };
     let whole: u128 = if whole.is_empty() {
         0
@@ -4658,11 +4689,11 @@ fn parse_size(value: &str) -> Result<u64, String> {
 }
 
 fn parse_duration_seconds(value: &str) -> Result<u64, String> {
-    let normalized = value.trim().to_ascii_lowercase();
-    let split = normalized
+    let trimmed = value.trim();
+    let split = trimmed
         .find(|ch: char| !ch.is_ascii_digit())
-        .unwrap_or(normalized.len());
-    let (amount, unit) = normalized.split_at(split);
+        .unwrap_or(trimmed.len());
+    let (amount, unit) = trimmed.split_at(split);
     if amount.is_empty() || !amount.bytes().all(|digit| digit.is_ascii_digit()) {
         return Err(
             "use a positive integer followed by s, m, h, d, or w (for example 12h)".to_owned(),
@@ -4675,11 +4706,11 @@ fn parse_duration_seconds(value: &str) -> Result<u64, String> {
         return Err("duration must be greater than zero".to_owned());
     }
     let seconds_per_unit = match unit {
-        "s" => 1,
-        "m" => 60,
-        "h" => 60 * 60,
-        "d" => 24 * 60 * 60,
-        "w" => 7 * 24 * 60 * 60,
+        unit if unit.eq_ignore_ascii_case("s") => 1,
+        unit if unit.eq_ignore_ascii_case("m") => 60,
+        unit if unit.eq_ignore_ascii_case("h") => 60 * 60,
+        unit if unit.eq_ignore_ascii_case("d") => 24 * 60 * 60,
+        unit if unit.eq_ignore_ascii_case("w") => 7 * 24 * 60 * 60,
         _ => return Err("use s, m, h, d, or w (for example 12h)".to_owned()),
     };
     amount
