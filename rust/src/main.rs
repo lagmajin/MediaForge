@@ -8298,8 +8298,8 @@ fn run_unity_meta(args: &[String]) -> Result<(), String> {
             .collect::<Result<Vec<_>, _>>()?;
         sort_entries(&mut entries);
         let mut sibling_types = HashMap::with_capacity(entries.len());
-        let mut typed_entries = Vec::with_capacity(entries.len());
-        for entry in entries {
+        let mut entry_types = Vec::with_capacity(entries.len());
+        for entry in &entries {
             let file_type = entry.file_type().map_err(|error| {
                 format!(
                     "cannot inspect Unity asset {}: {error}",
@@ -8309,9 +8309,9 @@ fn run_unity_meta(args: &[String]) -> Result<(), String> {
             if file_type.is_file() || file_type.is_dir() {
                 sibling_types.insert(entry.file_name(), (file_type.is_file(), file_type.is_dir()));
             }
-            typed_entries.push((entry, file_type));
+            entry_types.push(file_type);
         }
-        for (entry, file_type) in typed_entries {
+        for (entry, file_type) in entries.into_iter().zip(entry_types) {
             let entry_path = entry.path();
             if file_type.is_symlink() {
                 continue;
