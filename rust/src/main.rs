@@ -4995,9 +4995,8 @@ fn run_probe_dir(args: &[String]) -> Result<(), String> {
     let completed = std::sync::atomic::AtomicUsize::new(0);
     let stream_results = !csv && !compare;
     let stream_output = std::sync::Mutex::new(());
-    let results = std::sync::Mutex::new(
-        Vec::<(usize, bool, String, Option<String>)>::with_capacity(records.len()),
-    );
+    let failures = std::sync::atomic::AtomicUsize::new(0);
+    let results = std::sync::Mutex::new(Vec::<(usize, bool, String, Option<String>)>::new());
     let worker_count = jobs.min(records.len());
     std::thread::scope(|scope| {
         for _ in 0..worker_count {
@@ -5033,6 +5032,9 @@ fn run_probe_dir(args: &[String]) -> Result<(), String> {
                             None,
                         ),
                     };
+                    if !success {
+                        failures.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    }
                     if stream_results {
                         let _guard = stream_output.lock().expect("probe output lock poisoned");
                         let current =
@@ -5043,12 +5045,12 @@ fn run_probe_dir(args: &[String]) -> Result<(), String> {
                             &json[1..]
                         );
                     }
-                    results.lock().expect("probe result mutex poisoned").push((
-                        index,
-                        success,
-                        if stream_results { String::new() } else { json },
-                        if stream_results { None } else { probe },
-                    ));
+                    if !stream_results {
+                        results
+                            .lock()
+                            .expect("probe result mutex poisoned")
+                            .push((index, success, json, probe));
+                    }
                 }
             });
         }
@@ -5059,7 +5061,7 @@ fn run_probe_dir(args: &[String]) -> Result<(), String> {
     if !stream_results {
         results.sort_by_key(|(index, _, _, _)| *index);
     }
-    let failures = results.iter().filter(|(_, success, _, _)| !success).count();
+    let failures = failures.load(std::sync::atomic::Ordering::Relaxed);
     if compare {
         summarize_probe_differences(&records, &results)?;
     } else if csv {
