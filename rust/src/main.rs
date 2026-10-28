@@ -486,9 +486,6 @@ fn walk_with_skip_dirs_mode_counted(
                 }) {
                     continue;
                 }
-                let extension = extension_value
-                    .map(|value| format!(".{}", value.to_ascii_lowercase()))
-                    .unwrap_or_else(|| "[no extension]".to_owned());
                 let metadata = match entry.metadata() {
                     Ok(metadata) => metadata,
                     Err(_) if !strict => {
@@ -508,6 +505,9 @@ fn walk_with_skip_dirs_mode_counted(
                 {
                     continue;
                 }
+                let extension = extension_value
+                    .map(|value| format!(".{}", value.to_ascii_lowercase()))
+                    .unwrap_or_else(|| "[no extension]".to_owned());
                 let needs_modified = filters.modified_since.is_some()
                     || filters.modified_until.is_some()
                     || filters.include_modified;
@@ -697,13 +697,6 @@ where
                 {
                     continue;
                 }
-                let extension = if filters.omit_extension && filters.extensions.is_none() {
-                    String::new()
-                } else {
-                    extension_value
-                        .map(|value| format!(".{}", value.to_ascii_lowercase()))
-                        .unwrap_or_else(|| "[no extension]".to_owned())
-                };
                 let metadata = entry
                     .metadata()
                     .map_err(|error| format!("cannot inspect {}: {error}", path.display()))?;
@@ -716,6 +709,13 @@ where
                 {
                     continue;
                 }
+                let extension = if filters.omit_extension && filters.extensions.is_none() {
+                    String::new()
+                } else {
+                    extension_value
+                        .map(|value| format!(".{}", value.to_ascii_lowercase()))
+                        .unwrap_or_else(|| "[no extension]".to_owned())
+                };
                 let record = FileRecord {
                     relative,
                     path: if filters.omit_absolute_path {
