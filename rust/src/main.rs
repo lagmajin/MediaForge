@@ -1437,17 +1437,19 @@ fn print_json(
     } else {
         duplicate_sizes.len()
     };
-    let mut groups = if include_same_size {
-        let mut groups = by_size
-            .into_iter()
-            .filter(|(_, count)| *count > 1)
-            .map(|(size, count)| (size, count, Vec::<&str>::new()))
-            .collect::<Vec<_>>();
-        groups.sort_by_key(|(size, _, _)| *size);
-        groups
+    let mut groups = Vec::with_capacity(if include_same_size {
+        candidate_group_count
     } else {
-        Vec::new()
-    };
+        0
+    });
+    if include_same_size {
+        for (size, count) in by_size {
+            if count > 1 {
+                groups.push((size, count, Vec::<&str>::with_capacity(count)));
+            }
+        }
+        groups.sort_by_key(|(size, _, _)| *size);
+    }
     if include_same_size {
         for record in records {
             if let Ok(index) = groups.binary_search_by_key(&record.size, |(size, _, _)| *size) {
