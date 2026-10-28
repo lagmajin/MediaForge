@@ -123,6 +123,12 @@ fn is_hidden(name: &str) -> bool {
     name.starts_with('.')
 }
 
+fn directory_name_matches(name: &str, candidates: &[&str]) -> bool {
+    candidates
+        .iter()
+        .any(|candidate| name.eq_ignore_ascii_case(candidate))
+}
+
 fn sort_entries(entries: &mut [fs::DirEntry]) {
     entries.sort_by_cached_key(|entry| {
         let name = entry.file_name().to_string_lossy().into_owned();
@@ -211,7 +217,7 @@ fn walk_with_skip_dirs_mode(
                 .to_string_lossy()
                 .replace('\\', "/");
             if file_type.is_dir() {
-                if skip_dirs.contains(&name.as_str())
+                if directory_name_matches(&name, skip_dirs)
                     || (!include_hidden && is_hidden(&name))
                     || is_ignored_directory(&relative, &active_ignored)
                 {
@@ -288,7 +294,7 @@ fn walk_strict(
                 .to_string_lossy()
                 .replace('\\', "/");
             if file_type.is_dir() {
-                if skip_dirs.contains(&name.as_str())
+                if directory_name_matches(&name, skip_dirs)
                     || (!include_hidden && is_hidden(&name))
                     || is_ignored_directory(&relative, &active_ignored)
                 {
@@ -1246,7 +1252,7 @@ fn directory_size(root: &Path) -> Result<(u64, u64), String> {
                 .replace('\\', "/");
             if file_type.is_dir() {
                 let name = entry.file_name();
-                if !SKIP_DIRS.contains(&name.to_string_lossy().as_ref())
+                if !directory_name_matches(&name.to_string_lossy(), SKIP_DIRS)
                     && !is_ignored_directory(&relative, &active_ignored)
                 {
                     let child_rules = extend_ignore_rules(&root, &path, active_ignored.as_ref())?;
@@ -1645,8 +1651,8 @@ fn run_project(args: &[String]) -> Result<(), String> {
                     .unwrap_or(&path)
                     .to_string_lossy()
                     .replace('\\', "/");
-                if !SKIP_DIRS.contains(&lossy_name.as_ref())
-                    && !PROJECT_ARTIFACT_DIRS.contains(&lossy_name.as_ref())
+                if !directory_name_matches(&lossy_name, SKIP_DIRS)
+                    && !directory_name_matches(&lossy_name, PROJECT_ARTIFACT_DIRS)
                     && !is_ignored_directory(&relative, &active_ignored)
                 {
                     let child_rules = extend_ignore_rules(&root, &path, active_ignored.as_ref())?;
