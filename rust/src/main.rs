@@ -2403,11 +2403,31 @@ fn run_pack(args: &[String]) -> Result<(), String> {
         return Ok(());
     }
 
-    let mut archive = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&output_path)
-        .map_err(|error| format!("cannot create archive {}: {error}", output_path.display()))?;
+    let temp_path = loop {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let candidate = output_parent.join(format!(
+            ".mediaforge-pack-{}-{nonce}.tmp",
+            std::process::id()
+        ));
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&candidate)
+        {
+            Ok(file) => break (candidate, file),
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(error) => {
+                return Err(format!(
+                    "cannot create temporary archive beside {}: {error}",
+                    output_path.display()
+                ));
+            }
+        }
+    };
+    let (temp_path, mut archive) = temp_path;
     let write_result = (|| -> Result<(), String> {
         for (index, (record, name)) in entries.iter().enumerate() {
             pack_file(&mut archive, name, record, index + 1)?;
@@ -2421,14 +2441,34 @@ fn run_pack(args: &[String]) -> Result<(), String> {
     })();
     drop(archive);
     if let Err(error) = write_result {
-        return match fs::remove_file(&output_path) {
+        return match fs::remove_file(&temp_path) {
             Ok(()) => Err(error),
             Err(cleanup_error) if cleanup_error.kind() == io::ErrorKind::NotFound => Err(error),
             Err(cleanup_error) => Err(format!(
-                "{error}; incomplete archive could not be removed at {}: {cleanup_error}",
-                output_path.display()
+                "{error}; temporary archive could not be removed at {}: {cleanup_error}",
+                temp_path.display()
             )),
         };
+    }
+    if let Err(error) = move_file_no_replace(&temp_path, &output_path) {
+        let cleanup = fs::remove_file(&temp_path);
+        return Err(match cleanup {
+            Ok(()) => format!(
+                "could not finalize archive {}: {error}",
+                output_path.display()
+            ),
+            Err(cleanup_error) if cleanup_error.kind() == io::ErrorKind::NotFound => {
+                format!(
+                    "could not finalize archive {}: {error}",
+                    output_path.display()
+                )
+            }
+            Err(cleanup_error) => format!(
+                "could not finalize archive {}: {error}; temporary archive remains at {}: {cleanup_error}",
+                output_path.display(),
+                temp_path.display()
+            ),
+        });
     }
     let archive_size = fs::metadata(&output_path)
         .map_err(|error| format!("archive was created but could not be inspected: {error}"))?
