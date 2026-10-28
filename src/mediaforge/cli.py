@@ -31,6 +31,16 @@ def classify(path: Path) -> str:
 
 def iter_files(root: Path, include_hidden: bool = False) -> Iterable[Path]:
     """Walk without following symlinks and prune common generated folders."""
+    ignored_names: set[str] = set()
+    if not include_hidden:
+        try:
+            for line in (root / ".gitignore").read_text(encoding="utf-8").splitlines():
+                pattern = line.strip().lstrip("/").rstrip("/")
+                if pattern and not pattern.startswith(("#", "!")) and not any(c in pattern for c in "*?["):
+                    ignored_names.add(pattern.replace("\\", "/"))
+        except OSError:
+            pass
+
     def onerror(_: OSError) -> None:
         return None
 
@@ -38,12 +48,15 @@ def iter_files(root: Path, include_hidden: bool = False) -> Iterable[Path]:
         dirs[:] = sorted(
             d for d in dirs
             if d not in SKIP_DIRS
+            and d not in ignored_names
             and (include_hidden or not d.startswith("."))
             and not (Path(current) / d).is_symlink()
         )
         for name in sorted(files):
             path = Path(current) / name
             if not include_hidden and any(part.startswith(".") for part in path.relative_to(root).parts):
+                continue
+            if not include_hidden and any(part in ignored_names for part in path.relative_to(root).parts):
                 continue
             if not path.is_symlink():
                 yield path

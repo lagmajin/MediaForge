@@ -1,22 +1,34 @@
 # MediaForge CLI
 
-Fast, local-first command-line utilities for game development and video production. The first command scans a project or media folder and reports asset counts, storage use, largest files, and same-size duplicate candidates. It uses only the Python standard library and makes no AI or network calls.
+Fast, local-first command-line utilities for game development and video production. The native Rust CLI scans a project or media folder and reports asset counts, storage use, largest files, and same-size duplicate candidates. Core scans make no AI or network calls. A Python implementation is also kept as an equivalent reference while evaluating Rust.
 
 ## Requirements
 
-- Python 3.10 or newer
+- Rust/Cargo stable for the native CLI
+- Python 3.10 or newer only for the reference implementation
 - Windows, macOS, or Linux
 
 ## Install from a checkout
 
 ```sh
-python -m pip install .
+cargo install --path .
 mediaforge scan ./Media
 ```
 
-On Windows, use `py -m pip install .` if `python` is not on PATH. The installed `mediaforge` command works from PowerShell, Command Prompt, and POSIX shells.
+For a portable executable without installing, run `cargo build --release` and use `target/release/mediaforge` (Windows: `target\\release\\mediaforge.exe`).
 
-For development without installing:
+## Rust native build
+
+The native Rust implementation builds with the stable toolchain and the Rust standard library only:
+
+```sh
+cargo build --release
+./target/release/mediaforge scan ./Media
+```
+
+On Windows, run `target\release\mediaforge.exe scan .\Media`. The Python and Rust versions use the same command syntax and report fields. Rust scans are fully offline once the toolchain is installed. Both skip Git-ignored path entries without glob syntax, plus built-in generated/dependency directories. Full Git ignore glob and negation semantics are not implemented yet.
+
+To run the Python reference implementation during comparison:
 
 ```sh
 python -m pip install -e .
@@ -35,7 +47,9 @@ Hidden folders and common generated/dependency directories (`.git`, `node_module
 
 ## Cross-platform roadmap
 
-- [x] Single Python implementation for Windows, macOS, and Linux
+- [x] Python reference CLI for Windows, macOS, and Linux
+- [x] Native Rust CLI with no third-party crate dependencies
+- [x] CI build matrix for Windows, macOS, and Linux
 - [x] Fast local media and asset inventory with no API/token use
 - [ ] Content-verified duplicate detection on demand
 - [ ] Optional FFmpeg/ffprobe integration for duration, codecs, frame rate, and dimensions

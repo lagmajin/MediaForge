@@ -1,0 +1,17 @@
+[package]
+name = "mediaforge"
+version = "0.1.0"
+edition = "2024"
+description = "Fast, local-first CLI utilities for game development and video production assets"
+license = "MIT"
+repository = "https://github.com/lagmajin/MediaForge"
+readme = "README.md"
+
+[[bin]]
+name = "mediaforge"
+path = "rust/src/main.rs"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
