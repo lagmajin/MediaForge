@@ -7596,6 +7596,19 @@ fn pack_file(
 
     let mut input = File::open(&record.path)
         .map_err(|error| format!("cannot open {}: {error}", record.path.display()))?;
+    let initial_metadata = input.metadata().map_err(|error| {
+        format!(
+            "could not inspect {} before archiving: {error}",
+            record.path.display()
+        )
+    })?;
+    if initial_metadata.len() != record.size || initial_metadata.modified().ok() != record.modified
+    {
+        return Err(format!(
+            "source changed before packing: {}",
+            record.path.display()
+        ));
+    }
     let mut remaining = record.size;
     while remaining > 0 {
         let requested = remaining.min(copy_buffer.len() as u64) as usize;
