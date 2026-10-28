@@ -766,6 +766,37 @@ fn json_string(value: &str) -> String {
     out
 }
 
+fn scan_filters_json(
+    kind_filter: Option<Kind>,
+    min_size: Option<u64>,
+    max_size: Option<u64>,
+    extension_filter: Option<&HashSet<String>>,
+    include_hidden: bool,
+    strict: bool,
+) -> String {
+    let extensions = extension_filter.map_or_else(
+        || "null".to_owned(),
+        |extensions| {
+            let mut extensions = extensions.iter().collect::<Vec<_>>();
+            extensions.sort();
+            format!(
+                "[{}]",
+                extensions
+                    .into_iter()
+                    .map(|extension| json_string(extension))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            )
+        },
+    );
+    format!(
+        "{{\"type\":{},\"min_size_bytes\":{},\"max_size_bytes\":{},\"extensions\":{extensions},\"include_hidden\":{include_hidden},\"strict\":{strict}}}",
+        kind_filter.map_or("null".to_owned(), |kind| json_string(kind.as_str())),
+        min_size.map_or("null".to_owned(), |size| size.to_string()),
+        max_size.map_or("null".to_owned(), |size| size.to_string()),
+    )
+}
+
 fn print_json(
     root: &Path,
     records: &[FileRecord],
@@ -825,23 +856,16 @@ fn print_json(
             .collect::<Vec<_>>()
             .join(",")
     );
-    let filter_extensions_json = extension_filter
-        .map(|extensions| {
-            let mut extensions = extensions.iter().collect::<Vec<_>>();
-            extensions.sort();
-            extensions
-                .into_iter()
-                .map(|extension| json_string(extension))
-                .collect::<Vec<_>>()
-                .join(",")
-        })
-        .unwrap_or_default();
     println!(
-        "  \"filters\": {{\"type\":{},\"min_size_bytes\":{},\"max_size_bytes\":{},\"extensions\":{},\"include_hidden\":{include_hidden},\"strict\":{strict}}},",
-        kind_filter.map_or("null".to_owned(), |kind| json_string(kind.as_str())),
-        min_size.map_or("null".to_owned(), |size| size.to_string()),
-        max_size.map_or("null".to_owned(), |size| size.to_string()),
-        extension_filter.map_or("null".to_owned(), |_| format!("[{filter_extensions_json}]")),
+        "  \"filters\": {},",
+        scan_filters_json(
+            kind_filter,
+            min_size,
+            max_size,
+            extension_filter,
+            include_hidden,
+            strict
+        )
     );
     println!("  \"largest_limit\": {largest_limit},");
     println!("  \"total_bytes\": {},", total_bytes);
@@ -1007,6 +1031,46 @@ fn print_csv(records: &[FileRecord]) -> Result<(), String> {
             .map_err(|error| format!("could not write CSV row: {error}"))?;
     }
     Ok(())
+}
+
+fn print_scan_csv_info(
+    root: &Path,
+    files: usize,
+    skipped_paths: usize,
+    skipped_examples: &[String],
+    kind_filter: Option<Kind>,
+    min_size: Option<u64>,
+    max_size: Option<u64>,
+    extension_filter: Option<&HashSet<String>>,
+    include_hidden: bool,
+    strict: bool,
+    csv_sort: Option<bool>,
+) {
+    let examples = skipped_examples
+        .iter()
+        .map(|path| json_string(path))
+        .collect::<Vec<_>>()
+        .join(",");
+    let order = match csv_sort {
+        Some(false) => "path",
+        Some(true) => "size",
+        None => "scan",
+    };
+    eprintln!(
+        "{{\"schema_version\":1,\"type\":\"scan_info\",\"root\":{},\"files\":{files},\"incomplete\":{},\"skipped_paths\":{skipped_paths},\"skipped_paths_truncated\":{},\"skipped_path_examples\":[{examples}],\"filters\":{},\"csv_order\":{}}}",
+        json_string(&root.to_string_lossy()),
+        skipped_paths > 0,
+        skipped_paths > skipped_examples.len(),
+        scan_filters_json(
+            kind_filter,
+            min_size,
+            max_size,
+            extension_filter,
+            include_hidden,
+            strict,
+        ),
+        json_string(order),
+    );
 }
 
 fn files_identical(left: &Path, right: &Path) -> io::Result<bool> {
@@ -1279,11 +1343,13 @@ fn run_scan(args: &[String]) -> Result<(), String> {
     let mut extension_filter = None;
     let mut largest_limit = None;
     let mut csv_sort = None;
+    let mut csv_info = false;
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
         match arg.as_str() {
             "--json" => json = true,
             "--csv" => csv = true,
+            "--csv-info" => csv_info = true,
             "--include-hidden" => include_hidden = true,
             "--strict" => strict = true,
             "--type" => {
@@ -1334,7 +1400,7 @@ fn run_scan(args: &[String]) -> Result<(), String> {
             }
             "--help" | "-h" => {
                 println!(
-                    "Usage: mediaforge scan [PATH] [--json|--csv] [--include-hidden] [--strict] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--largest N] [--sort path|size]\n\nSummarize media and game assets in a folder. --min-size and --max-size select an inclusive byte range; fractional size values are rounded up to whole bytes. Permission and file-system errors are skipped by default; text/JSON report incomplete scans and CSV writes warnings to stderr. JSON uses schema_version 1 and includes incomplete, skipped_paths, up to 100 skipped_path_examples, skipped_paths_truncated, and the applied filters. Use --strict to fail on the first traversal error instead. --csv emits one row per matched file with path, type, extension, byte size, and modification time in Unix seconds; it always includes all matches. Use --sort path or --sort size to control CSV row order; size order is largest first with deterministic path tie-breaking. --largest controls how many biggest files are shown (default: 10 in text, 20 in JSON). Defaults to the current directory.\n\nTypes: video, audio, image, model, texture, project, other\nExtensions: comma-separated, case-insensitive (for example exr,tif); use none to select files without an extension\nSizes: bytes, KiB/MiB/GiB, or K/M/G (for example 500M); fractional values round up to the next byte"
+                    "Usage: mediaforge scan [PATH] [--json|--csv] [--csv-info] [--include-hidden] [--strict] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--largest N] [--sort path|size]\n\nSummarize media and game assets in a folder. --min-size and --max-size select an inclusive byte range; fractional size values are rounded up to whole bytes. Permission and file-system errors are skipped by default; text/JSON report incomplete scans and CSV writes warnings to stderr. JSON uses schema_version 1 and includes incomplete, skipped_paths, up to 100 skipped_path_examples, skipped_paths_truncated, and the applied filters. Use --strict to fail on the first traversal error instead. --csv emits one row per matched file with path, type, extension, byte size, and modification time in Unix seconds; it always includes all matches. Add --csv-info to write a JSON scan-info record to stderr without changing CSV stdout. Use --sort path or --sort size to control CSV row order; size order is largest first with deterministic path tie-breaking. --largest controls how many biggest files are shown (default: 10 in text, 20 in JSON). Defaults to the current directory.\n\nTypes: video, audio, image, model, texture, project, other\nExtensions: comma-separated, case-insensitive (for example exr,tif); use none to select files without an extension\nSizes: bytes, KiB/MiB/GiB, or K/M/G (for example 500M); fractional values round up to the next byte"
                 );
                 return Ok(());
             }
@@ -1352,6 +1418,9 @@ fn run_scan(args: &[String]) -> Result<(), String> {
     }
     if csv_sort.is_some() && !csv {
         return Err("--sort can only be used with --csv".to_owned());
+    }
+    if csv_info && !csv {
+        return Err("--csv-info can only be used with --csv".to_owned());
     }
     if max_size.is_some_and(|max| min_size.is_some_and(|min| max < min)) {
         return Err("--max-size must be greater than or equal to --min-size".to_owned());
@@ -1403,7 +1472,21 @@ fn run_scan(args: &[String]) -> Result<(), String> {
     }
     let largest_limit = largest_limit.unwrap_or(if json { 20 } else { 10 });
     if csv {
-        if skipped_paths > 0 {
+        if csv_info {
+            print_scan_csv_info(
+                &root,
+                records.len(),
+                skipped_paths,
+                &skipped_examples,
+                kind_filter,
+                min_size,
+                max_size,
+                extension_filter.as_ref(),
+                include_hidden,
+                strict,
+                csv_sort,
+            );
+        } else if skipped_paths > 0 {
             eprintln!("Warning: incomplete scan; skipped {skipped_paths} unreadable path(s).");
             for path in &skipped_examples {
                 eprintln!("  skipped: {path}");
@@ -2596,7 +2679,7 @@ fn fraction_ceil_scaled(fraction: &str, multiplier: u128) -> u128 {
 
 fn print_help() {
     println!(
-        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json|--csv] [--include-hidden] [--strict] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--largest N] [--sort path|size]\n  mediaforge dupes [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--top-groups N]\n  mediaforge probe <FILE> [--compact] [--summary]\n  mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--type video|audio] [--min-size SIZE] [--max-size SIZE] [--jobs N] [--summary] [--compare] [--csv]\n  mediaforge storyboard <VIDEO> --output <IMAGE> [--interval SECONDS] [--columns N] [--rows N] [--width PIXELS]\n  mediaforge scene-detect-dir <PATH> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--fps RATE] [--extension EXTENSIONS] [--include-hidden] [--jobs N]\n  mediaforge scene-detect <VIDEO> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--format jsonl|csv] [--fps RATE]\n  mediaforge proxy <VIDEO> --output <FILE.mp4> [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge proxy-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET] [--jobs N] [--skip-existing] [--json]\n  mediaforge proxy-config init [FILE] [--profile fast|balanced|quality] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge extract-audio <VIDEO> --output <FILE> [--format mp3|wav|flac] [--bitrate RATE] [--stream N]\n  mediaforge extract-audio-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--format mp3|wav|flac] [--bitrate RATE] [--stream N] [--jobs N] [--skip-existing] [--json]\n  mediaforge snapshot [PATH] (--output FILE [--overwrite] | --diff FILE [--update]) [--json|--csv] [--include-hidden] [--include-generated] [--hash] [--jobs N] [--fail-on-change]\n  mediaforge project [PATH] [--json]\n  mediaforge unity-meta [PROJECT_PATH] [--json] [--include-hidden]\n  mediaforge gitignore [PATH] [--apply]\n  mediaforge organize [PATH] [--by type|extension|size] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--apply]\n  mediaforge sequence [PATH] [--prefix NAME] [--start N] [--padding N] [--extension EXTENSIONS] [--include-hidden] [--natural] [--json] [--apply]\n  mediaforge undo [PATH] [--json]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--include-hidden] [--include-generated] [--dry-run] [--json] [--list]\n  mediaforge --version\n  mediaforge --help"
+        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json|--csv] [--csv-info] [--include-hidden] [--strict] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--largest N] [--sort path|size]\n  mediaforge dupes [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--top-groups N]\n  mediaforge probe <FILE> [--compact] [--summary]\n  mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--type video|audio] [--min-size SIZE] [--max-size SIZE] [--jobs N] [--summary] [--compare] [--csv]\n  mediaforge storyboard <VIDEO> --output <IMAGE> [--interval SECONDS] [--columns N] [--rows N] [--width PIXELS]\n  mediaforge scene-detect-dir <PATH> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--fps RATE] [--extension EXTENSIONS] [--include-hidden] [--jobs N]\n  mediaforge scene-detect <VIDEO> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--format jsonl|csv] [--fps RATE]\n  mediaforge proxy <VIDEO> --output <FILE.mp4> [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge proxy-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET] [--jobs N] [--skip-existing] [--json]\n  mediaforge proxy-config init [FILE] [--profile fast|balanced|quality] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge extract-audio <VIDEO> --output <FILE> [--format mp3|wav|flac] [--bitrate RATE] [--stream N]\n  mediaforge extract-audio-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--format mp3|wav|flac] [--bitrate RATE] [--stream N] [--jobs N] [--skip-existing] [--json]\n  mediaforge snapshot [PATH] (--output FILE [--overwrite] | --diff FILE [--update]) [--json|--csv] [--include-hidden] [--include-generated] [--hash] [--jobs N] [--fail-on-change]\n  mediaforge project [PATH] [--json]\n  mediaforge unity-meta [PROJECT_PATH] [--json] [--include-hidden]\n  mediaforge gitignore [PATH] [--apply]\n  mediaforge organize [PATH] [--by type|extension|size] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--apply]\n  mediaforge sequence [PATH] [--prefix NAME] [--start N] [--padding N] [--extension EXTENSIONS] [--include-hidden] [--natural] [--json] [--apply]\n  mediaforge undo [PATH] [--json]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--include-hidden] [--include-generated] [--dry-run] [--json] [--list]\n  mediaforge --version\n  mediaforge --help"
     );
 }
 
