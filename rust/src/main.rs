@@ -8110,10 +8110,24 @@ fn run_project(args: &[String]) -> Result<(), String> {
         return Err(format!("expected a project directory: {}", root.display()));
     }
 
+    let root_entries = fs::read_dir(&root)
+        .map_err(|error| format!("cannot read project directory {}: {error}", root.display()))?
+        .map(|entry| {
+            let entry = entry
+                .map_err(|error| format!("cannot read entry in {}: {error}", root.display()))?;
+            let file_type = entry.file_type().map_err(|error| {
+                format!(
+                    "cannot inspect project entry {}: {error}",
+                    entry.path().display()
+                )
+            })?;
+            Ok((entry, file_type))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    let has_unity_assets = is_real_directory(&root.join("Assets"));
+    let has_godot_project = is_real_file(&root.join("project.godot"));
     let mut engines = Vec::<(&str, Vec<&str>, Vec<&str>)>::new();
-    if is_real_directory(&root.join("Assets"))
-        || is_real_file(&root.join("ProjectSettings/ProjectVersion.txt"))
-    {
+    if has_unity_assets || is_real_file(&root.join("ProjectSettings/ProjectVersion.txt")) {
         engines.push((
             "Unity",
             vec!["Assets", "ProjectSettings"],
@@ -8142,31 +8156,19 @@ fn run_project(args: &[String]) -> Result<(), String> {
                 .map(str::to_owned)
         })
     });
-    let root_entries = fs::read_dir(&root)
-        .map_err(|error| format!("cannot read project directory {}: {error}", root.display()))?
-        .map(|entry| {
-            entry.map_err(|error| format!("cannot read entry in {}: {error}", root.display()))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
     let mut unreal_files = Vec::<(String, Option<String>)>::new();
-    for entry in &root_entries {
-        let file_type = entry.file_type().map_err(|error| {
-            format!(
-                "cannot inspect project entry {}: {error}",
-                entry.path().display()
-            )
-        })?;
+    for (entry, file_type) in &root_entries {
+        let entry_path = entry.path();
         if file_type.is_file()
-            && entry
-                .path()
+            && entry_path
                 .extension()
                 .is_some_and(|extension| extension.eq_ignore_ascii_case("uproject"))
         {
             let project_file = entry.file_name().to_string_lossy().into_owned();
-            let contents = fs::read_to_string(entry.path()).map_err(|error| {
+            let contents = fs::read_to_string(&entry_path).map_err(|error| {
                 format!(
                     "cannot read Unreal project descriptor {}: {error}",
-                    entry.path().display()
+                    entry_path.display()
                 )
             })?;
             let association = json_top_level_string_field(&contents, "EngineAssociation")
@@ -8183,7 +8185,7 @@ fn run_project(args: &[String]) -> Result<(), String> {
         ));
     }
     let godot_project_path = root.join("project.godot");
-    let godot_features = if is_real_file(&godot_project_path) {
+    let godot_features = if has_godot_project {
         let contents = fs::read_to_string(&godot_project_path).map_err(|error| {
             format!(
                 "cannot read Godot project file {}: {error}",
@@ -8205,30 +8207,12 @@ fn run_project(args: &[String]) -> Result<(), String> {
         Some(root_entries),
     )];
     while let Some((directory, active_ignored, preloaded_entries)) = pending.pop() {
-        let entries = if let Some(entries) = preloaded_entries {
-            entries
-        } else {
-            fs::read_dir(&directory)
-                .map_err(|error| {
-                    format!(
-                        "cannot read project directory {}: {error}",
-                        directory.display()
-                    )
-                })?
-                .map(|entry| {
-                    entry.map_err(|error| {
-                        format!("cannot read entry in {}: {error}", directory.display())
-                    })
-                })
-                .collect::<Result<Vec<_>, _>>()?
-        };
-        for entry in entries {
+        let mut process_entry = |entry: fs::DirEntry,
+                                 file_type: fs::FileType|
+         -> Result<(), String> {
             let path = entry.path();
-            let file_type = entry.file_type().map_err(|error| {
-                format!("cannot inspect project entry {}: {error}", path.display())
-            })?;
             if file_type.is_symlink() {
-                continue;
+                return Ok(());
             }
             if file_type.is_dir() {
                 let name = entry.file_name();
@@ -8256,11 +8240,36 @@ fn run_project(args: &[String]) -> Result<(), String> {
                     .to_string_lossy()
                     .replace('\\', "/");
                 if is_ignored(&relative, &active_ignored) {
-                    continue;
+                    return Ok(());
                 }
                 if let Some(kind) = project_file_kind(&relative) {
                     project_files.push((relative, kind));
                 }
+            }
+            Ok(())
+        };
+        if let Some(entries) = preloaded_entries {
+            for (entry, file_type) in entries {
+                process_entry(entry, file_type)?;
+            }
+        } else {
+            let entries = fs::read_dir(&directory).map_err(|error| {
+                format!(
+                    "cannot read project directory {}: {error}",
+                    directory.display()
+                )
+            })?;
+            for entry in entries {
+                let entry = entry.map_err(|error| {
+                    format!("cannot read entry in {}: {error}", directory.display())
+                })?;
+                let file_type = entry.file_type().map_err(|error| {
+                    format!(
+                        "cannot inspect project entry {}: {error}",
+                        entry.path().display()
+                    )
+                })?;
+                process_entry(entry, file_type)?;
             }
         }
     }
@@ -8271,10 +8280,10 @@ fn run_project(args: &[String]) -> Result<(), String> {
     for (engine, required, cache_names) in &engines {
         for required_path in required {
             let required_entry = root.join(required_path);
-            let present = if *required_path == "project.godot" {
-                is_real_file(&required_entry)
-            } else {
-                is_real_directory(&required_entry)
+            let present = match *required_path {
+                "project.godot" => has_godot_project,
+                "Assets" => has_unity_assets,
+                _ => is_real_directory(&required_entry),
             };
             if !present {
                 missing.push((engine, required_path));
