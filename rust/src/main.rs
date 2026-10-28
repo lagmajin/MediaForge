@@ -8143,6 +8143,7 @@ fn run_pack(args: &[String]) -> Result<(), String> {
     let (temp_path, archive_file) = temp_path;
     let mut archive = BufWriter::with_capacity(64 * 1024, archive_file);
     let mut copy_buffer = vec![0_u8; 256 * 1024];
+    let mut archive_bytes = 0_u64;
     let write_result = (|| -> Result<(), String> {
         for (index, (record, name)) in entries.iter().enumerate() {
             pack_file(&mut archive, name, record, index + 1, &mut copy_buffer)?;
@@ -8156,7 +8157,18 @@ fn run_pack(args: &[String]) -> Result<(), String> {
         archive
             .get_ref()
             .sync_all()
-            .map_err(|error| format!("could not persist archive: {error}"))
+            .map_err(|error| format!("could not persist archive: {error}"))?;
+        archive_bytes = archive
+            .get_ref()
+            .metadata()
+            .map_err(|error| format!("could not inspect completed archive: {error}"))?
+            .len();
+        if archive_bytes != estimated_archive_bytes {
+            return Err(format!(
+                "archive size mismatch: wrote {archive_bytes} bytes, estimated {estimated_archive_bytes}"
+            ));
+        }
+        Ok(())
     })();
     drop(archive);
     if let Err(error) = write_result {
@@ -8189,9 +8201,7 @@ fn run_pack(args: &[String]) -> Result<(), String> {
             ),
         });
     }
-    let archive_size = fs::metadata(&output_path)
-        .map_err(|error| format!("archive was created but could not be inspected: {error}"))?
-        .len();
+    let archive_size = archive_bytes;
     if json {
         print_pack_json(
             &root,
