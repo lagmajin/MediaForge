@@ -10116,7 +10116,7 @@ fn run_gitignore(args: &[String]) -> Result<(), String> {
             "--compact" => compact = true,
             "--help" | "-h" => {
                 println!(
-                    "Usage: mediaforge gitignore [PATH] [--apply] [--json] [--compact] [--compact]\n\nPreview engine-specific generated-file patterns for .gitignore. Existing files are only appended to when --apply is supplied. --json emits the result and proposed or applied patterns as one object. --compact removes formatting whitespace from JSON output and requires --json."
+                    "Usage: mediaforge gitignore [PATH] [--apply] [--json] [--compact]\n\nPreview engine-specific generated-file patterns for .gitignore. Existing files are only appended to when --apply is supplied. --json emits the result and proposed or applied patterns as one object. --compact removes formatting whitespace from JSON output and requires --json."
                 );
                 return Ok(());
             }
@@ -11309,7 +11309,7 @@ fn run_undo(args: &[String]) -> Result<(), String> {
             "--compact" => compact = true,
             "--help" | "-h" => {
                 println!(
-                    "Usage: mediaforge undo [PATH] [--json] [--compact] [--compact]\n\nRestore files moved by the most recent 'organize --apply', 'rename --apply', or 'sequence --apply' in PATH. --json emits restored and conflict counts. --compact removes formatting whitespace from JSON output and requires --json."
+                    "Usage: mediaforge undo [PATH] [--json] [--compact]\n\nRestore files moved by the most recent 'organize --apply', 'rename --apply', or 'sequence --apply' in PATH. --json emits restored and conflict counts. --compact removes formatting whitespace from JSON output and requires --json."
                 );
                 return Ok(());
             }
