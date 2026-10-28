@@ -445,6 +445,41 @@ fn remove_temp_with_context(path: &Path, context: String) -> String {
     }
 }
 
+fn create_unique_temp_file(
+    parent: &Path,
+    prefix: &str,
+    description: &str,
+) -> Result<(PathBuf, File), String> {
+    let mut attempt = 0_u64;
+    loop {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let candidate = parent.join(format!(
+            "{prefix}-{}-{nonce}-{attempt}.tmp",
+            std::process::id()
+        ));
+        attempt = attempt
+            .checked_add(1)
+            .ok_or_else(|| format!("could not allocate a temporary {description} name"))?;
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&candidate)
+        {
+            Ok(file) => return Ok((candidate, file)),
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(error) => {
+                return Err(format!(
+                    "cannot create a temporary {description} in {}: {error}",
+                    parent.display()
+                ));
+            }
+        }
+    }
+}
+
 fn read_up_to_full_or_eof(reader: &mut impl Read, buffer: &mut [u8]) -> io::Result<usize> {
     let mut filled = 0;
     while filled < buffer.len() {
@@ -2609,34 +2644,8 @@ fn write_new_file_atomically(
             path.display()
         ));
     }
-    let mut attempt = 0_u64;
-    let (temporary, mut file) = loop {
-        let nonce = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos();
-        let candidate = parent.join(format!(
-            ".mediaforge-config-{}-{nonce}-{attempt}.tmp",
-            std::process::id()
-        ));
-        attempt = attempt
-            .checked_add(1)
-            .ok_or_else(|| format!("could not allocate a temporary {description} name"))?;
-        match OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&candidate)
-        {
-            Ok(file) => break (candidate, file),
-            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
-            Err(error) => {
-                return Err(format!(
-                    "cannot create temporary {description} beside {}: {error}",
-                    path.display()
-                ));
-            }
-        }
-    };
+    let (temporary, mut file) = create_unique_temp_file(parent, ".mediaforge-config", description)
+        .map_err(|error| format!("{error} beside {}", path.display()))?;
     let write_result = file.write_all(contents).and_then(|()| file.sync_all());
     drop(file);
     if let Err(error) = write_result {
@@ -4351,34 +4360,7 @@ fn read_snapshot_manifest(path: &Path) -> Result<(bool, bool, bool, SnapshotEntr
 }
 
 fn snapshot_temp_file(parent: &Path) -> Result<(PathBuf, File), String> {
-    let mut attempt = 0_u64;
-    loop {
-        let nonce = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos();
-        let candidate = parent.join(format!(
-            ".mediaforge-snapshot-{}-{nonce}-{attempt}.tmp",
-            std::process::id()
-        ));
-        attempt = attempt
-            .checked_add(1)
-            .ok_or_else(|| "could not allocate a temporary snapshot name".to_owned())?;
-        match OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&candidate)
-        {
-            Ok(file) => return Ok((candidate, file)),
-            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
-            Err(error) => {
-                return Err(format!(
-                    "cannot create a temporary snapshot in {}: {error}",
-                    parent.display()
-                ));
-            }
-        }
-    }
+    create_unique_temp_file(parent, ".mediaforge-snapshot", "snapshot")
 }
 
 fn write_snapshot_manifest(
@@ -12805,36 +12787,9 @@ fn run_pack(args: &[String]) -> Result<(), String> {
         return Ok(());
     }
 
-    let mut temp_attempt = 0_u64;
-    let temp_path = loop {
-        let nonce = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos();
-        let candidate = output_parent.join(format!(
-            ".mediaforge-pack-{}-{nonce}-{}.tmp",
-            std::process::id(),
-            temp_attempt
-        ));
-        temp_attempt = temp_attempt
-            .checked_add(1)
-            .ok_or_else(|| "could not allocate a unique temporary archive name".to_owned())?;
-        match OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&candidate)
-        {
-            Ok(file) => break (candidate, file),
-            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
-            Err(error) => {
-                return Err(format!(
-                    "cannot create temporary archive beside {}: {error}",
-                    output_path.display()
-                ));
-            }
-        }
-    };
-    let (temp_path, archive_file) = temp_path;
+    let (temp_path, archive_file) =
+        create_unique_temp_file(&output_parent, ".mediaforge-pack", "archive")
+            .map_err(|error| format!("{error} beside {}", output_path.display()))?;
     let mut archive = BufWriter::with_capacity(64 * 1024, archive_file);
     let mut copy_buffer = vec![0_u8; 1024 * 1024];
     let mut archive_bytes = 0_u64;
@@ -12874,34 +12829,16 @@ fn run_pack(args: &[String]) -> Result<(), String> {
     })();
     drop(archive);
     if let Err(error) = write_result {
-        return match fs::remove_file(&temp_path) {
-            Ok(()) => Err(error),
-            Err(cleanup_error) if cleanup_error.kind() == io::ErrorKind::NotFound => Err(error),
-            Err(cleanup_error) => Err(format!(
-                "{error}; temporary archive could not be removed at {}: {cleanup_error}",
-                temp_path.display()
-            )),
-        };
+        return Err(remove_temp_with_context(&temp_path, error));
     }
     if let Err(error) = move_file_no_replace(&temp_path, &output_path) {
-        let cleanup = fs::remove_file(&temp_path);
-        return Err(match cleanup {
-            Ok(()) => format!(
+        return Err(remove_temp_with_context(
+            &temp_path,
+            format!(
                 "could not finalize archive {}: {error}",
                 output_path.display()
             ),
-            Err(cleanup_error) if cleanup_error.kind() == io::ErrorKind::NotFound => {
-                format!(
-                    "could not finalize archive {}: {error}",
-                    output_path.display()
-                )
-            }
-            Err(cleanup_error) => format!(
-                "could not finalize archive {}: {error}; temporary archive remains at {}: {cleanup_error}",
-                output_path.display(),
-                temp_path.display()
-            ),
-        });
+        ));
     }
     let archive_size = archive_bytes;
     if json {
