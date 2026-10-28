@@ -940,6 +940,7 @@ fn run_project(args: &[String]) -> Result<(), String> {
 
 const ORGANIZE_MANIFEST: &str = ".mediaforge-undo";
 const ORGANIZE_MAGIC: &[u8; 8] = b"MFORG001";
+const ORGANIZE_MANIFEST_TEMP: &str = ".mediaforge-undo.tmp";
 const TAR_BLOCK_SIZE: usize = 512;
 const TAR_OCTAL_MAX: u64 = 0o77777777777;
 
@@ -1027,20 +1028,12 @@ fn write_organize_manifest(root: &Path, moves: &[PlannedMove]) -> Result<(), Str
     Ok(())
 }
 
-fn replace_organize_manifest(root: &Path, moves: &[PlannedMove]) -> Result<(), String> {
-    let manifest = root.join(ORGANIZE_MANIFEST);
-    let temporary = root.join(format!("{ORGANIZE_MANIFEST}.tmp"));
-    if fs::symlink_metadata(&temporary).is_ok() {
-        return Err(format!(
-            "temporary undo manifest already exists: {}",
-            temporary.display()
-        ));
-    }
+fn write_manifest_file(path: &Path, moves: &[PlannedMove]) -> Result<(), String> {
     let mut file = OpenOptions::new()
         .write(true)
         .create_new(true)
-        .open(&temporary)
-        .map_err(|error| format!("cannot create temporary undo manifest: {error}"))?;
+        .open(path)
+        .map_err(|error| format!("cannot create undo manifest {}: {error}", path.display()))?;
     let write_result = (|| -> io::Result<()> {
         file.write_all(ORGANIZE_MAGIC)?;
         let count = u32::try_from(moves.len())
@@ -1064,12 +1057,74 @@ fn replace_organize_manifest(root: &Path, moves: &[PlannedMove]) -> Result<(), S
     })();
     drop(file);
     if let Err(error) = write_result {
-        let _ = fs::remove_file(&temporary);
-        return Err(format!("could not update undo manifest: {error}"));
+        let _ = fs::remove_file(path);
+        return Err(format!("could not write undo manifest: {error}"));
     }
-    if let Err(error) = fs::rename(&temporary, &manifest) {
+    Ok(())
+}
+
+#[cfg(unix)]
+fn replace_manifest_file(temporary: &Path, manifest: &Path) -> io::Result<()> {
+    fs::rename(temporary, manifest)
+}
+
+#[cfg(windows)]
+fn replace_manifest_file(temporary: &Path, manifest: &Path) -> io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+
+    const MOVEFILE_REPLACE_EXISTING: u32 = 0x1;
+    const MOVEFILE_WRITE_THROUGH: u32 = 0x8;
+
+    unsafe extern "system" {
+        fn MoveFileExW(
+            existing_file_name: *const u16,
+            new_file_name: *const u16,
+            flags: u32,
+        ) -> i32;
+    }
+
+    let existing = temporary
+        .as_os_str()
+        .encode_wide()
+        .chain(Some(0))
+        .collect::<Vec<_>>();
+    let new = manifest
+        .as_os_str()
+        .encode_wide()
+        .chain(Some(0))
+        .collect::<Vec<_>>();
+    let result = unsafe {
+        MoveFileExW(
+            existing.as_ptr(),
+            new.as_ptr(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    };
+    if result == 0 {
+        Err(io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
+fn replace_manifest_file(temporary: &Path, manifest: &Path) -> io::Result<()> {
+    fs::rename(temporary, manifest)
+}
+
+fn replace_organize_manifest(root: &Path, moves: &[PlannedMove]) -> Result<(), String> {
+    let manifest = root.join(ORGANIZE_MANIFEST);
+    let temporary = root.join(ORGANIZE_MANIFEST_TEMP);
+    if fs::symlink_metadata(&temporary).is_ok() {
+        return Err(format!(
+            "temporary undo manifest already exists: {}",
+            temporary.display()
+        ));
+    }
+    write_manifest_file(&temporary, moves)?;
+    if let Err(error) = replace_manifest_file(&temporary, &manifest) {
         let _ = fs::remove_file(&temporary);
-        return Err(format!("could not replace undo manifest: {error}"));
+        return Err(format!("could not install updated undo manifest: {error}"));
     }
     Ok(())
 }
@@ -1170,6 +1225,12 @@ fn run_organize(args: &[String]) -> Result<(), String> {
     if !root.is_dir() {
         return Err(format!("expected a directory: {}", root.display()));
     }
+    if apply && fs::symlink_metadata(root.join(ORGANIZE_MANIFEST_TEMP)).is_ok() {
+        return Err(format!(
+            "a temporary undo manifest already exists; inspect or remove it before organizing: {}",
+            root.join(ORGANIZE_MANIFEST_TEMP).display()
+        ));
+    }
     if apply && fs::symlink_metadata(root.join(ORGANIZE_MANIFEST)).is_ok() {
         return Err(format!(
             "an undo manifest already exists; undo the previous move first: {}",
@@ -1265,7 +1326,7 @@ fn run_organize(args: &[String]) -> Result<(), String> {
             ));
         }
     }
-    write_organize_manifest(&root, &[])?;
+    write_organize_manifest(&root, &moves)?;
     let mut moved = 0usize;
     for movement in &moves {
         let from = root.join(validate_relative_path(&movement.from)?);
@@ -1274,14 +1335,9 @@ fn run_organize(args: &[String]) -> Result<(), String> {
             .parent()
             .ok_or_else(|| "destination has no parent directory".to_owned())?;
         if let Err(error) = fs::create_dir_all(parent).and_then(|()| fs::rename(&from, &to)) {
-            let moved_entries = &moves[..moved];
-            let manifest_error = replace_organize_manifest(&root, moved_entries).err();
-            let recovery = manifest_error.map_or_else(
-                || format!("recovery manifest remains at {}", root.join(ORGANIZE_MANIFEST).display()),
-                |manifest_error| format!("could not update recovery manifest: {manifest_error}; initial manifest remains at {}", root.join(ORGANIZE_MANIFEST).display()),
-            );
             return Err(format!(
-                "moved {moved} file(s) before failure: {error}; {recovery}"
+                "moved {moved} file(s) before failure: {error}; recovery manifest remains at {}",
+                root.join(ORGANIZE_MANIFEST).display()
             ));
         }
         moved += 1;
