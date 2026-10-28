@@ -7936,6 +7936,18 @@ fn unity_meta_sidecar_exists(path: &Path) -> bool {
     is_real_file(&unity_meta_sidecar(path))
 }
 
+fn unity_meta_sidecar_exists_in_directory(
+    path: &Path,
+    siblings: &HashMap<std::ffi::OsString, (bool, bool)>,
+) -> bool {
+    let mut sidecar_name = path.file_name().unwrap_or_default().to_os_string();
+    sidecar_name.push(".meta");
+    if let Some((is_file, _)) = siblings.get(sidecar_name.as_os_str()) {
+        return *is_file;
+    }
+    unity_meta_sidecar_exists(path)
+}
+
 fn unity_meta_target(path: &Path) -> Option<PathBuf> {
     let file_name = path.file_name()?.to_string_lossy();
     if !file_name.to_ascii_lowercase().ends_with(".meta") {
@@ -7943,6 +7955,16 @@ fn unity_meta_target(path: &Path) -> Option<PathBuf> {
     }
     let target_name = &file_name[..file_name.len() - ".meta".len()];
     (!target_name.is_empty()).then(|| path.with_file_name(target_name))
+}
+
+fn unity_meta_target_exists_in_directory(
+    target: &Path,
+    siblings: &HashMap<std::ffi::OsString, (bool, bool)>,
+) -> bool {
+    if let Some((is_file, is_directory)) = target.file_name().and_then(|name| siblings.get(name)) {
+        return *is_file || *is_directory;
+    }
+    is_real_file(target) || is_real_directory(target)
 }
 
 fn unity_meta_guid(contents: &str) -> Result<Option<String>, ()> {
@@ -8059,14 +8081,22 @@ fn run_unity_meta(args: &[String]) -> Result<(), String> {
             })
             .collect::<Result<Vec<_>, _>>()?;
         sort_entries(&mut entries);
+        let mut sibling_types = HashMap::with_capacity(entries.len());
+        let mut typed_entries = Vec::with_capacity(entries.len());
         for entry in entries {
-            let entry_path = entry.path();
             let file_type = entry.file_type().map_err(|error| {
                 format!(
                     "cannot inspect Unity asset {}: {error}",
-                    entry_path.display()
+                    entry.path().display()
                 )
             })?;
+            if file_type.is_file() || file_type.is_dir() {
+                sibling_types.insert(entry.file_name(), (file_type.is_file(), file_type.is_dir()));
+            }
+            typed_entries.push((entry, file_type));
+        }
+        for (entry, file_type) in typed_entries {
+            let entry_path = entry.path();
             if file_type.is_symlink() {
                 continue;
             }
@@ -8082,7 +8112,7 @@ fn run_unity_meta(args: &[String]) -> Result<(), String> {
                     continue;
                 }
                 checked = checked.saturating_add(1);
-                if !unity_meta_sidecar_exists(&entry_path) {
+                if !unity_meta_sidecar_exists_in_directory(&entry_path, &sibling_types) {
                     missing_meta.push(relative);
                 }
                 let child_rules = extend_ignore_rules(&root, &entry_path, &active_rules)?;
@@ -8099,7 +8129,7 @@ fn run_unity_meta(args: &[String]) -> Result<(), String> {
                 }
                 if let Some(target) = unity_meta_target(&entry_path) {
                     checked = checked.saturating_add(1);
-                    if !is_real_file(&target) && !is_real_directory(&target) {
+                    if !unity_meta_target_exists_in_directory(&target, &sibling_types) {
                         orphan_meta.push(relative);
                     } else {
                         let contents = fs::read_to_string(&entry_path).map_err(|error| {
@@ -8116,7 +8146,7 @@ fn run_unity_meta(args: &[String]) -> Result<(), String> {
                     }
                 } else {
                     checked = checked.saturating_add(1);
-                    if !unity_meta_sidecar_exists(&entry_path) {
+                    if !unity_meta_sidecar_exists_in_directory(&entry_path, &sibling_types) {
                         missing_meta.push(relative);
                     }
                 }
