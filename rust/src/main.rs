@@ -8745,8 +8745,11 @@ fn unity_meta_sidecar_exists_in_directory(
 ) -> bool {
     let mut sidecar_name = path.file_name().unwrap_or_default().to_os_string();
     sidecar_name.push(".meta");
-    if let Some((is_file, _)) = siblings.get(sidecar_name.as_os_str()) {
-        return *is_file;
+    let expected = sidecar_name.to_string_lossy();
+    if siblings.iter().any(|(name, (is_file, _))| {
+        *is_file && name.to_string_lossy().eq_ignore_ascii_case(&expected)
+    }) {
+        return true;
     }
     unity_meta_sidecar_exists(path)
 }
@@ -9506,6 +9509,36 @@ enum EntryState {
     Missing,
     File,
     Other,
+}
+
+fn unity_meta_asset_key(name: &str) -> String {
+    if cfg!(any(target_os = "windows", target_os = "macos")) {
+        name.to_lowercase()
+    } else {
+        name.to_owned()
+    }
+}
+
+fn collect_unity_meta_sidecars(entries: &[fs::DirEntry]) -> HashMap<String, Option<String>> {
+    let mut sidecars = HashMap::<String, Option<String>>::new();
+    for entry in entries {
+        let file_name = entry.file_name();
+        let Some(file_name) = file_name.to_str() else {
+            continue;
+        };
+        let Some(asset_name) = strip_ascii_case_insensitive_suffix(file_name, ".meta") else {
+            continue;
+        };
+        match sidecars.entry(unity_meta_asset_key(asset_name)) {
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                entry.insert(Some(file_name.to_owned()));
+            }
+            std::collections::hash_map::Entry::Occupied(mut entry) => {
+                entry.insert(None);
+            }
+        }
+    }
+    sidecars
 }
 
 fn output_path_collision_key(path: &Path) -> PathBuf {
@@ -10577,6 +10610,7 @@ fn run_rename(args: &[String]) -> Result<(), String> {
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| format!("cannot read directory entry: {error}"))?;
     sort_entries(&mut entries);
+    let sidecars_by_asset = collect_unity_meta_sidecars(&entries);
     let mut moves = Vec::<PlannedMove>::new();
     let mut skipped = 0_usize;
     let mut collision_examples = Vec::<(String, String)>::new();
@@ -10660,7 +10694,18 @@ fn run_rename(args: &[String]) -> Result<(), String> {
             _ => original_extension,
         };
         let target_name = format!("{new_stem}{new_extension}");
-        let sidecar_name = format!("{name_text}.meta");
+        let sidecar_name = match sidecars_by_asset.get(&unity_meta_asset_key(name_text)) {
+            Some(Some(sidecar_name)) => sidecar_name.clone(),
+            Some(None) => {
+                skipped += 1;
+                collision_count += 1;
+                if collision_examples.len() < 100 {
+                    collision_examples.push((name_text.to_owned(), "ambiguous_sidecar".to_owned()));
+                }
+                continue;
+            }
+            None => format!("{name_text}.meta"),
+        };
         let sidecar = root.join(&sidecar_name);
         let sidecar_state = entry_state(&sidecar)
             .map_err(|error| format!("cannot inspect sidecar {}: {error}", sidecar.display()))?;
@@ -11036,29 +11081,7 @@ fn run_sequence(args: &[String]) -> Result<(), String> {
     } else {
         sort_entries(&mut entries);
     }
-    let mut sidecars_by_asset = HashMap::<String, Option<String>>::new();
-    for entry in &entries {
-        let file_name = entry.file_name();
-        let Some(file_name) = file_name.to_str() else {
-            continue;
-        };
-        let Some(asset_name) = strip_ascii_case_insensitive_suffix(file_name, ".meta") else {
-            continue;
-        };
-        let key = if cfg!(any(target_os = "windows", target_os = "macos")) {
-            asset_name.to_lowercase()
-        } else {
-            asset_name.to_owned()
-        };
-        match sidecars_by_asset.entry(key) {
-            std::collections::hash_map::Entry::Vacant(entry) => {
-                entry.insert(Some(file_name.to_owned()));
-            }
-            std::collections::hash_map::Entry::Occupied(mut entry) => {
-                entry.insert(None);
-            }
-        }
-    }
+    let sidecars_by_asset = collect_unity_meta_sidecars(&entries);
     let mut moves = Vec::<PlannedMove>::new();
     let mut skipped = 0_usize;
     let mut collision_examples = Vec::<(String, String)>::new();
@@ -11141,12 +11164,7 @@ fn run_sequence(args: &[String]) -> Result<(), String> {
             skipped += 1;
             continue;
         };
-        let sidecar_key = if cfg!(any(target_os = "windows", target_os = "macos")) {
-            name_text.to_lowercase()
-        } else {
-            name_text.to_owned()
-        };
-        let sidecar_name = match sidecars_by_asset.get(&sidecar_key) {
+        let sidecar_name = match sidecars_by_asset.get(&unity_meta_asset_key(name_text)) {
             Some(Some(sidecar_name)) => sidecar_name.clone(),
             Some(None) => {
                 skipped += 1;
