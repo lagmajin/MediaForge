@@ -8017,93 +8017,93 @@ fn run_project(args: &[String]) -> Result<(), String> {
     }
 
     if json {
-        println!("{{\n  \"root\": {},", json_string(&root.to_string_lossy()));
-        println!(
-            "  \"engines\": [{}],",
-            engines
-                .iter()
-                .map(|(name, _, _)| json_string(name))
-                .collect::<Vec<_>>()
-                .join(", ")
-        );
-        println!(
-            "  \"unity_version\": {},",
-            unity_version
-                .as_deref()
-                .map(json_string)
-                .unwrap_or_else(|| "null".to_owned())
-        );
-        println!(
-            "  \"unreal_project_files\": [{}],",
-            unreal_files
-                .iter()
-                .map(|(file, _)| json_string(file))
-                .collect::<Vec<_>>()
-                .join(", ")
-        );
-        println!("  \"unreal_engine_associations\": [");
-        for (index, (file, association)) in unreal_files.iter().enumerate() {
-            let comma = if index + 1 == unreal_files.len() {
-                ""
+        let stdout = io::stdout();
+        let mut writer = io::BufWriter::with_capacity(64 * 1024, stdout.lock());
+        let result = (|| -> io::Result<()> {
+            writer.write_all(b"{\n  \"root\": ")?;
+            write_json_string(&mut writer, &root.to_string_lossy())?;
+            writer.write_all(b",\n  \"engines\": [")?;
+            for (index, (name, _, _)) in engines.iter().enumerate() {
+                if index > 0 {
+                    writer.write_all(b", ")?;
+                }
+                write_json_string(&mut writer, name)?;
+            }
+            writer.write_all(b"],\n  \"unity_version\": ")?;
+            if let Some(version) = unity_version.as_deref() {
+                write_json_string(&mut writer, version)?;
             } else {
-                ","
-            };
-            println!(
-                "    {{\"project\": {}, \"engine_association\": {}}}{}",
-                json_string(file),
-                association
-                    .as_deref()
-                    .map(json_string)
-                    .unwrap_or_else(|| "null".to_owned()),
-                comma
-            );
-        }
-        println!("  ],");
-        println!(
-            "  \"godot_features\": [{}],",
-            godot_features
-                .iter()
-                .map(|feature| json_string(feature))
-                .collect::<Vec<_>>()
-                .join(", ")
-        );
-        println!("  \"missing_required_paths\": [");
-        for (index, (engine, missing_path)) in missing.iter().enumerate() {
-            let comma = if index + 1 == missing.len() { "" } else { "," };
-            println!(
-                "    {{\"engine\": {}, \"path\": {}}}{}",
-                json_string(engine),
-                json_string(missing_path),
-                comma
-            );
-        }
-        println!("  ],\n  \"known_build_or_cache_dirs\": [");
-        for (index, (name, bytes, files)) in caches.iter().enumerate() {
-            let comma = if index + 1 == caches.len() { "" } else { "," };
-            println!(
-                "    {{\"path\": {}, \"files\": {}, \"bytes\": {}, \"size\": {}}}{}",
-                json_string(name),
-                files,
-                bytes,
-                json_string(&human_size(*bytes)),
-                comma
-            );
-        }
-        println!("  ],\n  \"editor_project_files\": [");
-        for (index, (relative, kind)) in project_files.iter().enumerate() {
-            let comma = if index + 1 == project_files.len() {
-                ""
-            } else {
-                ","
-            };
-            println!(
-                "    {{\"path\": {}, \"kind\": {}}}{}",
-                json_string(relative),
-                json_string(kind),
-                comma
-            );
-        }
-        println!("  ]\n}}");
+                writer.write_all(b"null")?;
+            }
+            writer.write_all(b",\n  \"unreal_project_files\": [")?;
+            for (index, (file, _)) in unreal_files.iter().enumerate() {
+                if index > 0 {
+                    writer.write_all(b", ")?;
+                }
+                write_json_string(&mut writer, file)?;
+            }
+            writer.write_all(b"],\n  \"unreal_engine_associations\": [\n")?;
+            for (index, (file, association)) in unreal_files.iter().enumerate() {
+                if index > 0 {
+                    writer.write_all(b",\n")?;
+                }
+                writer.write_all(b"    {\"project\": ")?;
+                write_json_string(&mut writer, file)?;
+                writer.write_all(b", \"engine_association\": ")?;
+                if let Some(association) = association.as_deref() {
+                    write_json_string(&mut writer, association)?;
+                } else {
+                    writer.write_all(b"null")?;
+                }
+                writer.write_all(b"}")?;
+            }
+            writer.write_all(b"\n  ],\n  \"godot_features\": [")?;
+            for (index, feature) in godot_features.iter().enumerate() {
+                if index > 0 {
+                    writer.write_all(b", ")?;
+                }
+                write_json_string(&mut writer, feature)?;
+            }
+            writer.write_all(b"],\n  \"missing_required_paths\": [\n")?;
+            for (index, (engine, missing_path)) in missing.iter().enumerate() {
+                if index > 0 {
+                    writer.write_all(b",\n")?;
+                }
+                writer.write_all(b"    {\"engine\": ")?;
+                write_json_string(&mut writer, engine)?;
+                writer.write_all(b", \"path\": ")?;
+                write_json_string(&mut writer, missing_path)?;
+                writer.write_all(b"}")?;
+            }
+            writer.write_all(b"\n  ],\n  \"known_build_or_cache_dirs\": [\n")?;
+            for (index, (name, bytes, files)) in caches.iter().enumerate() {
+                if index > 0 {
+                    writer.write_all(b",\n")?;
+                }
+                writer.write_all(b"    {\"path\": ")?;
+                write_json_string(&mut writer, name)?;
+                write!(
+                    writer,
+                    ", \"files\": {files}, \"bytes\": {bytes}, \"size\": "
+                )?;
+                write_json_string(&mut writer, &human_size(*bytes))?;
+                writer.write_all(b"}")?;
+            }
+            writer.write_all(b"\n  ],\n  \"editor_project_files\": [\n")?;
+            for (index, (relative, kind)) in project_files.iter().enumerate() {
+                if index > 0 {
+                    writer.write_all(b",\n")?;
+                }
+                writer.write_all(b"    {\"path\": ")?;
+                write_json_string(&mut writer, relative)?;
+                writer.write_all(b", \"kind\": ")?;
+                write_json_string(&mut writer, kind)?;
+                writer.write_all(b"}")?;
+            }
+            writer.write_all(b"\n  ]\n}\n")?;
+            writer.flush()
+        })();
+        result.map_err(|error| format!("could not write project JSON: {error}"))?;
     } else {
         println!("MediaForge project inspection: {}", root.display());
         if engines.is_empty() {
