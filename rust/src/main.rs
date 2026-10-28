@@ -853,15 +853,8 @@ fn glob_matches(pattern: &[GlobToken], value: &str) -> bool {
     glob_matches_chars(pattern, &value)
 }
 
-fn glob_matches_path_prefix(pattern: &[GlobToken], components: &[&str]) -> bool {
-    let mut value = Vec::new();
-    for (index, component) in components.iter().enumerate() {
-        if index > 0 {
-            value.push('/');
-        }
-        value.extend(component.chars());
-    }
-    glob_matches_chars(pattern, &value)
+fn glob_matches_path_prefix(pattern: &[GlobToken], value: &str) -> bool {
+    glob_matches(pattern, value)
 }
 
 fn glob_matches_chars(pattern: &[GlobToken], value: &[char]) -> bool {
@@ -953,21 +946,29 @@ fn rule_matches_path(rule: &IgnoreRule, relative: &str, target_is_directory: boo
     } else {
         return false;
     };
-    let parts: Vec<_> = relative.split('/').collect();
     if !rule.has_slash && !rule.anchored {
-        return parts.iter().enumerate().any(|(index, part)| {
-            let is_directory = index + 1 < parts.len() || target_is_directory;
+        let mut parts = relative.split('/').peekable();
+        return std::iter::from_fn(|| {
+            let part = parts.next()?;
+            Some((part, parts.peek().is_some() || target_is_directory))
+        })
+        .any(|(part, is_directory)| {
             (!rule.directory_only || is_directory) && glob_matches(&rule.pattern, part)
         });
     }
-    for end in 1..=parts.len() {
-        let is_directory = end < parts.len() || target_is_directory;
+    let mut end = 0;
+    let mut parts = relative.split('/').peekable();
+    while let Some(part) = parts.next() {
+        end += part.len();
+        let is_directory = parts.peek().is_some() || target_is_directory;
         if rule.directory_only && !is_directory {
+            end += usize::from(parts.peek().is_some());
             continue;
         }
-        if glob_matches_path_prefix(&rule.pattern, &parts[..end]) {
+        if glob_matches_path_prefix(&rule.pattern, &relative[..end]) {
             return true;
         }
+        end += usize::from(parts.peek().is_some());
     }
     false
 }
