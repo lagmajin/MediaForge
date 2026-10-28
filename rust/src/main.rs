@@ -840,6 +840,25 @@ where
                     return Ok(());
                 }
             }
+            let mut extension_value = None;
+            let mut kind_value = None;
+            if file_type.is_file() {
+                let extension = Path::new(&name)
+                    .extension()
+                    .and_then(|value| value.to_str());
+                if filters
+                    .extensions
+                    .is_some_and(|values| !matches_extension_filter(extension, values))
+                {
+                    return Ok(());
+                }
+                let kind = classify_extension(extension);
+                if filters.kinds.is_some_and(|values| !values.contains(&kind)) {
+                    return Ok(());
+                }
+                extension_value = extension;
+                kind_value = Some(kind);
+            }
             let path = directory.join(&name);
             if file_type.is_dir()
                 && ((!include_hidden && has_hidden_attribute(&path))
@@ -881,17 +900,7 @@ where
                 };
                 pending.push((path, child_ignored));
             } else if file_type.is_file() {
-                let extension_value = path.extension().and_then(|value| value.to_str());
-                if filters
-                    .extensions
-                    .is_some_and(|values| !matches_extension_filter(extension_value, values))
-                {
-                    return Ok(());
-                }
-                let kind = classify_extension(extension_value);
-                if filters.kinds.is_some_and(|values| !values.contains(&kind)) {
-                    return Ok(());
-                }
+                let kind = kind_value.expect("file types are classified before path creation");
                 let has_path_filter = filters
                     .exclude_path_contains_lower
                     .is_some_and(|values| !values.is_empty());
