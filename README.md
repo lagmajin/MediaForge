@@ -26,7 +26,7 @@ cargo build --release
 ./target/release/mediaforge scan ./Media
 ```
 
-On Windows, run `target\release\mediaforge.exe scan .\Media`. The Python reference currently covers `scan` and uses the same syntax and report fields for that command; the Rust CLI provides the additional project workflows. Rust scans are fully offline once the toolchain is installed. Both skip Git-ignored path entries and built-in generated/dependency directories. The Rust CLI handles ordered `.gitignore` rules with `*`, `**`, `?`, character classes, anchoring, directory-only patterns, and negation for paths it reaches. It does not load nested `.gitignore` files or Git exclude files, and a file cannot be re-included beneath a directory that an earlier rule excluded.
+On Windows, run `target\release\mediaforge.exe scan .\Media`. The Python reference currently covers `scan` and uses the same syntax and report fields for that command; the Rust CLI provides the additional project workflows. Rust scans are fully offline once the toolchain is installed. Both skip Git-ignored path entries without glob syntax, plus built-in generated/dependency directories. Full Git ignore glob and negation semantics are not implemented yet.
 
 ## Inspect media metadata
 
