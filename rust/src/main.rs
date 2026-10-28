@@ -1346,10 +1346,16 @@ fn print_scan_filter_preview(
 }
 
 fn compare_paths_case_insensitive(left: &str, right: &str) -> std::cmp::Ordering {
-    left.chars()
-        .flat_map(char::to_lowercase)
-        .cmp(right.chars().flat_map(char::to_lowercase))
-        .then_with(|| left.cmp(right))
+    let case_insensitive = if left.is_ascii() && right.is_ascii() {
+        left.bytes()
+            .map(|byte| byte.to_ascii_lowercase())
+            .cmp(right.bytes().map(|byte| byte.to_ascii_lowercase()))
+    } else {
+        left.chars()
+            .flat_map(char::to_lowercase)
+            .cmp(right.chars().flat_map(char::to_lowercase))
+    };
+    case_insensitive.then_with(|| left.cmp(right))
 }
 
 fn compare_largest_records(left: &FileRecord, right: &FileRecord) -> std::cmp::Ordering {
