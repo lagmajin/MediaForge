@@ -2403,15 +2403,20 @@ fn run_pack(args: &[String]) -> Result<(), String> {
         return Ok(());
     }
 
+    let mut temp_attempt = 0_u64;
     let temp_path = loop {
         let nonce = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_nanos();
         let candidate = output_parent.join(format!(
-            ".mediaforge-pack-{}-{nonce}.tmp",
-            std::process::id()
+            ".mediaforge-pack-{}-{nonce}-{}.tmp",
+            std::process::id(),
+            temp_attempt
         ));
+        temp_attempt = temp_attempt
+            .checked_add(1)
+            .ok_or_else(|| "could not allocate a unique temporary archive name".to_owned())?;
         match OpenOptions::new()
             .write(true)
             .create_new(true)
