@@ -43,6 +43,7 @@ mediaforge probe-dir ./Media --type video --min-size 1G --summary --jobs 4
 mediaforge probe-dir ./Media --type video --compare --jobs 4
 mediaforge storyboard ./Media/shot.mp4 --output ./Media/shot-sheet.jpg
 mediaforge storyboard ./Media/shot.mp4 -o ./Media/shot-sheet.png --interval 5 --columns 6 --rows 4 --width 240
+mediaforge scene-detect ./Media/shot.mp4 --threshold 0.4 --min-gap 1 --format jsonl
 mediaforge proxy ./Media/shot.mp4 --output ./Proxies/shot-proxy.mp4
 mediaforge proxy-config init --profile fast --max-width 960 --crf 30 --preset ultrafast
 mediaforge proxy ./Media/shot.mp4 -o ./Proxies/shot-proxy.mp4 --profile fast
@@ -57,6 +58,8 @@ mediaforge extract-audio-dir ./Media --output-dir ./Audio --extension mov,mxf --
 `probe` invokes `ffprobe` directly (without a shell) and returns its JSON containing container and stream metadata such as duration, codec, dimensions, frame rate, and audio channels. Use `--summary` to return only the compact comparison fields: file size, duration, bitrate, codecs, dimensions, pixel and aspect formats, frame rates, and audio layout. `--compact` removes JSON whitespace. `probe-dir` scans video/audio assets and probes them concurrently, emitting one JSON Lines record per file in stable path order. It can filter by extension, `--type video|audio`, or `--min-size`/`--max-size` before launching `ffprobe`; size bounds accept bytes or binary K/M/G/T units. The type filter also selects only matching streams in each report, which makes reports smaller when only picture or sound specs matter. `--jobs` controls concurrency from 1 to 32. A failed file is reported as an error record while other files continue. `probe-dir --summary` uses the same compact fields. `--compare` implies `--summary` and reports only differences in container, codec, profile, dimensions, frame rate, pixel format, sample rate, or audio layout across files, grouping paths that share a value; combine it with `--type video|audio` to compare that stream type consistently. `ffprobe` must be available on `PATH`.
 
 `storyboard` creates a contact sheet using `ffmpeg` (also required on `PATH`). It samples at the requested interval (10 seconds by default), with a 5×5 grid of 320-pixel-wide thumbnails by default. JPG, PNG, and WebP outputs are supported. It refuses to overwrite existing files and only publishes the image after FFmpeg finishes successfully.
+
+`scene-detect` scans the first video stream for likely scene changes using FFmpeg's scene score, returning cut timecodes and scores without rendering a new video. The default threshold is 0.4 on the 0–1 score scale; `--min-gap` defaults to 1 second and keeps the strongest nearby cut. Output defaults to JSON Lines with a final summary; use `--format csv` for a header and one row per detected cut.
 
 `proxy` creates an H.264/AAC MP4 suitable for smoother editing. `--profile fast` uses 960 pixels, CRF 32, and `ultrafast`; `balanced` uses 1280, CRF 28, and `veryfast`; `quality` uses 1920, CRF 22, and `fast`. `balanced` is the default. Explicit `--max-width`, `--crf` (0–51), and `--preset` values override the selected profile. Lower CRF preserves more quality; faster presets trade compression efficiency for shorter encoding time. FFmpeg must include libx264 and AAC support. Existing files are never overwritten.
 
