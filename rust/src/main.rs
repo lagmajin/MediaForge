@@ -4839,7 +4839,7 @@ fn run_scene_detect_dir(args: &[String]) -> Result<(), String> {
             "--include-hidden" => include_hidden = true,
             "--help" | "-h" => {
                 println!(
-                    "Usage: mediaforge scene-detect-dir <PATH> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--fps RATE] [--extension EXTENSIONS] [--include-hidden] [--jobs N]\n\nFind likely scene cuts in every video under a directory. Emits JSON Lines records in stable path order, followed by a batch summary. --segments emits contiguous intervals instead of individual cuts. --jobs controls concurrent FFmpeg processes (1–16; default 4)."
+                    "Usage: mediaforge scene-detect-dir <PATH> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--fps RATE] [--extension EXTENSIONS] [--include-hidden] [--jobs N]\n\nFind likely scene cuts in every video under a directory. Streams a progress record and each video's JSON Lines results as processing finishes, followed by a batch summary. --segments emits contiguous intervals instead of individual cuts. --jobs controls concurrent FFmpeg processes (1–16; default 4)."
                 );
                 return Ok(());
             }
@@ -4880,7 +4880,10 @@ fn run_scene_detect_dir(args: &[String]) -> Result<(), String> {
     let executable = env::current_exe()
         .map_err(|error| format!("could not locate the mediaforge executable: {error}"))?;
     let next = std::sync::atomic::AtomicUsize::new(0);
-    let results = std::sync::Mutex::new(Vec::<(usize, bool, String)>::with_capacity(records.len()));
+    let completed = std::sync::atomic::AtomicUsize::new(0);
+    let stream_output = std::sync::Mutex::new(());
+    let results =
+        std::sync::Mutex::new(Vec::<(bool, Option<String>)>::with_capacity(records.len()));
     std::thread::scope(|scope| {
         for _ in 0..jobs.min(records.len()) {
             scope.spawn(|| {
@@ -4932,26 +4935,44 @@ fn run_scene_detect_dir(args: &[String]) -> Result<(), String> {
                             ),
                         ),
                     };
+                    let output_error = {
+                        let _guard = stream_output
+                            .lock()
+                            .expect("scene detection output lock poisoned");
+                        let current = completed.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                            + 1;
+                        let stdout = io::stdout();
+                        let mut stdout = stdout.lock();
+                        writeln!(
+                            stdout,
+                            "{{\"type\":\"progress\",\"current\":{current},\"total\":{},\"path\":{}}}",
+                            records.len(),
+                            json_string(&record.relative)
+                        )
+                        .and_then(|()| stdout.write_all(output.as_bytes()))
+                        .err()
+                        .map(|error| error.to_string())
+                    };
                     results
                         .lock()
                         .expect("scene detection result mutex poisoned")
-                        .push((index, success, output));
+                        .push((success, output_error));
                 }
             });
         }
     });
-    let mut results = results
+    let results = results
         .into_inner()
         .map_err(|_| "scene detection results could not be collected".to_owned())?;
-    results.sort_by_key(|(index, _, _)| *index);
-    let failed = results.iter().filter(|(_, success, _)| !success).count();
+    if let Some(error) = results
+        .iter()
+        .find_map(|(_, output_error)| output_error.as_deref())
+    {
+        return Err(format!("could not write scene detection output: {error}"));
+    }
+    let failed = results.iter().filter(|(success, _)| !success).count();
     let stdout = io::stdout();
     let mut stdout = stdout.lock();
-    for (_, _, output) in &results {
-        stdout
-            .write_all(output.as_bytes())
-            .map_err(|error| format!("could not write scene detection output: {error}"))?;
-    }
     writeln!(
         stdout,
         "{{\"type\":\"batch_summary\",\"files\":{},\"successful\":{},\"failed\":{},\"threshold\":{threshold:.6},\"min_gap_seconds\":{min_gap:.6},\"segments\":{segments},\"fps_override\":{}}}",
