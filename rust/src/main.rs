@@ -11072,26 +11072,27 @@ fn pack_file(
     writer: &mut impl Write,
     archive_name: &str,
     record: &FileRecord,
+    source_path: &Path,
     index: usize,
     copy_buffer: &mut [u8],
 ) -> Result<(), String> {
     let path_bytes = archive_name.as_bytes();
     let split = ustar_name(path_bytes);
     let pax_path = split.is_none();
-    let source_metadata = fs::symlink_metadata(&record.path)
-        .map_err(|error| format!("cannot inspect {}: {error}", record.path.display()))?;
+    let source_metadata = fs::symlink_metadata(source_path)
+        .map_err(|error| format!("cannot inspect {}: {error}", source_path.display()))?;
     if !source_metadata.is_file() || source_metadata.file_type().is_symlink() {
         return Err(format!(
             "source changed type since scan: {}",
-            record.path.display()
+            source_path.display()
         ));
     }
-    let mut input = File::open(&record.path)
-        .map_err(|error| format!("cannot open {}: {error}", record.path.display()))?;
+    let mut input = File::open(source_path)
+        .map_err(|error| format!("cannot open {}: {error}", source_path.display()))?;
     let initial_metadata = input.metadata().map_err(|error| {
         format!(
             "could not inspect {} before archiving: {error}",
-            record.path.display()
+            source_path.display()
         )
     })?;
     if !initial_metadata.is_file()
@@ -11100,14 +11101,14 @@ fn pack_file(
     {
         return Err(format!(
             "source changed before packing: {}",
-            record.path.display()
+            source_path.display()
         ));
     }
     let source_modified = source_metadata.modified().ok();
     if source_metadata.len() != record.size || source_modified != record.modified {
         return Err(format!(
             "source changed since scan: {}",
-            record.path.display()
+            source_path.display()
         ));
     }
     let mode = archive_mode(&source_metadata);
@@ -11158,39 +11159,39 @@ fn pack_file(
     while remaining > 0 {
         let requested = remaining.min(copy_buffer.len() as u64) as usize;
         let count = read_retry_interrupted(&mut input, &mut copy_buffer[..requested])
-            .map_err(|error| format!("could not read {}: {error}", record.path.display()))?;
+            .map_err(|error| format!("could not read {}: {error}", source_path.display()))?;
         if count == 0 {
             break;
         }
         writer
             .write_all(&copy_buffer[..count])
-            .map_err(|error| format!("could not archive {}: {error}", record.path.display()))?;
+            .map_err(|error| format!("could not archive {}: {error}", source_path.display()))?;
         remaining -= count as u64;
     }
     let copied = record.size - remaining;
     if copied != record.size {
         return Err(format!(
             "source changed while packing: {}",
-            record.path.display()
+            source_path.display()
         ));
     }
     let mut extra = [0_u8; 1];
     if read_retry_interrupted(&mut input, &mut extra)
-        .map_err(|error| format!("could not verify {}: {error}", record.path.display()))?
+        .map_err(|error| format!("could not verify {}: {error}", source_path.display()))?
         != 0
     {
         return Err(format!(
             "source grew while packing: {}",
-            record.path.display()
+            source_path.display()
         ));
     }
     let final_metadata = input
         .metadata()
-        .map_err(|error| format!("could not verify {}: {error}", record.path.display()))?;
+        .map_err(|error| format!("could not verify {}: {error}", source_path.display()))?;
     if final_metadata.len() != record.size || final_metadata.modified().ok() != record.modified {
         return Err(format!(
             "source changed while packing: {}",
-            record.path.display()
+            source_path.display()
         ));
     }
     let padding =
@@ -11612,7 +11613,7 @@ fn run_pack(args: &[String]) -> Result<(), String> {
         max_size,
         excluded_subtree: None,
         exclude_path_contains_lower: Some(&exclude_path_contains_lower),
-        omit_absolute_path: false,
+        omit_absolute_path: true,
         omit_modified_time: false,
         omit_extension: true,
     };
@@ -11629,10 +11630,7 @@ fn run_pack(args: &[String]) -> Result<(), String> {
     let mut portable_names = HashMap::<String, (String, bool)>::new();
     let mut total_bytes = 0_u64;
     for record in &records {
-        let relative = record
-            .path
-            .strip_prefix(&root)
-            .map_err(|error| format!("cannot relativize {}: {error}", record.path.display()))?;
+        let relative = Path::new(&record.relative);
         let mut component_count = 0;
         for component in relative.components() {
             let std::path::Component::Normal(part) = component else {
@@ -11746,7 +11744,15 @@ fn run_pack(args: &[String]) -> Result<(), String> {
     let mut archive_bytes = 0_u64;
     let write_result = (|| -> Result<(), String> {
         for (index, (record, name)) in entries.iter().enumerate() {
-            pack_file(&mut archive, name, record, index + 1, &mut copy_buffer)?;
+            let source_path = root.join(name);
+            pack_file(
+                &mut archive,
+                name,
+                record,
+                &source_path,
+                index + 1,
+                &mut copy_buffer,
+            )?;
         }
         archive
             .write_all(&TAR_END_MARKER)
