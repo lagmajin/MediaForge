@@ -5487,7 +5487,7 @@ fn run_proxy_dir(args: &[String]) -> Result<(), String> {
     }
     if records.is_empty() {
         if json {
-            println!("{{\"type\":\"summary\",\"succeeded\":0,\"failed\":0}}");
+            println!("{{\"type\":\"summary\",\"succeeded\":0,\"skipped\":0,\"failed\":0}}");
         } else {
             println!("No video assets found.");
         }
