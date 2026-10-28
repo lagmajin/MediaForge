@@ -1277,7 +1277,7 @@ fn fraction_ceil_scaled(fraction: &str, multiplier: u128) -> u128 {
 
 fn print_help() {
     println!(
-        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS] [--largest N]\n  mediaforge dupes [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--top-groups N]\n  mediaforge probe <FILE> [--compact] [--summary]\n  mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--jobs N] [--summary]\n  mediaforge storyboard <VIDEO> --output <IMAGE> [--interval SECONDS] [--columns N] [--rows N] [--width PIXELS]\n  mediaforge proxy <VIDEO> --output <FILE.mp4> [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge proxy-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET] [--json]\n  mediaforge proxy-config init [FILE] [--profile fast|balanced|quality] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge extract-audio <VIDEO> --output <FILE> [--format mp3|wav|flac] [--bitrate RATE] [--stream N]\n  mediaforge extract-audio-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--format mp3|wav|flac] [--bitrate RATE] [--stream N] [--json]\n  mediaforge project [PATH] [--json]\n  mediaforge gitignore [PATH] [--apply]\n  mediaforge organize [PATH] [--by type|extension] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--apply]\n  mediaforge sequence [PATH] [--prefix NAME] [--start N] [--padding N] [--extension EXTENSIONS] [--include-hidden] [--json] [--apply]\n  mediaforge undo [PATH] [--json]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--include-hidden] [--include-generated] [--dry-run] [--json] [--list]\n  mediaforge --version\n  mediaforge --help"
+        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS] [--largest N]\n  mediaforge dupes [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--top-groups N]\n  mediaforge probe <FILE> [--compact] [--summary]\n  mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--jobs N] [--summary]\n  mediaforge storyboard <VIDEO> --output <IMAGE> [--interval SECONDS] [--columns N] [--rows N] [--width PIXELS]\n  mediaforge proxy <VIDEO> --output <FILE.mp4> [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge proxy-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET] [--json]\n  mediaforge proxy-config init [FILE] [--profile fast|balanced|quality] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge extract-audio <VIDEO> --output <FILE> [--format mp3|wav|flac] [--bitrate RATE] [--stream N]\n  mediaforge extract-audio-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--format mp3|wav|flac] [--bitrate RATE] [--stream N] [--jobs N] [--json]\n  mediaforge project [PATH] [--json]\n  mediaforge gitignore [PATH] [--apply]\n  mediaforge organize [PATH] [--by type|extension] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--apply]\n  mediaforge sequence [PATH] [--prefix NAME] [--start N] [--padding N] [--extension EXTENSIONS] [--include-hidden] [--json] [--apply]\n  mediaforge undo [PATH] [--json]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--include-hidden] [--include-generated] [--dry-run] [--json] [--list]\n  mediaforge --version\n  mediaforge --help"
     );
 }
 
@@ -2647,6 +2647,7 @@ fn run_extract_audio(args: &[String]) -> Result<(), String> {
 }
 
 fn run_extract_audio_dir(args: &[String]) -> Result<(), String> {
+    const MAX_AUDIO_JOBS: usize = 16;
     let mut path = None;
     let mut output_root = None;
     let mut extensions = None;
@@ -2654,6 +2655,10 @@ fn run_extract_audio_dir(args: &[String]) -> Result<(), String> {
     let mut format = "mp3".to_owned();
     let mut bitrate = None;
     let mut stream = 0_u32;
+    let mut jobs = std::thread::available_parallelism()
+        .map(usize::from)
+        .unwrap_or(1)
+        .min(4);
     let mut json = false;
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
@@ -2692,10 +2697,26 @@ fn run_extract_audio_dir(args: &[String]) -> Result<(), String> {
                     .parse::<u32>()
                     .map_err(|_| format!("invalid audio stream index '{value}'"))?;
             }
+            "--jobs" => {
+                let value = iter
+                    .next()
+                    .ok_or_else(|| "--jobs requires a positive integer".to_owned())?;
+                jobs = value
+                    .parse::<usize>()
+                    .map_err(|_| format!("invalid --jobs value '{value}'"))?;
+                if jobs == 0 {
+                    return Err("--jobs must be greater than zero".to_owned());
+                }
+                if jobs > MAX_AUDIO_JOBS {
+                    return Err(format!(
+                        "--jobs is limited to {MAX_AUDIO_JOBS} concurrent ffmpeg processes"
+                    ));
+                }
+            }
             "--json" => json = true,
             "--help" | "-h" => {
                 println!(
-                    "Usage: mediaforge extract-audio-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--format mp3|wav|flac] [--bitrate RATE] [--stream N] [--json]\n\nExtract audio from video and audio assets while preserving relative folders. Defaults to MP3 at 192k from the first audio stream. Existing outputs are never overwritten. The output directory must already exist. --json emits progress and per-file results as JSON Lines."
+                    "Usage: mediaforge extract-audio-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--format mp3|wav|flac] [--bitrate RATE] [--stream N] [--jobs N] [--json]\n\nExtract audio from video and audio assets while preserving relative folders. Defaults to MP3 at 192k from the first audio stream. --jobs controls concurrent ffmpeg processes (1–16; default 4). Existing outputs are never overwritten. The output directory must already exist. --json emits progress and per-file results as JSON Lines."
                 );
                 return Ok(());
             }
@@ -2776,73 +2797,130 @@ fn run_extract_audio_dir(args: &[String]) -> Result<(), String> {
         return Ok(());
     }
 
+    let total = records.len();
     let mut targets = HashSet::new();
+    let plans: Vec<(Option<PathBuf>, Result<(), String>)> = records
+        .iter()
+        .map(|record| {
+            let plan = (|| -> Result<PathBuf, String> {
+                let relative = record
+                    .path
+                    .strip_prefix(&root)
+                    .map_err(|error| format!("cannot relativize input path: {error}"))?;
+                let stem = relative
+                    .file_stem()
+                    .and_then(|value| value.to_str())
+                    .ok_or_else(|| {
+                        "cannot create an audio output name from this path".to_owned()
+                    })?;
+                let mut relative_output = relative.to_path_buf();
+                relative_output.set_file_name(format!("{stem}-audio.{format}"));
+                let output = output_root.join(relative_output);
+                if !targets.insert(output.clone()) {
+                    return Err(format!(
+                        "multiple source files map to the same audio path: {}",
+                        output.display()
+                    ));
+                }
+                Ok(output)
+            })();
+            match plan {
+                Ok(output) => (Some(output), Ok(())),
+                Err(error) => (None, Err(error)),
+            }
+        })
+        .collect();
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let results = std::sync::Mutex::new(Vec::<(usize, Result<(), String>)>::with_capacity(total));
+    std::thread::scope(|scope| {
+        for _ in 0..jobs.min(total) {
+            scope.spawn(|| {
+                loop {
+                    let index = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    if index >= total {
+                        break;
+                    }
+                    let record = &records[index];
+                    let (output, plan) = &plans[index];
+                    if json {
+                        println!(
+                            "{{\"type\":\"progress\",\"current\":{},\"total\":{},\"path\":{}}}",
+                            index + 1,
+                            total,
+                            json_string(&record.relative)
+                        );
+                    } else {
+                        println!("Extracting {}/{}: {}", index + 1, total, record.relative);
+                    }
+                    let result = plan.clone().and_then(|()| {
+                        let output = output.as_ref().expect("successful plan has output");
+                        if let Some(parent) = output.parent() {
+                            fs::create_dir_all(parent).map_err(|error| {
+                                format!(
+                                    "could not create audio directory {}: {error}",
+                                    parent.display()
+                                )
+                            })?;
+                        }
+                        let output_file = fs::OpenOptions::new()
+                            .write(true)
+                            .create_new(true)
+                            .open(output)
+                            .map_err(|error| {
+                                if error.kind() == io::ErrorKind::AlreadyExists {
+                                    format!(
+                                        "output already exists; refusing to overwrite: {}",
+                                        output.display()
+                                    )
+                                } else {
+                                    format!(
+                                        "could not reserve output {}: {error}",
+                                        output.display()
+                                    )
+                                }
+                            })?;
+                        drop(output_file);
+                        let source_text = record
+                            .path
+                            .to_str()
+                            .ok_or_else(|| "input path is not valid Unicode".to_owned())?;
+                        let output_text = output
+                            .to_str()
+                            .ok_or_else(|| "output path is not valid Unicode".to_owned())?;
+                        let mut audio_args = vec![
+                            source_text.to_owned(),
+                            "--output".to_owned(),
+                            output_text.to_owned(),
+                            "--format".to_owned(),
+                            format.clone(),
+                            "--stream".to_owned(),
+                            stream.to_string(),
+                            "--quiet".to_owned(),
+                        ];
+                        if format == "mp3" {
+                            audio_args.push("--bitrate".to_owned());
+                            audio_args.push(bitrate.clone());
+                        }
+                        run_extract_audio(&audio_args)
+                    });
+                    results
+                        .lock()
+                        .expect("audio results lock poisoned")
+                        .push((index, result));
+                }
+            });
+        }
+    });
+    let mut results = results
+        .into_inner()
+        .map_err(|_| "audio results lock poisoned".to_owned())?;
+    results.sort_by_key(|(index, _)| *index);
     let mut succeeded = 0_usize;
     let mut failed = 0_usize;
-    let total = records.len();
-    for (position, record) in records.into_iter().enumerate() {
-        if json {
-            println!(
-                "{{\"type\":\"progress\",\"current\":{},\"total\":{},\"path\":{}}}",
-                position + 1,
-                total,
-                json_string(&record.relative)
-            );
-        } else {
-            println!("Extracting {}/{}: {}", position + 1, total, record.relative);
-        }
-        let mut output_for_record = None::<PathBuf>;
-        let result = (|| -> Result<(), String> {
-            let relative = record
-                .path
-                .strip_prefix(&root)
-                .map_err(|error| format!("cannot relativize input path: {error}"))?;
-            let stem = relative
-                .file_stem()
-                .and_then(|value| value.to_str())
-                .ok_or_else(|| "cannot create an audio output name from this path".to_owned())?;
-            let mut relative_output = relative.to_path_buf();
-            relative_output.set_file_name(format!("{stem}-audio.{format}"));
-            let output = output_root.join(&relative_output);
-            output_for_record = Some(output.clone());
-            if !targets.insert(output.clone()) {
-                return Err(format!(
-                    "multiple source files map to the same audio path: {}",
-                    output.display()
-                ));
-            }
-            if let Some(parent) = output.parent() {
-                fs::create_dir_all(parent).map_err(|error| {
-                    format!(
-                        "could not create audio directory {}: {error}",
-                        parent.display()
-                    )
-                })?;
-            }
-            let source_text = record
-                .path
-                .to_str()
-                .ok_or_else(|| "input path is not valid Unicode".to_owned())?;
-            let output_text = output
-                .to_str()
-                .ok_or_else(|| "output path is not valid Unicode".to_owned())?;
-            let mut audio_args = vec![
-                source_text.to_owned(),
-                "--output".to_owned(),
-                output_text.to_owned(),
-                "--format".to_owned(),
-                format.clone(),
-                "--stream".to_owned(),
-                stream.to_string(),
-                "--quiet".to_owned(),
-            ];
-            if format == "mp3" {
-                audio_args.push("--bitrate".to_owned());
-                audio_args.push(bitrate.clone());
-            }
-            run_extract_audio(&audio_args)
-        })();
-        let output_json = output_for_record
+    for (index, result) in results {
+        let record = &records[index];
+        let output_json = plans[index]
+            .0
             .as_ref()
             .map(|output| json_string(&output.to_string_lossy()))
             .unwrap_or_else(|| "null".to_owned());
@@ -2855,7 +2933,7 @@ fn run_extract_audio_dir(args: &[String]) -> Result<(), String> {
                         json_string(&record.relative),
                         output_json
                     );
-                } else if let Some(output) = output_for_record {
+                } else if let Some(output) = &plans[index].0 {
                     println!("Created audio {}", output.display());
                 }
             }
