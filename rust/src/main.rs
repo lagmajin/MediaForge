@@ -1277,7 +1277,7 @@ fn fraction_ceil_scaled(fraction: &str, multiplier: u128) -> u128 {
 
 fn print_help() {
     println!(
-        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS] [--largest N]\n  mediaforge dupes [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--top-groups N]\n  mediaforge probe <FILE> [--compact]\n  mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--jobs N]\n  mediaforge project [PATH] [--json]\n  mediaforge gitignore [PATH] [--apply]\n  mediaforge organize [PATH] [--by type|extension] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--apply]\n  mediaforge undo [PATH] [--json]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--include-hidden] [--include-generated] [--dry-run] [--json] [--list]\n  mediaforge --version\n  mediaforge --help"
+        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS] [--largest N]\n  mediaforge dupes [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--top-groups N]\n  mediaforge probe <FILE> [--compact]\n  mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--jobs N] [--summary]\n  mediaforge project [PATH] [--json]\n  mediaforge gitignore [PATH] [--apply]\n  mediaforge organize [PATH] [--by type|extension] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--apply]\n  mediaforge undo [PATH] [--json]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--include-hidden] [--include-generated] [--dry-run] [--json] [--list]\n  mediaforge --version\n  mediaforge --help"
     );
 }
 
@@ -1311,7 +1311,7 @@ fn run_probe(args: &[String]) -> Result<(), String> {
     let path = fs::canonicalize(&path)
         .map_err(|error| format!("cannot resolve media file {}: {error}", path.display()))?;
 
-    let json = ffprobe_json(&path, pretty)?;
+    let json = ffprobe_json(&path, pretty, false)?;
     let mut stdout = io::stdout().lock();
     stdout
         .write_all(json.as_bytes())
@@ -1324,9 +1324,17 @@ fn run_probe(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-fn ffprobe_json(path: &Path, pretty: bool) -> Result<String, String> {
+fn ffprobe_json(path: &Path, pretty: bool, summary: bool) -> Result<String, String> {
     let mut command = Command::new("ffprobe");
-    command.args(["-v", "error", "-show_format", "-show_streams"]);
+    command.args(["-v", "error"]);
+    if summary {
+        command.args([
+            "-show_entries",
+            "format=duration,format_name:stream=index,codec_type,codec_name,width,height,duration,sample_rate,channels,channel_layout,avg_frame_rate",
+        ]);
+    } else {
+        command.args(["-show_format", "-show_streams"]);
+    }
     if pretty {
         command.args(["-of", "json"]);
     } else {
@@ -1355,6 +1363,7 @@ fn ffprobe_json(path: &Path, pretty: bool) -> Result<String, String> {
 
 fn run_probe_dir(args: &[String]) -> Result<(), String> {
     let mut include_hidden = false;
+    let mut summary = false;
     let mut extensions = None;
     let mut jobs = std::thread::available_parallelism()
         .map(usize::from)
@@ -1364,6 +1373,7 @@ fn run_probe_dir(args: &[String]) -> Result<(), String> {
     while let Some(arg) = iter.next() {
         match arg.as_str() {
             "--include-hidden" => include_hidden = true,
+            "--summary" => summary = true,
             "--extension" => {
                 let value = iter.next().ok_or_else(|| {
                     "--extension requires a comma-separated extension list".to_owned()
@@ -1383,7 +1393,7 @@ fn run_probe_dir(args: &[String]) -> Result<(), String> {
             }
             "--help" | "-h" => {
                 println!(
-                    "Usage: mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--jobs N]\n\nProbe video and audio assets in a directory with ffprobe. Emits one JSON Lines record per file. --jobs controls the number of concurrent ffprobe processes."
+                    "Usage: mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--jobs N] [--summary]\n\nProbe video and audio assets in a directory with ffprobe. Emits one JSON Lines record per file. --jobs controls the number of concurrent ffprobe processes. --summary limits metadata to duration, codec, dimensions, frame rate, and audio channels."
                 );
                 return Ok(());
             }
@@ -1432,7 +1442,7 @@ fn run_probe_dir(args: &[String]) -> Result<(), String> {
                     let Some(record) = records.get(index) else {
                         break;
                     };
-                    let result = ffprobe_json(&record.path, false);
+                    let result = ffprobe_json(&record.path, false, summary);
                     let (success, json) = match result {
                         Ok(probe) => (
                             true,
