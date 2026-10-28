@@ -3899,6 +3899,8 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
             write_snapshot_csv_row(&mut stdout, &size_summary)?;
         }
     } else if json {
+        let stdout = io::stdout();
+        let mut output = io::BufWriter::with_capacity(64 * 1024, stdout.lock());
         if !summary_only {
             for (relative, current) in &current_entries {
                 let old = old_entries.get(*relative);
@@ -3909,7 +3911,8 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
                     }
                     Some(_) => continue,
                 };
-                println!(
+                writeln!(
+                    output,
                     "{{\"type\":{kind:?},\"asset_type\":{},\"path\":{},\"old_size_bytes\":{},\"new_size_bytes\":{},\"size_delta_bytes\":{},\"old_modified_unix_ns\":{},\"new_modified_unix_ns\":{}}}",
                     json_string(classify(Path::new(relative)).as_str()),
                     json_string(relative),
@@ -3921,20 +3924,23 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
                     ),
                     read_json_timestamp(old.and_then(|value| value.modified_ns())),
                     read_json_timestamp(current.modified_ns())
-                );
+                )
+                .map_err(|error| format!("could not write snapshot JSON: {error}"))?;
             }
             for (relative, old) in &old_entries {
                 if current_entries.contains_key(relative.as_str()) {
                     continue;
                 }
-                println!(
+                writeln!(
+                    output,
                     "{{\"type\":\"removed\",\"asset_type\":{},\"path\":{},\"old_size_bytes\":{},\"new_size_bytes\":null,\"size_delta_bytes\":{},\"old_modified_unix_ns\":{},\"new_modified_unix_ns\":null}}",
                     json_string(classify(Path::new(relative)).as_str()),
                     json_string(relative),
                     old.size,
                     -i128::from(old.size),
                     read_json_timestamp(old.modified_ns())
-                );
+                )
+                .map_err(|error| format!("could not write snapshot JSON: {error}"))?;
             }
         }
         let type_summary = by_type
@@ -3970,10 +3976,15 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
             })
             .collect::<Vec<_>>()
             .join(",");
-        println!(
+        writeln!(
+            output,
             "{{\"type\":\"summary\",\"files\":{},\"added\":{added},\"removed\":{removed},\"modified\":{modified},\"unchanged\":{unchanged},\"added_bytes\":{added_bytes},\"removed_bytes\":{removed_bytes},\"modified_size_delta_bytes\":{modified_size_delta_bytes},\"by_asset_type\":[{type_summary}],\"by_size_bucket\":[{size_summary}]}}",
             records.len()
-        );
+        )
+        .map_err(|error| format!("could not write snapshot JSON: {error}"))?;
+        output
+            .flush()
+            .map_err(|error| format!("could not write snapshot JSON: {error}"))?;
     } else {
         println!("Snapshot diff: {}", root.display());
         println!(
