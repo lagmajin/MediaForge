@@ -2,6 +2,7 @@ use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::env;
 use std::fs::{self, File, OpenOptions};
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::io::{self, BufRead, BufReader, BufWriter, Cursor, Read, Seek, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
@@ -882,10 +883,9 @@ fn files_identical(left: &Path, right: &Path) -> io::Result<bool> {
     }
 }
 
-fn sample_matches(left: &Path, right: &Path, size: u64) -> io::Result<bool> {
+fn sample_signature(path: &Path, size: u64) -> io::Result<u64> {
     const SAMPLE_SIZE: usize = 4096;
-    let mut left = fs::File::open(left)?;
-    let mut right = fs::File::open(right)?;
+    let mut file = fs::File::open(path)?;
     let mut offsets = vec![0_u64];
     if size > SAMPLE_SIZE as u64 {
         offsets.push(size / 2 - (SAMPLE_SIZE as u64 / 2));
@@ -893,19 +893,18 @@ fn sample_matches(left: &Path, right: &Path, size: u64) -> io::Result<bool> {
     }
     offsets.sort_unstable();
     offsets.dedup();
-    let mut left_buffer = vec![0_u8; SAMPLE_SIZE];
-    let mut right_buffer = vec![0_u8; SAMPLE_SIZE];
+    let mut buffer = vec![0_u8; SAMPLE_SIZE];
+    let mut hasher = DefaultHasher::new();
+    size.hash(&mut hasher);
     for offset in offsets {
-        left.seek(io::SeekFrom::Start(offset))?;
-        right.seek(io::SeekFrom::Start(offset))?;
+        file.seek(io::SeekFrom::Start(offset))?;
         let count = (size - offset).min(SAMPLE_SIZE as u64) as usize;
-        left.read_exact(&mut left_buffer[..count])?;
-        right.read_exact(&mut right_buffer[..count])?;
-        if left_buffer[..count] != right_buffer[..count] {
-            return Ok(false);
-        }
+        file.read_exact(&mut buffer[..count])?;
+        offset.hash(&mut hasher);
+        count.hash(&mut hasher);
+        buffer[..count].hash(&mut hasher);
     }
-    Ok(true)
+    Ok(hasher.finish())
 }
 
 fn run_dupes(args: &[String]) -> Result<(), String> {
@@ -989,19 +988,15 @@ fn run_dupes(args: &[String]) -> Result<(), String> {
 
     let mut groups: Vec<(u64, Vec<String>)> = Vec::new();
     for (size, paths) in by_size.into_iter().filter(|(_, paths)| paths.len() > 1) {
-        let mut candidates: Vec<Vec<String>> = Vec::new();
+        let mut by_sample: HashMap<u64, Vec<Vec<String>>> = HashMap::new();
         for relative in paths {
             let candidate = root.join(&relative);
+            let signature = sample_signature(&candidate, size)
+                .map_err(|error| format!("could not sample {}: {error}", candidate.display()))?;
+            let candidates = by_sample.entry(signature).or_default();
             let mut matched = false;
-            for group in &mut candidates {
+            for group in candidates.iter_mut() {
                 let representative = root.join(&group[0]);
-                match sample_matches(&representative, &candidate, size) {
-                    Ok(false) => continue,
-                    Ok(true) => {}
-                    Err(error) => {
-                        return Err(format!("could not sample {}: {error}", candidate.display()));
-                    }
-                }
                 match files_identical(&representative, &candidate) {
                     Ok(true) => {
                         group.push(relative.clone());
@@ -1021,10 +1016,19 @@ fn run_dupes(args: &[String]) -> Result<(), String> {
                 candidates.push(vec![relative]);
             }
         }
-        for group in candidates.into_iter().filter(|group| group.len() > 1) {
+        for group in by_sample
+            .into_values()
+            .flatten()
+            .filter(|group| group.len() > 1)
+        {
             groups.push((size, group));
         }
     }
+    groups.sort_by(|left, right| {
+        left.0
+            .cmp(&right.0)
+            .then_with(|| left.1.first().cmp(&right.1.first()))
+    });
 
     let duplicate_files: usize = groups.iter().map(|(_, files)| files.len()).sum();
     let reclaimable: u128 = groups
