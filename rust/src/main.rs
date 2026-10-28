@@ -1861,14 +1861,18 @@ fn sample_signatures(
     paths: &[String],
     size: u64,
     jobs: usize,
-) -> Vec<Result<u64, String>> {
+) -> Vec<(usize, Result<u64, String>)> {
     if jobs == 1 || paths.len() < 8 {
         return paths
             .iter()
-            .map(|relative| {
+            .enumerate()
+            .map(|(index, relative)| {
                 let path = root.join(relative);
-                sample_signature(&path, size)
-                    .map_err(|error| format!("could not sample {}: {error}", path.display()))
+                (
+                    index,
+                    sample_signature(&path, size)
+                        .map_err(|error| format!("could not sample {}: {error}", path.display())),
+                )
             })
             .collect();
     }
@@ -1901,12 +1905,8 @@ fn sample_signatures(
             .flat_map(|handle| handle.join().expect("duplicate sampling worker panicked"))
             .collect::<Vec<_>>()
     });
-    results.sort_by_key(|(index, _)| *index);
-    let mut ordered = vec![Ok(0); paths.len()];
-    for (index, result) in results {
-        ordered[index] = result;
-    }
-    ordered
+    results.sort_unstable_by_key(|(index, _)| *index);
+    results
 }
 
 struct VerifiedDuplicateGroup {
@@ -2054,7 +2054,11 @@ fn run_dupes(args: &[String]) -> Result<(), String> {
     for (size, paths) in by_size.into_iter().filter(|(_, paths)| paths.len() > 1) {
         let mut by_sample: HashMap<u64, Vec<VerifiedDuplicateGroup>> = HashMap::new();
         let signatures = sample_signatures(&root, &paths, size, jobs);
-        for (relative, signature) in paths.into_iter().zip(signatures) {
+        let mut paths = paths.into_iter().map(Some).collect::<Vec<_>>();
+        for (index, signature) in signatures {
+            let relative = paths[index]
+                .take()
+                .expect("each duplicate path is sampled exactly once");
             let signature = signature?;
             let candidate = root.join(&relative);
             let candidates = by_sample.entry(signature).or_default();
