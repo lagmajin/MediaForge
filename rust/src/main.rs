@@ -2333,15 +2333,15 @@ fn files_identical(
 ) -> io::Result<bool> {
     const DEFAULT_BUFFER_SIZE: usize = 8 * 1024;
     const MAX_BUFFER_SIZE: usize = 1024 * 1024;
+    let capacity = usize::try_from(size)
+        .unwrap_or(MAX_BUFFER_SIZE)
+        .clamp(DEFAULT_BUFFER_SIZE, MAX_BUFFER_SIZE);
     let mut left = fs::File::open(left)?;
     let mut right = fs::File::open(right)?;
+    left_buffer.resize(capacity, 0);
+    right_buffer.resize(capacity, 0);
     let mut remaining = size;
     loop {
-        let capacity = usize::try_from(remaining)
-            .unwrap_or(MAX_BUFFER_SIZE)
-            .clamp(DEFAULT_BUFFER_SIZE, MAX_BUFFER_SIZE);
-        left_buffer.resize(capacity, 0);
-        right_buffer.resize(capacity, 0);
         let requested = if remaining == 0 {
             capacity
         } else {
