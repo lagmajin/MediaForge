@@ -505,6 +505,23 @@ fn walk_with_skip_dirs_mode_counted(config: ScanWalkConfig<'_>) -> Result<ScanWa
                     return Ok(());
                 }
             }
+            let mut extension_value = None;
+            let mut kind_value = None;
+            if file_type.is_file() {
+                let extension = Path::new(&name)
+                    .extension()
+                    .and_then(|value| value.to_str());
+                let kind = classify_extension(extension);
+                if filters.kind.is_some_and(|filter| filter != kind)
+                    || filters
+                        .extensions
+                        .is_some_and(|extensions| !matches_extension_filter(extension, extensions))
+                {
+                    return Ok(());
+                }
+                extension_value = extension;
+                kind_value = Some(kind);
+            }
             let path = directory.join(&name);
             if file_type.is_dir() && !include_hidden && has_hidden_attribute(&path) {
                 return Ok(());
@@ -571,16 +588,7 @@ fn walk_with_skip_dirs_mode_counted(config: ScanWalkConfig<'_>) -> Result<ScanWa
                 {
                     return Ok(());
                 }
-                let kind = classify(&path);
-                if filters.kind.is_some_and(|filter| filter != kind) {
-                    return Ok(());
-                }
-                let extension_value = path.extension().and_then(|value| value.to_str());
-                if filters.extensions.is_some_and(|extensions| {
-                    !matches_extension_filter(extension_value, extensions)
-                }) {
-                    return Ok(());
-                }
+                let kind = kind_value.expect("file types are classified before path creation");
                 if !active_ignored.is_empty() {
                     let relative = relative.get_or_insert_with(|| {
                         path.strip_prefix(root)
