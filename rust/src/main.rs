@@ -11461,6 +11461,36 @@ fn padded_tar_size(size: u64) -> Result<u64, String> {
         .ok_or_else(|| "estimated archive size exceeds the supported range".to_owned())
 }
 
+fn decimal_digits_usize(mut value: usize) -> usize {
+    let mut digits = 1;
+    while value >= 10 {
+        value /= 10;
+        digits += 1;
+    }
+    digits
+}
+
+fn decimal_digits_u64(mut value: u64) -> usize {
+    let mut digits = 1;
+    while value >= 10 {
+        value /= 10;
+        digits += 1;
+    }
+    digits
+}
+
+fn pax_record_encoded_len(key_len: usize, value_len: usize) -> Option<usize> {
+    let body_len = key_len.checked_add(value_len)?.checked_add(3)?;
+    let mut record_len = body_len.checked_add(1)?;
+    loop {
+        let updated_len = body_len.checked_add(decimal_digits_usize(record_len))?;
+        if updated_len == record_len {
+            return Some(record_len);
+        }
+        record_len = updated_len;
+    }
+}
+
 fn estimate_tar_size(entries: &[PackFileRecord]) -> Result<u64, String> {
     let mut total = (TAR_BLOCK_SIZE * 2) as u64;
     for record in entries {
@@ -11470,21 +11500,41 @@ fn estimate_tar_size(entries: &[PackFileRecord]) -> Result<u64, String> {
             .modified
             .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
             .map_or(0, |duration| duration.as_secs());
-        let pax_size = record.size > TAR_OCTAL_MAX;
+        let needs_pax_size = record.size > TAR_OCTAL_MAX;
         let pax_mtime = modified > TAR_OCTAL_MAX;
 
-        if pax_path || pax_size || pax_mtime {
-            let mut pax = String::new();
+        if pax_path || needs_pax_size || pax_mtime {
+            let mut pax_bytes = 0_usize;
             if pax_path {
-                pax.push_str(&pax_record("path", archive_name));
+                pax_bytes = pax_bytes
+                    .checked_add(
+                        pax_record_encoded_len("path".len(), archive_name.len()).ok_or_else(
+                            || "PAX header size exceeds the supported range".to_owned(),
+                        )?,
+                    )
+                    .ok_or_else(|| "PAX header size exceeds the supported range".to_owned())?;
             }
-            if pax_size {
-                pax.push_str(&pax_record("size", &record.size.to_string()));
+            if needs_pax_size {
+                pax_bytes = pax_bytes
+                    .checked_add(
+                        pax_record_encoded_len("size".len(), decimal_digits_u64(record.size))
+                            .ok_or_else(|| {
+                                "PAX header size exceeds the supported range".to_owned()
+                            })?,
+                    )
+                    .ok_or_else(|| "PAX header size exceeds the supported range".to_owned())?;
             }
             if pax_mtime {
-                pax.push_str(&pax_record("mtime", &modified.to_string()));
+                pax_bytes = pax_bytes
+                    .checked_add(
+                        pax_record_encoded_len("mtime".len(), decimal_digits_u64(modified))
+                            .ok_or_else(|| {
+                                "PAX header size exceeds the supported range".to_owned()
+                            })?,
+                    )
+                    .ok_or_else(|| "PAX header size exceeds the supported range".to_owned())?;
             }
-            let pax_size = u64::try_from(pax.len())
+            let pax_size = u64::try_from(pax_bytes)
                 .map_err(|_| "PAX header size exceeds the supported range".to_owned())?;
             total = total
                 .checked_add(TAR_BLOCK_SIZE as u64)
