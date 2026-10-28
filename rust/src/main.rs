@@ -11969,10 +11969,26 @@ fn write_tar_payload(writer: &mut impl Write, contents: &[u8]) -> io::Result<()>
 
 struct PackFileRecord {
     relative: String,
-    path: PathBuf,
     size: u64,
     modified: Option<std::time::SystemTime>,
     kind: Kind,
+}
+
+fn pack_relative_path(path: &Path) -> Result<String, String> {
+    let mut relative = String::with_capacity(path.as_os_str().len());
+    for component in path.components() {
+        let std::path::Component::Normal(name) = component else {
+            return Err(format!("unsafe archive path: {}", path.display()));
+        };
+        let name = name
+            .to_str()
+            .ok_or_else(|| format!("non-UTF-8 path cannot be packed: {}", path.display()))?;
+        if !relative.is_empty() {
+            relative.push('/');
+        }
+        relative.push_str(name);
+    }
+    Ok(relative)
 }
 
 fn pack_file(
@@ -12608,9 +12624,9 @@ fn run_pack(args: &[String]) -> Result<(), String> {
         &ignored,
         &filters,
         |record| {
+            let relative = pack_relative_path(&record.path)?;
             records.push(PackFileRecord {
-                relative: record.relative,
-                path: record.path,
+                relative,
                 size: record.size,
                 modified: record.modified,
                 kind: record.kind,
@@ -12621,39 +12637,39 @@ fn run_pack(args: &[String]) -> Result<(), String> {
     let selected_path_keys = records
         .iter()
         .filter(|record| {
-            record
-                .path
+            Path::new(&record.relative)
                 .file_name()
                 .and_then(|name| name.to_str())
                 .is_some_and(|name| strip_ascii_case_insensitive_suffix(name, ".meta").is_some())
         })
-        .map(|record| output_path_collision_key(&record.path))
+        .map(|record| output_path_collision_key(Path::new(&record.relative)))
         .collect::<HashSet<_>>();
     records.sort_unstable_by(|left, right| {
-        left.path
+        Path::new(&left.relative)
             .parent()
-            .cmp(&right.path.parent())
+            .cmp(&Path::new(&right.relative).parent())
             .then_with(|| left.relative.cmp(&right.relative))
     });
     let mut ignore_rule_chain = vec![(PathBuf::new(), Arc::<[IgnoreRule]>::from(ignored.clone()))];
     let mut unity_sidecars = Vec::<PackFileRecord>::new();
     let mut group_start = 0;
     while group_start < records.len() {
-        let parent = records[group_start]
-            .path
+        let parent = Path::new(&records[group_start].relative)
             .parent()
             .unwrap_or(Path::new("."))
             .to_path_buf();
         let mut group_end = group_start + 1;
         while group_end < records.len()
-            && records[group_end].path.parent().unwrap_or(Path::new(".")) == parent
+            && Path::new(&records[group_end].relative)
+                .parent()
+                .unwrap_or(Path::new("."))
+                == parent
         {
             group_end += 1;
         }
         let directory_records = &records[group_start..group_end];
         if directory_records.iter().any(|record| {
-            record
-                .path
+            Path::new(&record.relative)
                 .file_name()
                 .and_then(|name| name.to_str())
                 .is_some_and(|name| strip_ascii_case_insensitive_suffix(name, ".meta").is_none())
@@ -12667,7 +12683,9 @@ fn run_pack(args: &[String]) -> Result<(), String> {
                 })?;
             let sidecars_by_name = collect_unity_meta_sidecars(&entries);
             for record in directory_records {
-                let Some(asset_name) = record.path.file_name().and_then(|name| name.to_str())
+                let Some(asset_name) = Path::new(&record.relative)
+                    .file_name()
+                    .and_then(|name| name.to_str())
                 else {
                     continue;
                 };
@@ -12689,7 +12707,7 @@ fn run_pack(args: &[String]) -> Result<(), String> {
                 if selected_path_keys.contains(&path_key) {
                     continue;
                 }
-                let relative = relative_path.to_string_lossy().replace('\\', "/");
+                let relative = pack_relative_path(&relative_path)?;
                 let relative_lower = relative.to_lowercase();
                 if exclude_path_contains_lower
                     .iter()
@@ -12736,7 +12754,6 @@ fn run_pack(args: &[String]) -> Result<(), String> {
                 }
                 unity_sidecars.push(PackFileRecord {
                     relative,
-                    path: relative_path,
                     size: metadata.len(),
                     modified: metadata.modified().ok(),
                     kind: Kind::Other,
@@ -12750,7 +12767,7 @@ fn run_pack(args: &[String]) -> Result<(), String> {
     let mut portable_prefix = String::new();
     let mut total_bytes = 0_u64;
     for (record_index, record) in records.iter().enumerate() {
-        let relative = record.path.as_path();
+        let relative = Path::new(&record.relative);
         let mut component_count = 0;
         for component in relative.components() {
             let std::path::Component::Normal(part) = component else {
@@ -12843,7 +12860,7 @@ fn run_pack(args: &[String]) -> Result<(), String> {
     let mut archive_bytes = 0_u64;
     let write_result = (|| -> Result<(), String> {
         for (index, record) in records.iter().enumerate() {
-            let source_path = root.join(&record.path);
+            let source_path = root.join(&record.relative);
             pack_file(
                 &mut archive,
                 &record.relative,
