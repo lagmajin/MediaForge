@@ -10838,57 +10838,66 @@ fn print_pack_json(
     list_entries: bool,
     entries: &[(&FileRecord, &str)],
     archive_bytes: Option<u64>,
-) {
-    println!("{{");
-    println!("  \"root\": {},", json_string(&root.to_string_lossy()));
-    println!("  \"output\": {},", json_string(&output.to_string_lossy()));
-    println!("  \"status\": {},", json_string(status));
-    println!("  \"dry_run\": {dry_run},");
-    println!("  \"output_exists\": {output_exists},");
-    println!("  \"min_size_bytes\": {min_size},");
-    match max_size {
-        Some(size) => println!("  \"max_size_bytes\": {size},"),
-        None => println!("  \"max_size_bytes\": null,"),
-    }
-    println!(
-        "  \"exclude_path_contains\": [{}],",
-        exclude_path_contains
-            .iter()
-            .map(|value| json_string(value))
-            .collect::<Vec<_>>()
-            .join(",")
-    );
-    println!("  \"files\": {files},");
-    println!("  \"input_bytes\": {input_bytes},");
-    println!("  \"estimated_archive_bytes\": {estimated_archive_bytes},");
-    println!(
-        "  \"input_size\": {},",
-        json_string(&human_size(input_bytes))
-    );
-    match archive_bytes {
-        Some(bytes) => {
-            println!("  \"archive_bytes\": {bytes},");
-            println!("  \"archive_size\": {},", json_string(&human_size(bytes)));
+) -> Result<(), String> {
+    let stdout = io::stdout();
+    let mut writer = io::BufWriter::with_capacity(64 * 1024, stdout.lock());
+    let result = (|| -> io::Result<()> {
+        writer.write_all(b"{\n  \"root\": ")?;
+        write_json_string(&mut writer, &root.to_string_lossy())?;
+        writer.write_all(b",\n  \"output\": ")?;
+        write_json_string(&mut writer, &output.to_string_lossy())?;
+        writer.write_all(b",\n  \"status\": ")?;
+        write_json_string(&mut writer, status)?;
+        writeln!(
+            writer,
+            ",\n  \"dry_run\": {dry_run},\n  \"output_exists\": {output_exists},\n  \"min_size_bytes\": {min_size},"
+        )?;
+        match max_size {
+            Some(size) => writeln!(writer, "  \"max_size_bytes\": {size},")?,
+            None => writer.write_all(b"  \"max_size_bytes\": null,\n")?,
         }
-        None => println!("  \"archive_bytes\": null,\n  \"archive_size\": null,"),
-    }
-    if list_entries {
-        println!("  \"entries\": [");
-        for (index, (record, name)) in entries.iter().enumerate() {
-            let comma = if index + 1 == entries.len() { "" } else { "," };
-            println!(
-                "    {{\"path\": {}, \"size_bytes\": {}, \"type\": {}}}{}",
-                json_string(name),
-                record.size,
-                json_string(record.kind.as_str()),
-                comma
-            );
+        writer.write_all(b"  \"exclude_path_contains\": [")?;
+        for (index, value) in exclude_path_contains.iter().enumerate() {
+            if index > 0 {
+                writer.write_all(b",")?;
+            }
+            write_json_string(&mut writer, value)?;
         }
-        println!("  ]");
-    } else {
-        println!("  \"entries\": null");
-    }
-    println!("}}");
+        writeln!(
+            writer,
+            "],\n  \"files\": {files},\n  \"input_bytes\": {input_bytes},\n  \"estimated_archive_bytes\": {estimated_archive_bytes},"
+        )?;
+        writer.write_all(b"  \"input_size\": ")?;
+        write_json_string(&mut writer, &human_size(input_bytes))?;
+        writer.write_all(b",\n")?;
+        match archive_bytes {
+            Some(bytes) => {
+                writeln!(writer, "  \"archive_bytes\": {bytes},")?;
+                writer.write_all(b"  \"archive_size\": ")?;
+                write_json_string(&mut writer, &human_size(bytes))?;
+                writer.write_all(b",\n")?;
+            }
+            None => writer.write_all(b"  \"archive_bytes\": null,\n  \"archive_size\": null,\n")?,
+        }
+        if list_entries {
+            writer.write_all(b"  \"entries\": [\n")?;
+            for (index, (record, name)) in entries.iter().enumerate() {
+                if index > 0 {
+                    writer.write_all(b",\n")?;
+                }
+                writer.write_all(b"    {\"path\": ")?;
+                write_json_string(&mut writer, name)?;
+                write!(writer, ", \"size_bytes\": {}, \"type\": ", record.size)?;
+                write_json_string(&mut writer, record.kind.as_str())?;
+                writer.write_all(b"}")?;
+            }
+            writer.write_all(b"\n  ]\n}\n")?;
+        } else {
+            writer.write_all(b"  \"entries\": null\n}\n")?;
+        }
+        writer.flush()
+    })();
+    result.map_err(|error| format!("could not write pack JSON: {error}"))
 }
 
 fn run_pack(args: &[String]) -> Result<(), String> {
@@ -11115,7 +11124,7 @@ fn run_pack(args: &[String]) -> Result<(), String> {
                 list_entries,
                 &entries,
                 None,
-            );
+            )?;
             return Ok(());
         }
         if output_exists {
@@ -11235,7 +11244,7 @@ fn run_pack(args: &[String]) -> Result<(), String> {
             list_entries,
             &entries,
             Some(archive_size),
-        );
+        )?;
     } else {
         println!(
             "Created {} ({})",
