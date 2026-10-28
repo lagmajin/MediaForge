@@ -8367,10 +8367,18 @@ fn unity_hex_nibble(byte: u8) -> Option<u8> {
     }
 }
 
-fn unity_meta_guid(contents: &str) -> Result<Option<[u8; 16]>, ()> {
+fn unity_meta_guid(mut reader: impl BufRead) -> io::Result<Result<Option<[u8; 16]>, ()>> {
     let mut guid = None;
-    for (index, raw_line) in contents.lines().enumerate() {
-        let line = if index == 0 {
+    let mut line = String::new();
+    let mut first_line = true;
+    loop {
+        line.clear();
+        if reader.read_line(&mut line)? == 0 {
+            break;
+        }
+        let raw_line = line.trim_end_matches(['\r', '\n']);
+        let line = if first_line {
+            first_line = false;
             raw_line.trim_start_matches('\u{feff}')
         } else {
             raw_line
@@ -8385,27 +8393,38 @@ fn unity_meta_guid(contents: &str) -> Result<Option<[u8; 16]>, ()> {
             continue;
         }
         if guid.is_some() {
-            return Err(());
+            return Ok(Err(()));
         }
         let value = value.trim();
         let value = match (value.starts_with('"'), value.ends_with('"')) {
             (true, true) if value.len() >= 2 => &value[1..value.len() - 1],
             (false, false) => value,
-            _ => return Err(()),
+            _ => return Ok(Err(())),
         };
         if value.len() != 32 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-            return Err(());
+            return Ok(Err(()));
         }
         let mut parsed = [0_u8; 16];
         let bytes = value.as_bytes();
         for index in 0..16 {
-            let high = unity_hex_nibble(bytes[index * 2]).ok_or(())?;
-            let low = unity_hex_nibble(bytes[index * 2 + 1]).ok_or(())?;
+            let Some(high) = unity_hex_nibble(bytes[index * 2]) else {
+                return Ok(Err(()));
+            };
+            let Some(low) = unity_hex_nibble(bytes[index * 2 + 1]) else {
+                return Ok(Err(()));
+            };
             parsed[index] = (high << 4) | low;
         }
         guid = Some(parsed);
     }
-    Ok(guid)
+    Ok(Ok(guid))
+}
+
+fn read_unity_meta_guid(path: &Path) -> Result<Result<Option<[u8; 16]>, ()>, String> {
+    let file = File::open(path)
+        .map_err(|error| format!("cannot read Unity metadata {}: {error}", path.display()))?;
+    unity_meta_guid(BufReader::new(file))
+        .map_err(|error| format!("cannot read Unity metadata {}: {error}", path.display()))
 }
 
 fn unity_guid_string(guid: [u8; 16]) -> String {
@@ -8479,13 +8498,7 @@ fn run_unity_meta(args: &[String]) -> Result<(), String> {
         }
     } else {
         checked = checked.saturating_add(1);
-        let contents = fs::read_to_string(&assets_meta).map_err(|error| {
-            format!(
-                "cannot read Unity metadata {}: {error}",
-                assets_meta.display()
-            )
-        })?;
-        match unity_meta_guid(&contents) {
+        match read_unity_meta_guid(&assets_meta)? {
             Ok(Some(guid)) => {
                 if summary {
                     summary_guids.insert(guid);
@@ -8579,13 +8592,7 @@ fn run_unity_meta(args: &[String]) -> Result<(), String> {
                             orphan_meta.push(relative);
                         }
                     } else {
-                        let contents = fs::read_to_string(&entry_path).map_err(|error| {
-                            format!(
-                                "cannot read Unity metadata {}: {error}",
-                                entry_path.display()
-                            )
-                        })?;
-                        match unity_meta_guid(&contents) {
+                        match read_unity_meta_guid(&entry_path)? {
                             Ok(Some(guid)) => {
                                 if summary {
                                     if !summary_guids.insert(guid) {
