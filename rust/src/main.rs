@@ -144,8 +144,23 @@ fn human_size_wide(size: u128) -> String {
     format!("{size} B")
 }
 
-fn is_hidden(name: &str) -> bool {
-    name.starts_with('.')
+fn is_hidden(path: &Path) -> bool {
+    if path
+        .file_name()
+        .is_some_and(|name| name.to_string_lossy().starts_with('.'))
+    {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        return fs::symlink_metadata(path)
+            .is_ok_and(|metadata| metadata.file_attributes() & 0x2 != 0);
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
 }
 
 fn directory_name_matches(name: &str, candidates: &[&str]) -> bool {
@@ -288,7 +303,7 @@ fn walk_with_skip_dirs_mode_counted(
                 .replace('\\', "/");
             if file_type.is_dir() {
                 if directory_name_matches(&name, skip_dirs)
-                    || (!include_hidden && is_hidden(&name))
+                    || (!include_hidden && is_hidden(&path))
                     || is_ignored_directory(&relative, &active_ignored)
                 {
                     continue;
@@ -300,7 +315,7 @@ fn walk_with_skip_dirs_mode_counted(
                 };
                 pending.push((path, child_ignored));
             } else if file_type.is_file()
-                && (include_hidden || !is_hidden(&name))
+                && (include_hidden || !is_hidden(&path))
                 && !is_ignored(&relative, &active_ignored)
             {
                 let metadata = match entry.metadata() {
@@ -376,7 +391,7 @@ fn walk_strict(
                 .replace('\\', "/");
             if file_type.is_dir() {
                 if directory_name_matches(&name, skip_dirs)
-                    || (!include_hidden && is_hidden(&name))
+                    || (!include_hidden && is_hidden(&path))
                     || is_ignored_directory(&relative, &active_ignored)
                 {
                     continue;
@@ -388,7 +403,7 @@ fn walk_strict(
                 };
                 pending.push((path, child_ignored));
             } else if file_type.is_file()
-                && (include_hidden || !is_hidden(&name))
+                && (include_hidden || !is_hidden(&path))
                 && !is_ignored(&relative, &active_ignored)
             {
                 let metadata = entry
@@ -6939,7 +6954,7 @@ fn run_unity_meta(args: &[String]) -> Result<(), String> {
                 .replace('\\', "/");
             if file_type.is_dir() {
                 if is_ignored_directory(&relative, &active_rules)
-                    || (!include_hidden && is_hidden(&entry.file_name().to_string_lossy()))
+                    || (!include_hidden && is_hidden(&entry_path))
                 {
                     continue;
                 }
@@ -6955,7 +6970,7 @@ fn run_unity_meta(args: &[String]) -> Result<(), String> {
                 pending.push((entry_path, child_rules));
             } else if file_type.is_file() {
                 if is_ignored(&relative, &active_rules)
-                    || (!include_hidden && is_hidden(&entry.file_name().to_string_lossy()))
+                    || (!include_hidden && is_hidden(&entry_path))
                 {
                     continue;
                 }
@@ -8228,7 +8243,7 @@ fn run_sequence(args: &[String]) -> Result<(), String> {
             skipped += 1;
             continue;
         };
-        if (!include_hidden && is_hidden(name_text))
+        if (!include_hidden && is_hidden(&source))
             || is_ignored(name_text, &ignored)
             || matches!(
                 name_text,
