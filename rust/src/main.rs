@@ -6983,8 +6983,7 @@ fn run_proxy_dir(args: &[String]) -> Result<(), String> {
     }
 
     let total = records.len();
-    let mut targets = HashSet::new();
-    let plans: Vec<(Option<PathBuf>, Result<(), String>)> = records
+    let mut plans: Vec<(Option<PathBuf>, Result<(), String>)> = records
         .iter()
         .map(|record| {
             let plan = (|| -> Result<PathBuf, String> {
@@ -6999,12 +6998,6 @@ fn run_proxy_dir(args: &[String]) -> Result<(), String> {
                 let mut relative_output = relative.to_path_buf();
                 relative_output.set_file_name(format!("{stem}-proxy.mp4"));
                 let output = output_root.join(relative_output);
-                if !targets.insert(output.clone()) {
-                    return Err(format!(
-                        "multiple source files map to the same proxy path: {}",
-                        output.display()
-                    ));
-                }
                 Ok(output)
             })();
             match plan {
@@ -7013,6 +7006,7 @@ fn run_proxy_dir(args: &[String]) -> Result<(), String> {
             }
         })
         .collect();
+    mark_output_path_collisions(&mut plans, "proxy");
     let next = std::sync::atomic::AtomicUsize::new(0);
     let completed = std::sync::atomic::AtomicUsize::new(0);
     let progress_output = std::sync::Mutex::new(());
@@ -7519,8 +7513,7 @@ fn run_extract_audio_dir(args: &[String]) -> Result<(), String> {
     }
 
     let total = records.len();
-    let mut targets = HashSet::new();
-    let plans: Vec<(Option<PathBuf>, Result<(), String>)> = records
+    let mut plans: Vec<(Option<PathBuf>, Result<(), String>)> = records
         .iter()
         .map(|record| {
             let plan = (|| -> Result<PathBuf, String> {
@@ -7537,12 +7530,6 @@ fn run_extract_audio_dir(args: &[String]) -> Result<(), String> {
                 let mut relative_output = relative.to_path_buf();
                 relative_output.set_file_name(format!("{stem}-audio.{format}"));
                 let output = output_root.join(relative_output);
-                if !targets.insert(output.clone()) {
-                    return Err(format!(
-                        "multiple source files map to the same audio path: {}",
-                        output.display()
-                    ));
-                }
                 Ok(output)
             })();
             match plan {
@@ -7551,6 +7538,7 @@ fn run_extract_audio_dir(args: &[String]) -> Result<(), String> {
             }
         })
         .collect();
+    mark_output_path_collisions(&mut plans, "audio");
     let next = std::sync::atomic::AtomicUsize::new(0);
     let completed = std::sync::atomic::AtomicUsize::new(0);
     let progress_output = std::sync::Mutex::new(());
@@ -9081,6 +9069,55 @@ enum EntryState {
     Missing,
     File,
     Other,
+}
+
+fn output_path_collision_key(path: &Path) -> PathBuf {
+    if cfg!(any(target_os = "windows", target_os = "macos")) {
+        let mut key = PathBuf::new();
+        for component in path.components() {
+            match component {
+                std::path::Component::Normal(value) => {
+                    if let Some(value) = value.to_str() {
+                        key.push(value.to_lowercase());
+                    } else {
+                        key.push(value);
+                    }
+                }
+                component => key.push(component.as_os_str()),
+            }
+        }
+        key
+    } else {
+        path.to_path_buf()
+    }
+}
+
+fn mark_output_path_collisions(
+    plans: &mut [(Option<PathBuf>, Result<(), String>)],
+    output_kind: &str,
+) {
+    let mut first_by_key = HashMap::<PathBuf, usize>::new();
+    for index in 0..plans.len() {
+        let Some(output) = plans[index].0.as_ref() else {
+            continue;
+        };
+        let key = output_path_collision_key(output);
+        if let Some(first_index) = first_by_key.get(&key).copied() {
+            let first_output = plans[first_index]
+                .0
+                .as_ref()
+                .expect("collision key is associated with an output path");
+            let error = format!(
+                "multiple source files map to colliding {output_kind} paths: {} and {}",
+                first_output.display(),
+                output.display()
+            );
+            plans[first_index].1 = Err(error.clone());
+            plans[index].1 = Err(error);
+        } else {
+            first_by_key.insert(key, index);
+        }
+    }
 }
 
 fn entry_state(path: &Path) -> io::Result<EntryState> {
