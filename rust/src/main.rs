@@ -204,7 +204,22 @@ fn matches_extension_filter(extension: Option<&str>, filters: &HashSet<String>) 
     const LINEAR_FILTER_LIMIT: usize = 8;
     match extension {
         Some(extension) if filters.len() > LINEAR_FILTER_LIMIT => {
-            filters.contains(&format!(".{}", extension.to_ascii_lowercase()))
+            let extension_bytes = extension.as_bytes();
+            let mut normalized = [0_u8; 256];
+            if extension_bytes.len() < normalized.len() {
+                normalized[0] = b'.';
+                for (target, source) in normalized[1..1 + extension_bytes.len()]
+                    .iter_mut()
+                    .zip(extension_bytes)
+                {
+                    *target = source.to_ascii_lowercase();
+                }
+                let candidate = std::str::from_utf8(&normalized[..1 + extension_bytes.len()])
+                    .expect("normalized extension remains valid UTF-8");
+                filters.contains(candidate)
+            } else {
+                filters.contains(&format!(".{}", extension.to_ascii_lowercase()))
+            }
         }
         Some(extension) => filters.iter().any(|candidate| {
             candidate
