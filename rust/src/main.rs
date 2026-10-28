@@ -4939,28 +4939,56 @@ fn collect_json_scalars(
     }
 }
 
+const PROBE_COMPARE_FIELDS: &[&str] = &[
+    "format.format_name",
+    "streams[0].codec_type",
+    "streams[0].codec_name",
+    "streams[0].codec_tag_string",
+    "streams[0].profile",
+    "streams[0].width",
+    "streams[0].height",
+    "streams[0].pix_fmt",
+    "streams[0].sample_aspect_ratio",
+    "streams[0].display_aspect_ratio",
+    "streams[0].avg_frame_rate",
+    "streams[0].r_frame_rate",
+    "streams[0].sample_rate",
+    "streams[0].channels",
+    "streams[0].channel_layout",
+];
+
+enum ProbeRetainedData {
+    CsvJson(String),
+    CompareValues(Vec<String>),
+}
+
+fn probe_compare_values(probe: &str) -> Result<Vec<String>, String> {
+    let mut fields = HashMap::with_capacity(PROBE_COMPARE_FIELDS.len());
+    let mut cursor = 0;
+    collect_json_scalars(
+        probe.as_bytes(),
+        &mut cursor,
+        &mut String::with_capacity(64),
+        &mut fields,
+        0,
+        PROBE_COMPARE_FIELDS,
+    )?;
+    Ok(PROBE_COMPARE_FIELDS
+        .iter()
+        .map(|field| {
+            fields
+                .get(*field)
+                .cloned()
+                .unwrap_or_else(|| "null".to_owned())
+        })
+        .collect())
+}
+
 fn summarize_probe_differences(
     records: &[FilePathRecord],
-    results: &[(usize, bool, String, Option<String>)],
+    results: &[(usize, bool, String, Option<ProbeRetainedData>)],
 ) -> Result<(), String> {
-    const COMPARE_FIELDS: &[&str] = &[
-        "format.format_name",
-        "streams[0].codec_type",
-        "streams[0].codec_name",
-        "streams[0].codec_tag_string",
-        "streams[0].profile",
-        "streams[0].width",
-        "streams[0].height",
-        "streams[0].pix_fmt",
-        "streams[0].sample_aspect_ratio",
-        "streams[0].display_aspect_ratio",
-        "streams[0].avg_frame_rate",
-        "streams[0].r_frame_rate",
-        "streams[0].sample_rate",
-        "streams[0].channels",
-        "streams[0].channel_layout",
-    ];
-    let mut values = COMPARE_FIELDS
+    let mut values = PROBE_COMPARE_FIELDS
         .iter()
         .map(|field| (*field, BTreeMap::<String, Vec<usize>>::new()))
         .collect::<Vec<_>>();
@@ -4972,24 +5000,13 @@ fn summarize_probe_differences(
             continue;
         }
         successful += 1;
-        let probe = probe
-            .as_ref()
-            .ok_or_else(|| "missing successful ffprobe result".to_owned())?;
-        let mut fields = HashMap::with_capacity(COMPARE_FIELDS.len());
-        let mut cursor = 0;
-        collect_json_scalars(
-            probe.as_bytes(),
-            &mut cursor,
-            &mut String::with_capacity(64),
-            &mut fields,
-            0,
-            COMPARE_FIELDS,
-        )?;
-        for (field_index, field) in COMPARE_FIELDS.iter().enumerate() {
-            let value = fields.get(*field).map(String::as_str).unwrap_or("null");
+        let Some(ProbeRetainedData::CompareValues(fields)) = probe.as_ref() else {
+            return Err("missing successful ffprobe comparison values".to_owned());
+        };
+        for (field_index, value) in fields.iter().enumerate() {
             values[field_index]
                 .1
-                .entry(value.to_owned())
+                .entry(value.clone())
                 .or_default()
                 .push(*index);
         }
@@ -5276,7 +5293,8 @@ fn run_probe_dir(args: &[String]) -> Result<(), String> {
     let completed = std::sync::atomic::AtomicUsize::new(0);
     let stream_output = std::sync::Mutex::new(());
     let failures = std::sync::atomic::AtomicUsize::new(0);
-    let results = std::sync::Mutex::new(Vec::<(usize, bool, String, Option<String>)>::new());
+    let results =
+        std::sync::Mutex::new(Vec::<(usize, bool, String, Option<ProbeRetainedData>)>::new());
     let worker_count = jobs.min(records.len());
     std::thread::scope(|scope| {
         for _ in 0..worker_count {
@@ -5310,7 +5328,15 @@ fn run_probe_dir(args: &[String]) -> Result<(), String> {
                             json.push('}');
                             (true, json, None)
                         }
-                        Ok(probe) => (true, String::new(), Some(probe)),
+                        Ok(probe) if compare => match probe_compare_values(&probe) {
+                            Ok(values) => (
+                                true,
+                                String::new(),
+                                Some(ProbeRetainedData::CompareValues(values)),
+                            ),
+                            Err(error) => (false, error, None),
+                        },
+                        Ok(probe) => (true, String::new(), Some(ProbeRetainedData::CsvJson(probe))),
                         Err(error) if stream_results => (
                             false,
                             format!(
@@ -5367,7 +5393,10 @@ fn run_probe_dir(args: &[String]) -> Result<(), String> {
                 &records[*index].relative,
                 *success,
                 error,
-                probe.as_deref(),
+                probe.as_ref().and_then(|data| match data {
+                    ProbeRetainedData::CsvJson(json) => Some(json.as_str()),
+                    ProbeRetainedData::CompareValues(_) => None,
+                }),
             )?;
         }
         output
