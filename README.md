@@ -60,7 +60,7 @@ mediaforge organize ./Media --by type
 mediaforge pack ./Game --output ../Game.tar --dry-run
 ```
 
-Hidden folders and common generated/dependency directories (`.git`, `node_modules`, virtual environments) are skipped by default. Symlinks are not followed. The duplicate section only groups equal file sizes; it does not claim the files have identical content. JSON output includes byte counts and relative paths for scripts and other tools.
+Hidden folders and common generated/dependency directories (`.git`, `node_modules`, virtual environments) are skipped by default. Root and nested `.gitignore` rules are applied during traversal, so ignored directories are pruned. Symlinks are not followed. The duplicate section only groups equal file sizes; it does not claim the files have identical content. JSON output includes byte counts and relative paths for scripts and other tools.
 
 `--min-size` accepts byte values and binary size units (`K`/`KiB`, `M`/`MiB`, `G`/`GiB`, `T`/`TiB`), including decimal fractions. Fractional thresholds are rounded up to the next whole byte.
 

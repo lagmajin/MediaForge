@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::env;
 use std::fs::{self, File, OpenOptions};
@@ -129,8 +130,8 @@ fn walk(
     include_hidden: bool,
     ignored: &[IgnoreRule],
     records: &mut Vec<FileRecord>,
-) {
-    walk_with_skip_dirs(root, current, include_hidden, SKIP_DIRS, ignored, records);
+) -> Result<(), String> {
+    walk_with_skip_dirs(root, current, include_hidden, SKIP_DIRS, ignored, records)
 }
 
 fn walk_with_skip_dirs(
@@ -140,9 +141,9 @@ fn walk_with_skip_dirs(
     skip_dirs: &[&str],
     ignored: &[IgnoreRule],
     records: &mut Vec<FileRecord>,
-) {
+) -> Result<(), String> {
     let Ok(entries) = fs::read_dir(current) else {
-        return;
+        return Ok(());
     };
     let mut entries: Vec<_> = entries.filter_map(Result::ok).collect();
     sort_entries(&mut entries);
@@ -167,7 +168,15 @@ fn walk_with_skip_dirs(
             {
                 continue;
             }
-            walk_with_skip_dirs(root, &path, include_hidden, skip_dirs, ignored, records);
+            let child_ignored = extend_ignore_rules(root, &path, ignored)?;
+            walk_with_skip_dirs(
+                root,
+                &path,
+                include_hidden,
+                skip_dirs,
+                child_ignored.as_ref(),
+                records,
+            )?;
         } else if file_type.is_file() && (include_hidden || !is_hidden(&name)) {
             let relative = path
                 .strip_prefix(root)
@@ -196,6 +205,7 @@ fn walk_with_skip_dirs(
             });
         }
     }
+    Ok(())
 }
 
 fn walk_strict(
@@ -238,13 +248,14 @@ fn walk_strict(
             {
                 continue;
             }
+            let child_ignored = extend_ignore_rules(root, &path, ignored)?;
             walk_strict(
                 root,
                 &path,
                 include_hidden,
                 include_generated,
                 skip_dirs,
-                ignored,
+                child_ignored.as_ref(),
                 records,
             )?;
         } else if file_type.is_file()
@@ -272,9 +283,10 @@ fn walk_strict(
     Ok(())
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct IgnoreRule {
     pattern: Vec<GlobToken>,
+    base: String,
     negated: bool,
     anchored: bool,
     directory_only: bool,
@@ -291,13 +303,45 @@ enum GlobToken {
 }
 
 fn ignored_by_git(root: &Path) -> Result<Vec<IgnoreRule>, String> {
-    let path = root.join(".gitignore");
+    Ok(extend_ignore_rules(root, root, &[])?.into_owned())
+}
+
+fn extend_ignore_rules<'a>(
+    root: &Path,
+    directory: &Path,
+    inherited: &'a [IgnoreRule],
+) -> Result<Cow<'a, [IgnoreRule]>, String> {
+    let path = directory.join(".gitignore");
+    let metadata = match fs::symlink_metadata(&path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            return Ok(Cow::Borrowed(inherited));
+        }
+        Err(error) => return Err(format!("cannot inspect {}: {error}", path.display())),
+    };
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Ok(Cow::Borrowed(inherited));
+    }
     let text = match fs::read_to_string(&path) {
         Ok(text) => text,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(error) => return Err(format!("cannot read {}: {error}", path.display())),
     };
-    Ok(text.lines().filter_map(parse_ignore_rule).collect())
+    let base = directory
+        .strip_prefix(root)
+        .map_err(|error| format!("cannot relativize {}: {error}", directory.display()))?
+        .to_string_lossy()
+        .replace('\\', "/");
+    let mut local_rules = Vec::new();
+    for mut rule in text.lines().filter_map(parse_ignore_rule) {
+        rule.base = base.clone();
+        local_rules.push(rule);
+    }
+    if local_rules.is_empty() {
+        return Ok(Cow::Borrowed(inherited));
+    }
+    let mut rules = inherited.to_vec();
+    rules.extend(local_rules);
+    Ok(Cow::Owned(rules))
 }
 
 fn parse_ignore_rule(line: &str) -> Option<IgnoreRule> {
@@ -329,6 +373,7 @@ fn parse_ignore_rule(line: &str) -> Option<IgnoreRule> {
         .any(|token| matches!(token, GlobToken::Literal('/') | GlobToken::AnyDirectories));
     Some(IgnoreRule {
         pattern,
+        base: String::new(),
         negated,
         anchored,
         directory_only,
@@ -505,6 +550,16 @@ fn glob_matches(pattern: &[GlobToken], value: &str) -> bool {
 }
 
 fn rule_matches_path(rule: &IgnoreRule, relative: &str, target_is_directory: bool) -> bool {
+    let relative = if rule.base.is_empty() {
+        relative
+    } else if let Some(relative) = relative
+        .strip_prefix(&rule.base)
+        .and_then(|relative| relative.strip_prefix('/'))
+    {
+        relative
+    } else {
+        return false;
+    };
     let parts: Vec<_> = relative.split('/').collect();
     if !rule.has_slash && !rule.anchored {
         return parts.iter().enumerate().any(|(index, part)| {
@@ -755,7 +810,7 @@ fn run_dupes(args: &[String]) -> Result<(), String> {
     }
     let ignored = ignored_by_git(&root)?;
     let mut records = Vec::new();
-    walk(&root, &root, include_hidden, &ignored, &mut records);
+    walk(&root, &root, include_hidden, &ignored, &mut records)?;
     let mut by_size: BTreeMap<u64, Vec<String>> = BTreeMap::new();
     for record in records.into_iter().filter(|record| record.size >= min_size) {
         by_size
@@ -897,7 +952,7 @@ fn run_scan(args: &[String]) -> Result<(), String> {
     }
     let ignored = ignored_by_git(&root)?;
     let mut records = Vec::new();
-    walk(&root, &root, include_hidden, &ignored, &mut records);
+    walk(&root, &root, include_hidden, &ignored, &mut records)?;
     if let Some(kind) = kind_filter {
         records.retain(|record| record.kind.as_str() == kind);
     }
@@ -1414,8 +1469,8 @@ fn run_project(args: &[String]) -> Result<(), String> {
 
     let mut project_files = Vec::<(String, &'static str)>::new();
     let ignored = ignored_by_git(&root)?;
-    let mut pending = vec![root.clone()];
-    while let Some(directory) = pending.pop() {
+    let mut pending = vec![(root.clone(), ignored)];
+    while let Some((directory, active_ignored)) = pending.pop() {
         let mut entries = fs::read_dir(&directory)
             .map_err(|error| {
                 format!(
@@ -1448,9 +1503,11 @@ fn run_project(args: &[String]) -> Result<(), String> {
                     .replace('\\', "/");
                 if !SKIP_DIRS.contains(&lossy_name.as_ref())
                     && !PROJECT_ARTIFACT_DIRS.contains(&lossy_name.as_ref())
-                    && !is_ignored_directory(&relative, &ignored)
+                    && !is_ignored_directory(&relative, &active_ignored)
                 {
-                    pending.push(path);
+                    let child_ignored =
+                        extend_ignore_rules(&root, &path, &active_ignored)?.into_owned();
+                    pending.push((path, child_ignored));
                 }
             } else if file_type.is_file() {
                 let relative = path
@@ -1458,7 +1515,7 @@ fn run_project(args: &[String]) -> Result<(), String> {
                     .unwrap_or(&path)
                     .to_string_lossy()
                     .replace('\\', "/");
-                if is_ignored(&relative, &ignored) {
+                if is_ignored(&relative, &active_ignored) {
                     continue;
                 }
                 if let Some(kind) = project_file_kind(&relative) {
@@ -2306,7 +2363,7 @@ fn run_organize(args: &[String]) -> Result<(), String> {
 
     let ignored = ignored_by_git(&root)?;
     let mut records = Vec::new();
-    walk(&root, &root, false, &ignored, &mut records);
+    walk(&root, &root, false, &ignored, &mut records)?;
     let mut moves = Vec::<PlannedMove>::new();
     let mut skipped = 0usize;
     let mut destinations = HashSet::<PathBuf>::new();
