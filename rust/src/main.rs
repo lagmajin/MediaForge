@@ -11342,9 +11342,10 @@ fn padded_tar_size(size: u64) -> Result<u64, String> {
         .ok_or_else(|| "estimated archive size exceeds the supported range".to_owned())
 }
 
-fn estimate_tar_size(entries: &[(&FileRecord, &str)]) -> Result<u64, String> {
+fn estimate_tar_size(entries: &[FileRecord]) -> Result<u64, String> {
     let mut total = (TAR_BLOCK_SIZE * 2) as u64;
-    for (record, archive_name) in entries {
+    for record in entries {
+        let archive_name = &record.relative;
         let pax_path = ustar_name(archive_name.as_bytes()).is_none();
         let modified = record
             .modified
@@ -11393,7 +11394,7 @@ struct PackJsonOptions<'a> {
     input_bytes: u64,
     estimated_archive_bytes: u64,
     list_entries: bool,
-    entries: &'a [(&'a FileRecord, &'a str)],
+    entries: &'a [FileRecord],
     archive_bytes: Option<u64>,
 }
 
@@ -11456,12 +11457,12 @@ fn print_pack_json(options: PackJsonOptions<'_>) -> Result<(), String> {
         }
         if list_entries {
             writer.write_all(b"  \"entries\": [\n")?;
-            for (index, (record, name)) in entries.iter().enumerate() {
+            for (index, record) in entries.iter().enumerate() {
                 if index > 0 {
                     writer.write_all(b",\n")?;
                 }
                 writer.write_all(b"    {\"path\": ")?;
-                write_json_string(&mut writer, name)?;
+                write_json_string(&mut writer, &record.relative)?;
                 write!(writer, ", \"size_bytes\": {}, \"type\": ", record.size)?;
                 write_json_string(&mut writer, record.kind.as_str())?;
                 writer.write_all(b"}")?;
@@ -11626,7 +11627,6 @@ fn run_pack(args: &[String]) -> Result<(), String> {
         &filters,
         &mut records,
     )?;
-    let mut entries = Vec::<(&FileRecord, &str)>::with_capacity(records.len());
     let mut portable_names = HashMap::<String, (String, bool)>::new();
     let mut total_bytes = 0_u64;
     for record in &records {
@@ -11649,30 +11649,29 @@ fn run_pack(args: &[String]) -> Result<(), String> {
             return Err(format!("archive path is too long: {}", record.relative));
         }
         register_portable_archive_path(&mut portable_names, relative, &record.relative)?;
-        entries.push((record, record.relative.as_str()));
         total_bytes = total_bytes
             .checked_add(record.size)
             .ok_or_else(|| "total input size exceeds the supported range".to_owned())?;
     }
-    entries.sort_unstable_by(|left, right| left.1.cmp(right.1));
-    let estimated_archive_bytes = estimate_tar_size(&entries)?;
+    records.sort_unstable_by(|left, right| left.relative.cmp(&right.relative));
+    let estimated_archive_bytes = estimate_tar_size(&records)?;
     if !json {
         println!(
             "Pack plan: {} file(s), {} input · estimated archive {}",
-            entries.len(),
+            records.len(),
             human_size(total_bytes),
             human_size(estimated_archive_bytes)
         );
         let displayed_entries = if list_entries {
-            entries.len()
+            records.len()
         } else {
-            entries.len().min(30)
+            records.len().min(30)
         };
-        for (record, name) in entries.iter().take(displayed_entries) {
-            println!("  {}  {name}", human_size(record.size));
+        for record in records.iter().take(displayed_entries) {
+            println!("  {}  {}", human_size(record.size), record.relative);
         }
-        if entries.len() > displayed_entries {
-            println!("  ... and {} more", entries.len() - displayed_entries);
+        if records.len() > displayed_entries {
+            println!("  ... and {} more", records.len() - displayed_entries);
         }
     }
     if dry_run {
@@ -11690,11 +11689,11 @@ fn run_pack(args: &[String]) -> Result<(), String> {
                 min_size,
                 max_size,
                 exclude_path_contains: &exclude_path_contains,
-                files: entries.len(),
+                files: records.len(),
                 input_bytes: total_bytes,
                 estimated_archive_bytes,
                 list_entries,
-                entries: &entries,
+                entries: &records,
                 archive_bytes: None,
             })?;
             return Ok(());
@@ -11743,11 +11742,11 @@ fn run_pack(args: &[String]) -> Result<(), String> {
     let mut copy_buffer = vec![0_u8; 1024 * 1024];
     let mut archive_bytes = 0_u64;
     let write_result = (|| -> Result<(), String> {
-        for (index, (record, name)) in entries.iter().enumerate() {
-            let source_path = root.join(name);
+        for (index, record) in records.iter().enumerate() {
+            let source_path = root.join(&record.relative);
             pack_file(
                 &mut archive,
-                name,
+                &record.relative,
                 record,
                 &source_path,
                 index + 1,
@@ -11818,11 +11817,11 @@ fn run_pack(args: &[String]) -> Result<(), String> {
             min_size,
             max_size,
             exclude_path_contains: &exclude_path_contains,
-            files: entries.len(),
+            files: records.len(),
             input_bytes: total_bytes,
             estimated_archive_bytes,
             list_entries,
-            entries: &entries,
+            entries: &records,
             archive_bytes: Some(archive_size),
         })?;
     } else {
