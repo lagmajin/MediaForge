@@ -706,6 +706,7 @@ fn json_string(value: &str) -> String {
 fn print_json(root: &Path, records: &[FileRecord]) {
     let mut by_type: BTreeMap<&str, (u64, u128)> = BTreeMap::new();
     let mut extensions: BTreeMap<&str, usize> = BTreeMap::new();
+    let mut extension_bytes: BTreeMap<&str, u128> = BTreeMap::new();
     let mut by_size: HashMap<u64, Vec<&str>> = HashMap::new();
     let total_bytes: u128 = records.iter().map(|record| u128::from(record.size)).sum();
     for record in records {
@@ -713,6 +714,7 @@ fn print_json(root: &Path, records: &[FileRecord]) {
         entry.0 += 1;
         entry.1 += u128::from(record.size);
         *extensions.entry(&record.extension).or_default() += 1;
+        *extension_bytes.entry(&record.extension).or_default() += u128::from(record.size);
         by_size
             .entry(record.size)
             .or_default()
@@ -759,6 +761,15 @@ fn print_json(root: &Path, records: &[FileRecord]) {
             ","
         };
         println!("    {}: {}{}", json_string(extension), count, comma);
+    }
+    println!("  }},\n  \"extension_bytes\": {{");
+    for (index, (extension, bytes)) in extension_bytes.iter().enumerate() {
+        let comma = if index + 1 == extension_bytes.len() {
+            ""
+        } else {
+            ","
+        };
+        println!("    {}: {}{}", json_string(extension), bytes, comma);
     }
     println!("  }},\n  \"largest\": [");
     for (index, record) in largest.iter().take(20).enumerate() {
