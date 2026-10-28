@@ -764,9 +764,16 @@ fn walk_with_skip_dirs_mode_counted(config: ScanWalkConfig<'_>) -> Result<ScanWa
                         .to_string_lossy()
                         .replace('\\', "/")
                 });
-                let extension = extension_value
-                    .map(|value| format!(".{}", value.to_ascii_lowercase()))
-                    .unwrap_or_else(|| "[no extension]".to_owned());
+                let extension = extension_value.map_or_else(
+                    || "[no extension]".to_owned(),
+                    |value| {
+                        let mut extension = String::with_capacity(value.len() + 1);
+                        extension.push('.');
+                        extension.push_str(value);
+                        extension.make_ascii_lowercase();
+                        extension
+                    },
+                );
                 let needs_modified = filters.modified_since.is_some()
                     || filters.modified_until.is_some()
                     || filters.include_modified;
