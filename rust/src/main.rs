@@ -274,11 +274,19 @@ fn walk_strict(
 
 #[derive(Debug)]
 struct IgnoreRule {
-    pattern: Vec<char>,
+    pattern: Vec<GlobToken>,
     negated: bool,
     anchored: bool,
     directory_only: bool,
     has_slash: bool,
+}
+
+#[derive(Debug)]
+enum GlobToken {
+    Literal(char),
+    Any,
+    Star { crosses_slash: bool },
+    Class { negated: bool, members: Vec<char> },
 }
 
 fn ignored_by_git(root: &Path) -> Result<Vec<IgnoreRule>, String> {
@@ -292,7 +300,7 @@ fn ignored_by_git(root: &Path) -> Result<Vec<IgnoreRule>, String> {
 }
 
 fn parse_ignore_rule(line: &str) -> Option<IgnoreRule> {
-    let mut pattern = line.trim_end_matches('\r');
+    let mut pattern = trim_unescaped_trailing_spaces(line.trim_end_matches('\r'));
     if pattern.is_empty() || pattern.starts_with('#') {
         return None;
     }
@@ -303,17 +311,23 @@ fn parse_ignore_rule(line: &str) -> Option<IgnoreRule> {
     if pattern.is_empty() {
         return None;
     }
-    let pattern = pattern.replace("\\#", "#").replace("\\!", "!");
     let anchored = pattern.starts_with('/');
-    let mut pattern = pattern.trim_start_matches('/').replace('\\', "/");
-    let directory_only = pattern.ends_with('/');
-    pattern = pattern.trim_end_matches('/').to_owned();
+    if anchored {
+        pattern = &pattern[1..];
+    }
+    let directory_only = pattern.ends_with('/') && !has_odd_backslashes_before_last(pattern);
+    if directory_only {
+        pattern = &pattern[..pattern.len() - 1];
+    }
     if pattern.is_empty() {
         return None;
     }
-    let has_slash = pattern.contains('/');
+    let pattern = parse_glob_pattern(pattern)?;
+    let has_slash = pattern
+        .iter()
+        .any(|token| matches!(token, GlobToken::Literal('/')));
     Some(IgnoreRule {
-        pattern: pattern.chars().collect(),
+        pattern,
         negated,
         anchored,
         directory_only,
@@ -321,11 +335,69 @@ fn parse_ignore_rule(line: &str) -> Option<IgnoreRule> {
     })
 }
 
-fn glob_matches(pattern: &[char], value: &str) -> bool {
+fn trim_unescaped_trailing_spaces(mut pattern: &str) -> &str {
+    while pattern.ends_with(' ') && !has_odd_backslashes_before_last(pattern) {
+        pattern = &pattern[..pattern.len() - 1];
+    }
+    pattern
+}
+
+fn has_odd_backslashes_before_last(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    let mut index = bytes.len().saturating_sub(1);
+    let mut backslashes = 0;
+    while index > 0 && bytes[index - 1] == b'\\' {
+        backslashes += 1;
+        index -= 1;
+    }
+    backslashes % 2 == 1
+}
+
+fn parse_glob_pattern(pattern: &str) -> Option<Vec<GlobToken>> {
+    let mut tokens = Vec::new();
+    let mut chars = pattern.chars().peekable();
+    while let Some(character) = chars.next() {
+        match character {
+            '\\' => tokens.push(GlobToken::Literal(chars.next()?)),
+            '*' => {
+                let crosses_slash = chars.next_if_eq(&'*').is_some();
+                tokens.push(GlobToken::Star { crosses_slash });
+            }
+            '?' => tokens.push(GlobToken::Any),
+            '[' => {
+                let mut class = Vec::new();
+                let mut closed = false;
+                while let Some(character) = chars.next() {
+                    match character {
+                        '\\' => class.push(chars.next()?),
+                        ']' if !class.is_empty() => {
+                            closed = true;
+                            break;
+                        }
+                        _ => class.push(character),
+                    }
+                }
+                if closed {
+                    tokens.push(GlobToken::Class {
+                        negated: class.first().is_some_and(|ch| *ch == '!' || *ch == '^'),
+                        members: class,
+                    });
+                } else {
+                    tokens.push(GlobToken::Literal('['));
+                    tokens.extend(class.into_iter().map(GlobToken::Literal));
+                }
+            }
+            character => tokens.push(GlobToken::Literal(character)),
+        }
+    }
+    Some(tokens)
+}
+
+fn glob_matches(pattern: &[GlobToken], value: &str) -> bool {
     let value: Vec<char> = value.chars().collect();
     let mut memo = HashMap::<(usize, usize), bool>::new();
     fn matches(
-        pattern: &[char],
+        pattern: &[GlobToken],
         value: &[char],
         p: usize,
         v: usize,
@@ -337,55 +409,47 @@ fn glob_matches(pattern: &[char], value: &str) -> bool {
         let result = if p == pattern.len() {
             v == value.len()
         } else {
-            match pattern[p] {
-                '*' => {
-                    let double = p + 1 < pattern.len() && pattern[p + 1] == '*';
-                    let next = p + if double { 2 } else { 1 };
-                    matches(pattern, value, next, v, memo)
+            match &pattern[p] {
+                GlobToken::Star { crosses_slash } => {
+                    matches(pattern, value, p + 1, v, memo)
                         || (v < value.len()
-                            && (double || value[v] != '/')
+                            && (*crosses_slash || value[v] != '/')
                             && matches(pattern, value, p, v + 1, memo))
                 }
-                '?' => {
+                GlobToken::Any => {
                     v < value.len()
                         && value[v] != '/'
                         && matches(pattern, value, p + 1, v + 1, memo)
                 }
-                '[' => {
-                    let close = pattern[p + 1..].iter().position(|ch| *ch == ']');
-                    if let Some(offset) = close {
-                        let end = p + 1 + offset;
-                        if v >= value.len() || value[v] == '/' {
-                            false
-                        } else {
-                            let mut members = &pattern[p + 1..end];
-                            let negated =
-                                members.first().is_some_and(|ch| *ch == '!' || *ch == '^');
-                            if negated {
-                                members = &members[1..];
-                            }
-                            let mut included = false;
-                            let mut index = 0;
-                            while index < members.len() {
-                                if index + 2 < members.len() && members[index + 1] == '-' {
-                                    included |= members[index] <= value[v]
-                                        && value[v] <= members[index + 2];
-                                    index += 3;
-                                } else {
-                                    included |= members[index] == value[v];
-                                    index += 1;
-                                }
-                            }
-                            (included != negated) && matches(pattern, value, end + 1, v + 1, memo)
-                        }
+                GlobToken::Class { negated, members } => {
+                    if v >= value.len() || value[v] == '/' {
+                        false
                     } else {
-                        v < value.len()
-                            && value[v] == '['
-                            && matches(pattern, value, p + 1, v + 1, memo)
+                        let members = if members.first().is_some_and(|ch| *ch == '!' || *ch == '^')
+                        {
+                            &members[1..]
+                        } else {
+                            members.as_slice()
+                        };
+                        let mut included = false;
+                        let mut index = 0;
+                        while index < members.len() {
+                            if index + 2 < members.len() && members[index + 1] == '-' {
+                                included |=
+                                    members[index] <= value[v] && value[v] <= members[index + 2];
+                                index += 3;
+                            } else {
+                                included |= members[index] == value[v];
+                                index += 1;
+                            }
+                        }
+                        (included != *negated) && matches(pattern, value, p + 1, v + 1, memo)
                     }
                 }
-                ch => {
-                    v < value.len() && ch == value[v] && matches(pattern, value, p + 1, v + 1, memo)
+                GlobToken::Literal(ch) => {
+                    v < value.len()
+                        && *ch == value[v]
+                        && matches(pattern, value, p + 1, v + 1, memo)
                 }
             }
         };
