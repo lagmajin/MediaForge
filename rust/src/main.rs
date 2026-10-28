@@ -5322,7 +5322,7 @@ fn run_probe_dir(args: &[String]) -> Result<(), String> {
         excluded_subtree: None,
         exclude_path_contains_lower: None,
         omit_absolute_path: false,
-        store_relative_path: false,
+        store_relative_path: true,
         omit_modified_time: true,
         omit_extension: true,
     };
@@ -5374,7 +5374,8 @@ fn run_probe_dir(args: &[String]) -> Result<(), String> {
                         Kind::Audio => "a",
                         _ => unreachable!(),
                     });
-                    let result = ffprobe_json(&record.path, false, summary || csv, selector);
+                    let source_path = root.join(&record.path);
+                    let result = ffprobe_json(&source_path, false, summary || csv, selector);
                     let (success, json, probe) = match result {
                         Ok(probe) if stream_results => {
                             let mut json = probe;
