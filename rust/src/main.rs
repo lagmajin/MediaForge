@@ -899,6 +899,7 @@ fn run_dupes(args: &[String]) -> Result<(), String> {
     let mut json = false;
     let mut include_hidden = false;
     let mut min_size = 0;
+    let mut extension_filter = None;
     let mut path = None;
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
@@ -911,9 +912,15 @@ fn run_dupes(args: &[String]) -> Result<(), String> {
                     .ok_or_else(|| "--min-size requires a value".to_owned())?;
                 min_size = parse_size(value)?;
             }
+            "--extension" => {
+                let value = iter.next().ok_or_else(|| {
+                    "--extension requires a comma-separated extension list".to_owned()
+                })?;
+                extension_filter = Some(parse_extensions(value)?);
+            }
             "--help" | "-h" => {
                 println!(
-                    "Usage: mediaforge dupes [PATH] [--json] [--include-hidden] [--min-size SIZE]\n\nFind byte-for-byte duplicate files. Files are compared in fixed-size chunks to keep memory use low. Fractional size thresholds round up to the next byte."
+                    "Usage: mediaforge dupes [PATH] [--json] [--include-hidden] [--min-size SIZE] [--extension EXTENSIONS]\n\nFind byte-for-byte duplicate files. Files are compared in fixed-size chunks to keep memory use low. --extension accepts a comma-separated list such as mov,mxf; use none for files without an extension. Fractional size thresholds round up to the next byte."
                 );
                 return Ok(());
             }
@@ -942,6 +949,9 @@ fn run_dupes(args: &[String]) -> Result<(), String> {
         &ignored,
         &mut records,
     )?;
+    if let Some(extensions) = &extension_filter {
+        records.retain(|record| extensions.contains(&record.extension));
+    }
     let mut by_size: BTreeMap<u64, Vec<String>> = BTreeMap::new();
     for record in records.into_iter().filter(|record| record.size >= min_size) {
         by_size
@@ -1041,6 +1051,7 @@ fn run_scan(args: &[String]) -> Result<(), String> {
     let mut path = None;
     let mut kind_filter = None;
     let mut min_size = None;
+    let mut extension_filter = None;
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
         match arg.as_str() {
@@ -1067,9 +1078,15 @@ fn run_scan(args: &[String]) -> Result<(), String> {
                     .ok_or_else(|| "--min-size requires a value".to_owned())?;
                 min_size = Some(parse_size(value)?);
             }
+            "--extension" => {
+                let value = iter.next().ok_or_else(|| {
+                    "--extension requires a comma-separated extension list".to_owned()
+                })?;
+                extension_filter = Some(parse_extensions(value)?);
+            }
             "--help" | "-h" => {
                 println!(
-                    "Usage: mediaforge scan [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE]\n\nSummarize media and game assets in a folder. Defaults to the current directory.\n\nTypes: video, audio, image, model, texture, project, other\nSizes: bytes, KiB/MiB/GiB, or K/M/G (for example 500M); fractional values round up to the next byte"
+                    "Usage: mediaforge scan [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS]\n\nSummarize media and game assets in a folder. Defaults to the current directory.\n\nTypes: video, audio, image, model, texture, project, other\nExtensions: comma-separated, case-insensitive (for example exr,tif); use none for files without an extension\nSizes: bytes, KiB/MiB/GiB, or K/M/G (for example 500M); fractional values round up to the next byte"
                 );
                 return Ok(());
             }
@@ -1093,6 +1110,9 @@ fn run_scan(args: &[String]) -> Result<(), String> {
     walk(&root, &root, include_hidden, &ignored, &mut records)?;
     if let Some(kind) = kind_filter {
         records.retain(|record| record.kind.as_str() == kind);
+    }
+    if let Some(extensions) = extension_filter {
+        records.retain(|record| extensions.contains(&record.extension));
     }
     if let Some(size) = min_size {
         records.retain(|record| record.size >= size);
@@ -1181,7 +1201,7 @@ fn fraction_ceil_scaled(fraction: &str, multiplier: u128) -> u128 {
 
 fn print_help() {
     println!(
-        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE]\n  mediaforge dupes [PATH] [--json] [--include-hidden] [--min-size SIZE]\n  mediaforge probe <FILE> [--compact]\n  mediaforge project [PATH] [--json]\n  mediaforge gitignore [PATH] [--apply]\n  mediaforge organize [PATH] [--by type|extension] [--apply]\n  mediaforge undo [PATH]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--include-hidden] [--include-generated] [--dry-run] [--json]\n  mediaforge --version\n  mediaforge --help"
+        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS]\n  mediaforge dupes [PATH] [--json] [--include-hidden] [--min-size SIZE] [--extension EXTENSIONS]\n  mediaforge probe <FILE> [--compact]\n  mediaforge project [PATH] [--json]\n  mediaforge gitignore [PATH] [--apply]\n  mediaforge organize [PATH] [--by type|extension] [--apply]\n  mediaforge undo [PATH]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--include-hidden] [--include-generated] [--dry-run] [--json]\n  mediaforge --version\n  mediaforge --help"
     );
 }
 
@@ -3011,7 +3031,7 @@ fn parse_pack_types(value: &str) -> Result<HashSet<Kind>, String> {
     Ok(kinds)
 }
 
-fn parse_pack_extensions(value: &str) -> Result<HashSet<String>, String> {
+fn parse_extensions(value: &str) -> Result<HashSet<String>, String> {
     let mut extensions = HashSet::new();
     for name in value.split(',').map(str::trim) {
         if name.is_empty() {
@@ -3172,7 +3192,7 @@ fn run_pack(args: &[String]) -> Result<(), String> {
                 let value = iter.next().ok_or_else(|| {
                     "--extension requires a comma-separated extension list".to_owned()
                 })?;
-                selected_extensions = Some(parse_pack_extensions(value)?);
+                selected_extensions = Some(parse_extensions(value)?);
             }
             "--help" | "-h" => {
                 println!(
