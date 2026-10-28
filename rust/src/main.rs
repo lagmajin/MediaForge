@@ -10439,12 +10439,20 @@ fn validate_archive_component(component: &str) -> Result<(), String> {
 
 fn register_portable_archive_path(
     paths: &mut HashMap<String, (String, bool)>,
-    archive_name: &str,
+    relative: &Path,
+    display_name: &str,
 ) -> Result<(), String> {
-    let mut components = archive_name.split('/').peekable();
+    let mut components = relative.components().peekable();
     let mut actual_prefix = String::new();
     let mut portable_prefix = String::new();
     while let Some(component) = components.next() {
+        let std::path::Component::Normal(component) = component else {
+            return Err(format!("unsafe archive path: {}", relative.display()));
+        };
+        let component = component
+            .to_str()
+            .ok_or_else(|| format!("non-UTF-8 path cannot be packed: {}", relative.display()))?;
+        validate_archive_component(component)?;
         if !actual_prefix.is_empty() {
             actual_prefix.push('/');
             portable_prefix.push('/');
@@ -10455,17 +10463,17 @@ fn register_portable_archive_path(
         match paths.get(&portable_prefix) {
             Some((existing, true)) if !is_file => {
                 return Err(format!(
-                    "archive path uses a file as a directory on case-insensitive filesystems: {existing:?} and {archive_name:?}"
+                    "archive path uses a file as a directory on case-insensitive filesystems: {existing:?} and {display_name:?}"
                 ));
             }
             Some((existing, false)) if is_file => {
                 return Err(format!(
-                    "archive path uses a directory as a file on case-insensitive filesystems: {existing:?} and {archive_name:?}"
+                    "archive path uses a directory as a file on case-insensitive filesystems: {existing:?} and {display_name:?}"
                 ));
             }
             Some((existing, true)) if is_file => {
                 return Err(format!(
-                    "archive paths collide on case-insensitive filesystems: {existing:?} and {archive_name:?}"
+                    "archive paths collide on case-insensitive filesystems: {existing:?} and {display_name:?}"
                 ));
             }
             Some(_) => {}
@@ -10483,7 +10491,7 @@ fn padded_tar_size(size: u64) -> Result<u64, String> {
         .ok_or_else(|| "estimated archive size exceeds the supported range".to_owned())
 }
 
-fn estimate_tar_size(entries: &[(&FileRecord, String)]) -> Result<u64, String> {
+fn estimate_tar_size(entries: &[(&FileRecord, &str)]) -> Result<u64, String> {
     let mut total = (TAR_BLOCK_SIZE * 2) as u64;
     for (record, archive_name) in entries {
         let pax_path = ustar_name(archive_name.as_bytes()).is_none();
@@ -10534,7 +10542,7 @@ fn print_pack_json(
     input_bytes: u64,
     estimated_archive_bytes: u64,
     list_entries: bool,
-    entries: &[(&FileRecord, String)],
+    entries: &[(&FileRecord, &str)],
     archive_bytes: Option<u64>,
 ) {
     println!("{{");
@@ -10740,7 +10748,7 @@ fn run_pack(args: &[String]) -> Result<(), String> {
         &filters,
         &mut records,
     )?;
-    let mut entries = Vec::<(&FileRecord, String)>::with_capacity(records.len());
+    let mut entries = Vec::<(&FileRecord, &str)>::with_capacity(records.len());
     let mut portable_names = HashMap::<String, (String, bool)>::new();
     let mut total_bytes = 0_u64;
     for record in &records {
@@ -10748,7 +10756,7 @@ fn run_pack(args: &[String]) -> Result<(), String> {
             .path
             .strip_prefix(&root)
             .map_err(|error| format!("cannot relativize {}: {error}", record.path.display()))?;
-        let mut archive_name = String::with_capacity(relative.as_os_str().len());
+        let mut component_count = 0;
         for component in relative.components() {
             let std::path::Component::Normal(part) = component else {
                 return Err(format!("unsafe archive path: {}", relative.display()));
@@ -10757,24 +10765,21 @@ fn run_pack(args: &[String]) -> Result<(), String> {
                 format!("non-UTF-8 path cannot be packed: {}", relative.display())
             })?;
             validate_archive_component(part)?;
-            if !archive_name.is_empty() {
-                archive_name.push('/');
-            }
-            archive_name.push_str(part);
+            component_count += 1;
         }
-        if archive_name.is_empty() {
+        if component_count == 0 {
             return Err("cannot archive the input directory itself".to_owned());
         }
-        if archive_name.len() > 1024 * 1024 {
-            return Err(format!("archive path is too long: {archive_name}"));
+        if record.relative.len() > 1024 * 1024 {
+            return Err(format!("archive path is too long: {}", record.relative));
         }
-        register_portable_archive_path(&mut portable_names, &archive_name)?;
-        entries.push((record, archive_name));
+        register_portable_archive_path(&mut portable_names, relative, &record.relative)?;
+        entries.push((record, record.relative.as_str()));
         total_bytes = total_bytes
             .checked_add(record.size)
             .ok_or_else(|| "total input size exceeds the supported range".to_owned())?;
     }
-    entries.sort_unstable_by(|left, right| left.1.cmp(&right.1));
+    entries.sort_unstable_by(|left, right| left.1.cmp(right.1));
     let estimated_archive_bytes = estimate_tar_size(&entries)?;
     if !json {
         println!(
