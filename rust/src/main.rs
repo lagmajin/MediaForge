@@ -1188,15 +1188,16 @@ fn is_ignored_directory(relative: &str, rules: &[IgnoreRule]) -> bool {
 }
 
 fn is_ignored_path(relative: &str, is_directory: bool, rules: &[IgnoreRule]) -> bool {
+    if rules.is_empty() {
+        return false;
+    }
     GLOB_MATCH_SCRATCH.with(|scratch| {
         let mut scratch = scratch.borrow_mut();
-        let mut ignored = false;
-        for rule in rules {
-            if rule_matches_path(rule, relative, is_directory, &mut scratch) {
-                ignored = !rule.negated;
-            }
-        }
-        ignored
+        rules
+            .iter()
+            .rev()
+            .find(|rule| rule_matches_path(rule, relative, is_directory, &mut scratch))
+            .is_some_and(|rule| !rule.negated)
     })
 }
 
