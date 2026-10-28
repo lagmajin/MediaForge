@@ -54,6 +54,7 @@ mediaforge scan ./Game/Content --json
 mediaforge scan . --include-hidden
 mediaforge scan ./Media --type video --min-size 500M
 mediaforge dupes ./Game/Content --min-size 1M
+mediaforge project ./Game
 ```
 
 Hidden folders and common generated/dependency directories (`.git`, `node_modules`, virtual environments) are skipped by default. Symlinks are not followed. The duplicate section only groups equal file sizes; it does not claim the files have identical content. JSON output includes byte counts and relative paths for scripts and other tools.
@@ -67,6 +68,15 @@ mediaforge dupes ./Media
 mediaforge dupes ./Game/Content --json --min-size 1M
 ```
 
+## Inspect a project
+
+```sh
+mediaforge project ./Game
+mediaforge project ./Game --json
+```
+
+The read-only inspector recognizes Unity, Unreal Engine, and Godot project markers. It reports missing expected folders and measures known build/cache folders (`Library`, `Intermediate`, `DerivedDataCache`, `.godot`, and related folders) without deleting them. Some folders, such as Unreal's `Saved`, can also contain backups or logs. It also lists Blender, DaVinci Resolve, Premiere Pro, After Effects, and Final Cut Pro XML project files found below the chosen folder.
+
 ## Cross-platform roadmap
 
 - [x] Python reference CLI for Windows, macOS, and Linux
@@ -76,7 +86,7 @@ mediaforge dupes ./Game/Content --json --min-size 1M
 - [x] Filter scan results by asset type and minimum file size
 - [x] Content-verified duplicate detection on demand
 - [ ] Safe media organization plans with preview and undo
-- [ ] Game-engine project checks for Unity, Unreal, and Godot
+- [x] Read-only project and generated-cache inspection for Unity, Unreal, and Godot
 - [ ] Optional AI assistance only for ambiguous labeling, never required for core commands
 
 ## Development (Rust)

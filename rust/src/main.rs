@@ -15,6 +15,16 @@ const SKIP_DIRS: &[&str] = &[
     ".venv",
     "venv",
 ];
+const PROJECT_ARTIFACT_DIRS: &[&str] = &[
+    "Library",
+    "Temp",
+    "Obj",
+    "Intermediate",
+    "DerivedDataCache",
+    "Binaries",
+    "Saved",
+    ".godot",
+];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Kind {
@@ -564,7 +574,7 @@ fn parse_size(value: &str) -> Result<u64, String> {
 
 fn print_help() {
     println!(
-        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE]\n  mediaforge dupes [PATH] [--json] [--min-size SIZE]\n  mediaforge probe <FILE> [--compact]\n  mediaforge --version\n  mediaforge --help"
+        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE]\n  mediaforge dupes [PATH] [--json] [--min-size SIZE]\n  mediaforge probe <FILE> [--compact]\n  mediaforge project [PATH] [--json]\n  mediaforge --version\n  mediaforge --help"
     );
 }
 
@@ -623,6 +633,289 @@ fn run_probe(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+fn directory_size(root: &Path) -> io::Result<(u64, u64)> {
+    let mut pending = vec![root.to_path_buf()];
+    let mut bytes = 0_u64;
+    let mut files = 0_u64;
+    while let Some(directory) = pending.pop() {
+        for entry in fs::read_dir(directory)? {
+            let entry = entry?;
+            let file_type = entry.file_type()?;
+            if file_type.is_symlink() {
+                continue;
+            }
+            if file_type.is_dir() {
+                let name = entry.file_name();
+                if !SKIP_DIRS.contains(&name.to_string_lossy().as_ref()) {
+                    pending.push(entry.path());
+                }
+            } else if file_type.is_file() {
+                bytes = bytes.saturating_add(entry.metadata()?.len());
+                files += 1;
+            }
+        }
+    }
+    Ok((bytes, files))
+}
+
+fn project_file_kind(path: &str) -> Option<&'static str> {
+    match Path::new(path)
+        .extension()?
+        .to_str()?
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "blend" => Some("Blender"),
+        "drp" => Some("DaVinci Resolve"),
+        "prproj" => Some("Adobe Premiere Pro"),
+        "aep" => Some("Adobe After Effects"),
+        "fcpxml" => Some("Final Cut Pro XML"),
+        _ => None,
+    }
+}
+
+fn run_project(args: &[String]) -> Result<(), String> {
+    let mut json = false;
+    let mut path = None;
+    for arg in args {
+        match arg.as_str() {
+            "--json" => json = true,
+            "--help" | "-h" => {
+                println!(
+                    "Usage: mediaforge project [PATH] [--json]\n\nInspect Unity, Unreal, Godot, Blender and video-editor project markers and report generated cache sizes. This command is read-only."
+                );
+                return Ok(());
+            }
+            value if value.starts_with('-') => return Err(format!("unknown option: {value}")),
+            value => {
+                if path.is_some() {
+                    return Err("only one project path may be provided".into());
+                }
+                path = Some(PathBuf::from(value));
+            }
+        }
+    }
+    let path = path.unwrap_or_else(|| PathBuf::from("."));
+    let root = fs::canonicalize(&path)
+        .map_err(|error| format!("cannot access {}: {error}", path.display()))?;
+    if !root.is_dir() {
+        return Err(format!("expected a project directory: {}", root.display()));
+    }
+
+    let mut engines = Vec::<(&str, Vec<&str>, Vec<&str>)>::new();
+    if root.join("Assets").is_dir() || root.join("ProjectSettings/ProjectVersion.txt").is_file() {
+        engines.push((
+            "Unity",
+            vec!["Assets", "ProjectSettings"],
+            vec!["Library", "Temp", "Obj"],
+        ));
+    }
+    let unity_version = fs::read_to_string(root.join("ProjectSettings/ProjectVersion.txt"))
+        .ok()
+        .and_then(|contents| {
+            contents.lines().find_map(|line| {
+                line.trim()
+                    .strip_prefix("m_EditorVersion:")
+                    .map(str::trim)
+                    .filter(|version| !version.is_empty())
+                    .map(str::to_owned)
+            })
+        });
+    let unreal_files: Vec<_> = fs::read_dir(&root)
+        .into_iter()
+        .flatten()
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_file()))
+        .filter(|entry| {
+            entry
+                .path()
+                .extension()
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("uproject"))
+        })
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect();
+    if !unreal_files.is_empty() {
+        engines.push((
+            "Unreal Engine",
+            vec!["Content"],
+            vec!["Intermediate", "Saved", "DerivedDataCache", "Binaries"],
+        ));
+    }
+    if root.join("project.godot").is_file() {
+        engines.push(("Godot", vec!["project.godot"], vec![".godot"]));
+    }
+
+    let mut project_files = Vec::<(String, &'static str)>::new();
+    let ignored = ignored_by_git(&root);
+    let mut pending = vec![root.clone()];
+    while let Some(directory) = pending.pop() {
+        let entries = match fs::read_dir(&directory) {
+            Ok(entries) => entries,
+            Err(_) => continue,
+        };
+        for entry in entries.filter_map(Result::ok) {
+            let path = entry.path();
+            let file_type = match entry.file_type() {
+                Ok(file_type) => file_type,
+                Err(_) => continue,
+            };
+            if file_type.is_symlink() {
+                continue;
+            }
+            if file_type.is_dir() {
+                let name = entry.file_name();
+                let lossy_name = name.to_string_lossy();
+                let relative = path
+                    .strip_prefix(&root)
+                    .unwrap_or(&path)
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                if !SKIP_DIRS.contains(&lossy_name.as_ref())
+                    && !PROJECT_ARTIFACT_DIRS.contains(&lossy_name.as_ref())
+                    && !is_hidden(&lossy_name)
+                    && !is_ignored(&relative, &ignored)
+                {
+                    pending.push(path);
+                }
+            } else if file_type.is_file() {
+                let relative = path
+                    .strip_prefix(&root)
+                    .unwrap_or(&path)
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                if is_ignored(&relative, &ignored) {
+                    continue;
+                }
+                if let Some(kind) = project_file_kind(&relative) {
+                    project_files.push((relative, kind));
+                }
+            }
+        }
+    }
+    project_files.sort_by(|left, right| left.0.to_lowercase().cmp(&right.0.to_lowercase()));
+
+    let mut missing = Vec::<(&str, &str)>::new();
+    let mut caches = Vec::<(String, u64, u64)>::new();
+    for (engine, required, cache_names) in &engines {
+        for required_path in required {
+            if !root.join(required_path).exists() {
+                missing.push((engine, required_path));
+            }
+        }
+        for cache_name in cache_names {
+            let cache_path = root.join(cache_name);
+            if cache_path.is_dir() {
+                let (bytes, files) = directory_size(&cache_path).map_err(|error| {
+                    format!("could not inspect {}: {error}", cache_path.display())
+                })?;
+                caches.push(((*cache_name).to_owned(), bytes, files));
+            }
+        }
+    }
+
+    if json {
+        println!("{{\n  \"root\": {},", json_string(&root.to_string_lossy()));
+        println!(
+            "  \"engines\": [{}],",
+            engines
+                .iter()
+                .map(|(name, _, _)| json_string(name))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        println!(
+            "  \"unity_version\": {},",
+            unity_version
+                .as_deref()
+                .map(json_string)
+                .unwrap_or_else(|| "null".to_owned())
+        );
+        println!(
+            "  \"unreal_project_files\": [{}],",
+            unreal_files
+                .iter()
+                .map(|file| json_string(file))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        println!("  \"missing_required_paths\": [");
+        for (index, (engine, missing_path)) in missing.iter().enumerate() {
+            let comma = if index + 1 == missing.len() { "" } else { "," };
+            println!(
+                "    {{\"engine\": {}, \"path\": {}}}{}",
+                json_string(engine),
+                json_string(missing_path),
+                comma
+            );
+        }
+        println!("  ],\n  \"known_build_or_cache_dirs\": [");
+        for (index, (name, bytes, files)) in caches.iter().enumerate() {
+            let comma = if index + 1 == caches.len() { "" } else { "," };
+            println!(
+                "    {{\"path\": {}, \"files\": {}, \"bytes\": {}, \"size\": {}}}{}",
+                json_string(name),
+                files,
+                bytes,
+                json_string(&human_size(*bytes)),
+                comma
+            );
+        }
+        println!("  ],\n  \"editor_project_files\": [");
+        for (index, (relative, kind)) in project_files.iter().enumerate() {
+            let comma = if index + 1 == project_files.len() {
+                ""
+            } else {
+                ","
+            };
+            println!(
+                "    {{\"path\": {}, \"kind\": {}}}{}",
+                json_string(relative),
+                json_string(kind),
+                comma
+            );
+        }
+        println!("  ]\n}}");
+    } else {
+        println!("MediaForge project inspection: {}", root.display());
+        if engines.is_empty() {
+            println!("Game engine: no Unity, Unreal or Godot project marker found.");
+        }
+        for (engine, _, _) in &engines {
+            println!("Game engine: {engine}");
+        }
+        if let Some(version) = &unity_version {
+            println!("Unity editor version: {version}");
+        }
+        for project_file in unreal_files {
+            println!("Unreal project: {project_file}");
+        }
+        if !missing.is_empty() {
+            println!("\nMissing expected paths");
+            for (engine, missing_path) in &missing {
+                println!("  {engine}: {missing_path}");
+            }
+        }
+        if caches.is_empty() {
+            println!("\nKnown build/cache folders: none found.");
+        } else {
+            println!("\nKnown build/cache folders (inspection only; may include backups or logs)");
+            for (name, bytes, files) in &caches {
+                println!("  {name:<20} {:>10}  ({files} files)", human_size(*bytes));
+            }
+        }
+        if !project_files.is_empty() {
+            println!("\nEditor project files");
+            for (relative, kind) in &project_files {
+                println!("  {kind:<24} {relative}");
+            }
+        }
+        if engines.is_empty() && project_files.is_empty() {
+            println!("No recognized project files found.");
+        }
+    }
+    Ok(())
+}
+
 fn run() -> Result<(), String> {
     let args: Vec<String> = env::args().skip(1).collect();
     match args.first().map(String::as_str) {
@@ -637,6 +930,7 @@ fn run() -> Result<(), String> {
         Some("scan") => run_scan(&args[1..]),
         Some("dupes") => run_dupes(&args[1..]),
         Some("probe") => run_probe(&args[1..]),
+        Some("project") => run_project(&args[1..]),
         Some(command) => Err(format!(
             "unknown command: {command}\nRun 'mediaforge --help' for usage."
         )),
