@@ -1738,20 +1738,25 @@ fn print_json(
     } else {
         0
     });
+    let mut group_indices = HashMap::with_capacity(if include_same_size {
+        candidate_group_count
+    } else {
+        0
+    });
     if include_same_size {
         for (size, count) in by_size {
             if count > 1 {
+                group_indices.insert(size, groups.len());
                 groups.push((size, count, Vec::<&str>::with_capacity(count)));
             }
         }
-        groups.sort_unstable_by_key(|(size, _, _)| *size);
-    }
-    if include_same_size {
         for record in records {
-            if let Ok(index) = groups.binary_search_by_key(&record.size, |(size, _, _)| *size) {
-                groups[index].2.push(&record.relative);
+            if let Some(index) = group_indices.get(&record.size) {
+                groups[*index].2.push(&record.relative);
             }
         }
+        groups.sort_unstable_by_key(|(size, _, _)| *size);
+        drop(group_indices);
         for (_, _, files) in &mut groups {
             files.sort_unstable_by(|left, right| compare_paths_case_insensitive(left, right));
         }
