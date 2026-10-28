@@ -1,5 +1,5 @@
 use std::borrow::Cow;
-use std::collections::{BTreeMap, BinaryHeap, HashMap, HashSet};
+use std::collections::{BTreeMap, BinaryHeap, HashMap, HashSet, VecDeque};
 use std::env;
 use std::fmt::Write as FmtWrite;
 use std::fs::{self, File, OpenOptions};
@@ -350,6 +350,61 @@ fn read_retry_interrupted(reader: &mut impl Read, buffer: &mut [u8]) -> io::Resu
             result => return result,
         }
     }
+}
+
+fn run_with_bounded_stderr(
+    command: &mut Command,
+) -> io::Result<(std::process::ExitStatus, Vec<u8>)> {
+    const STDERR_DETAIL_LIMIT: usize = 64 * 1024;
+    const STDERR_TRUNCATION_MARKER: &[u8] = b"\n... stderr truncated ...\n";
+    const STDERR_HEAD_LIMIT: usize = (STDERR_DETAIL_LIMIT - STDERR_TRUNCATION_MARKER.len()) / 2;
+    const STDERR_TAIL_LIMIT: usize =
+        STDERR_DETAIL_LIMIT - STDERR_HEAD_LIMIT - STDERR_TRUNCATION_MARKER.len();
+    let mut child = command
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    let Some(mut stderr) = child.stderr.take() else {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(io::Error::other("could not capture command diagnostics"));
+    };
+    let mut detail_head = Vec::with_capacity(STDERR_HEAD_LIMIT);
+    let mut detail_tail = VecDeque::with_capacity(STDERR_TAIL_LIMIT);
+    let mut truncated = false;
+    let mut buffer = [0; 8192];
+    loop {
+        let count = match read_retry_interrupted(&mut stderr, &mut buffer) {
+            Ok(count) => count,
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(error);
+            }
+        };
+        if count == 0 {
+            break;
+        }
+        let head_count = (STDERR_HEAD_LIMIT - detail_head.len()).min(count);
+        detail_head.extend_from_slice(&buffer[..head_count]);
+        let tail = &buffer[head_count..count];
+        if !tail.is_empty() {
+            let overflow = detail_tail
+                .len()
+                .saturating_add(tail.len())
+                .saturating_sub(STDERR_TAIL_LIMIT);
+            for _ in 0..overflow {
+                detail_tail.pop_front();
+            }
+            truncated |= overflow > 0;
+            detail_tail.extend(tail.iter().copied());
+        }
+    }
+    if truncated {
+        detail_head.extend_from_slice(STDERR_TRUNCATION_MARKER);
+    }
+    detail_head.extend(detail_tail);
+    Ok((child.wait()?, detail_head))
 }
 
 fn read_up_to_full_or_eof(reader: &mut impl Read, buffer: &mut [u8]) -> io::Result<usize> {
@@ -5769,25 +5824,25 @@ fn run_storyboard(args: &[String]) -> Result<(), String> {
     let filter = format!(
         "fps=1/{interval},scale={width}:{tile_height}:force_original_aspect_ratio=decrease,pad={width}:{tile_height}:(ow-iw)/2:(oh-ih)/2,tile={columns}x{rows}"
     );
-    let result = Command::new("ffmpeg")
-        .args(["-hide_banner", "-loglevel", "error", "-nostdin", "-n", "-i"])
-        .arg(&input)
-        .args(["-vf", &filter, "-frames:v", "1"])
-        .arg(&temporary)
-        .stdout(Stdio::null())
-        .output()
-        .map_err(|error| {
-            if error.kind() == std::io::ErrorKind::NotFound {
-                "ffmpeg was not found on PATH. Install FFmpeg to create storyboards.".to_owned()
-            } else {
-                format!("could not start ffmpeg: {error}")
-            }
-        })?;
-    if !result.status.success() {
-        let detail = String::from_utf8_lossy(&result.stderr).trim().to_owned();
+    let (status, stderr) = run_with_bounded_stderr(
+        Command::new("ffmpeg")
+            .args(["-hide_banner", "-loglevel", "error", "-nostdin", "-n", "-i"])
+            .arg(&input)
+            .args(["-vf", &filter, "-frames:v", "1"])
+            .arg(&temporary),
+    )
+    .map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            "ffmpeg was not found on PATH. Install FFmpeg to create storyboards.".to_owned()
+        } else {
+            format!("could not start ffmpeg: {error}")
+        }
+    })?;
+    if !status.success() {
+        let detail = String::from_utf8_lossy(&stderr).trim().to_owned();
         let _ = fs::remove_file(&temporary);
         return Err(if detail.is_empty() {
-            format!("ffmpeg failed with {}", result.status)
+            format!("ffmpeg failed with {status}")
         } else {
             format!("ffmpeg failed: {detail}")
         });
@@ -7023,40 +7078,40 @@ fn run_proxy_with_options(
             .as_nanos()
     ));
     let filter = format!("scale=w='trunc(min({max_width},iw)/2)*2':h=-2");
-    let result = Command::new("ffmpeg")
-        .args(["-hide_banner", "-loglevel", "error", "-nostdin", "-n", "-i"])
-        .arg(&input)
-        .args(["-map", "0:v:0", "-map", "0:a?", "-sn", "-dn", "-vf"])
-        .arg(filter)
-        .args(["-c:v", "libx264", "-preset"])
-        .arg(preset)
-        .args(["-crf"])
-        .arg(crf.to_string())
-        .args([
-            "-pix_fmt",
-            "yuv420p",
-            "-c:a",
-            "aac",
-            "-b:a",
-            "128k",
-            "-movflags",
-            "+faststart",
-        ])
-        .arg(&temporary)
-        .stdout(Stdio::null())
-        .output()
-        .map_err(|error| {
-            if error.kind() == std::io::ErrorKind::NotFound {
-                "ffmpeg was not found on PATH. Install FFmpeg to create proxies.".to_owned()
-            } else {
-                format!("could not start ffmpeg: {error}")
-            }
-        })?;
-    if !result.status.success() {
-        let detail = String::from_utf8_lossy(&result.stderr).trim().to_owned();
+    let (status, stderr) = run_with_bounded_stderr(
+        Command::new("ffmpeg")
+            .args(["-hide_banner", "-loglevel", "error", "-nostdin", "-n", "-i"])
+            .arg(&input)
+            .args(["-map", "0:v:0", "-map", "0:a?", "-sn", "-dn", "-vf"])
+            .arg(filter)
+            .args(["-c:v", "libx264", "-preset"])
+            .arg(preset)
+            .args(["-crf"])
+            .arg(crf.to_string())
+            .args([
+                "-pix_fmt",
+                "yuv420p",
+                "-c:a",
+                "aac",
+                "-b:a",
+                "128k",
+                "-movflags",
+                "+faststart",
+            ])
+            .arg(&temporary),
+    )
+    .map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            "ffmpeg was not found on PATH. Install FFmpeg to create proxies.".to_owned()
+        } else {
+            format!("could not start ffmpeg: {error}")
+        }
+    })?;
+    if !status.success() {
+        let detail = String::from_utf8_lossy(&stderr).trim().to_owned();
         let _ = fs::remove_file(&temporary);
         return Err(if detail.is_empty() {
-            format!("ffmpeg failed with {}", result.status)
+            format!("ffmpeg failed with {status}")
         } else {
             format!("ffmpeg failed: {detail}")
         });
@@ -7638,22 +7693,18 @@ fn run_extract_audio_with_options(
         }
         _ => unreachable!(),
     }
-    let result = command
-        .arg(&temporary)
-        .stdout(Stdio::null())
-        .output()
-        .map_err(|error| {
-            if error.kind() == std::io::ErrorKind::NotFound {
-                "ffmpeg was not found on PATH. Install FFmpeg to extract audio.".to_owned()
-            } else {
-                format!("could not start ffmpeg: {error}")
-            }
-        })?;
-    if !result.status.success() {
-        let detail = String::from_utf8_lossy(&result.stderr).trim().to_owned();
+    let (status, stderr) = run_with_bounded_stderr(command.arg(&temporary)).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            "ffmpeg was not found on PATH. Install FFmpeg to extract audio.".to_owned()
+        } else {
+            format!("could not start ffmpeg: {error}")
+        }
+    })?;
+    if !status.success() {
+        let detail = String::from_utf8_lossy(&stderr).trim().to_owned();
         let _ = fs::remove_file(&temporary);
         return Err(if detail.is_empty() {
-            format!("ffmpeg failed with {}", result.status)
+            format!("ffmpeg failed with {status}")
         } else {
             format!("ffmpeg failed: {detail}")
         });
