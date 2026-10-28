@@ -9896,6 +9896,7 @@ fn run_organize(args: &[String]) -> Result<(), String> {
         extensions: extension_filter.as_ref(),
         min_size: Some(min_size),
         omit_extension: by != "extension",
+        store_relative_path: true,
         ..StrictWalkFilters::default()
     };
     walk_strict_filtered(
@@ -9912,13 +9913,7 @@ fn run_organize(args: &[String]) -> Result<(), String> {
     let mut skipped = 0usize;
     let mut destinations = HashSet::<PathBuf>::new();
     for record in records {
-        let relative = match record.path.strip_prefix(&root) {
-            Ok(relative) => relative,
-            Err(_) => {
-                skipped += 1;
-                continue;
-            }
-        };
+        let relative = record.path.as_path();
         let Some(from_text) = portable_relative_path(relative) else {
             skipped += 1;
             continue;
