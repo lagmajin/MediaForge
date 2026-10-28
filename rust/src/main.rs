@@ -2400,6 +2400,8 @@ fn run_proxy_dir(args: &[String]) -> Result<(), String> {
         })
         .collect();
     let next = std::sync::atomic::AtomicUsize::new(0);
+    let completed = std::sync::atomic::AtomicUsize::new(0);
+    let progress_output = std::sync::Mutex::new(());
     let results = std::sync::Mutex::new(Vec::<(usize, Result<bool, String>)>::with_capacity(total));
     std::thread::scope(|scope| {
         for _ in 0..jobs.min(total) {
@@ -2411,14 +2413,7 @@ fn run_proxy_dir(args: &[String]) -> Result<(), String> {
                     }
                     let record = &records[index];
                     let (output, plan) = &plans[index];
-                    if json {
-                        println!(
-                            "{{\"type\":\"progress\",\"current\":{},\"total\":{},\"path\":{}}}",
-                            index + 1,
-                            total,
-                            json_string(&record.relative)
-                        );
-                    } else {
+                    if !json {
                         println!("Proxying {}/{}: {}", index + 1, total, record.relative);
                     }
                     let result = plan.clone().and_then(|()| {
@@ -2458,6 +2453,18 @@ fn run_proxy_dir(args: &[String]) -> Result<(), String> {
                         ];
                         run_proxy(&proxy_args).map(|()| true)
                     });
+                    if json {
+                        let _guard = progress_output
+                            .lock()
+                            .expect("proxy progress output lock poisoned");
+                        let current = completed.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                            + 1;
+                        println!(
+                            "{{\"type\":\"progress\",\"current\":{current},\"total\":{},\"path\":{}}}",
+                            total,
+                            json_string(&record.relative)
+                        );
+                    }
                     results
                         .lock()
                         .expect("proxy results lock poisoned")
@@ -2918,6 +2925,8 @@ fn run_extract_audio_dir(args: &[String]) -> Result<(), String> {
         })
         .collect();
     let next = std::sync::atomic::AtomicUsize::new(0);
+    let completed = std::sync::atomic::AtomicUsize::new(0);
+    let progress_output = std::sync::Mutex::new(());
     let results = std::sync::Mutex::new(Vec::<(usize, Result<(), String>)>::with_capacity(total));
     std::thread::scope(|scope| {
         for _ in 0..jobs.min(total) {
@@ -2929,14 +2938,7 @@ fn run_extract_audio_dir(args: &[String]) -> Result<(), String> {
                     }
                     let record = &records[index];
                     let (output, plan) = &plans[index];
-                    if json {
-                        println!(
-                            "{{\"type\":\"progress\",\"current\":{},\"total\":{},\"path\":{}}}",
-                            index + 1,
-                            total,
-                            json_string(&record.relative)
-                        );
-                    } else {
+                    if !json {
                         println!("Extracting {}/{}: {}", index + 1, total, record.relative);
                     }
                     let result = plan.clone().and_then(|()| {
@@ -2972,6 +2974,18 @@ fn run_extract_audio_dir(args: &[String]) -> Result<(), String> {
                         }
                         run_extract_audio(&audio_args)
                     });
+                    if json {
+                        let _guard = progress_output
+                            .lock()
+                            .expect("audio progress output lock poisoned");
+                        let current = completed.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                            + 1;
+                        println!(
+                            "{{\"type\":\"progress\",\"current\":{current},\"total\":{},\"path\":{}}}",
+                            total,
+                            json_string(&record.relative)
+                        );
+                    }
                     results
                         .lock()
                         .expect("audio results lock poisoned")

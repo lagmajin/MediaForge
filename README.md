@@ -67,11 +67,11 @@ crf=30
 preset=ultrafast
 ```
 
-`proxy-dir` applies the same proxy settings to video files in a directory tree, preserving relative folders beneath an existing output directory. It skips files already inside that output directory, never overwrites existing proxies, continues after per-file errors, and returns a nonzero exit status if any file failed. It runs up to 4 `ffmpeg` processes by default; `--jobs` accepts 1–16. Add `--skip-existing` to resume a batch without touching any output path that already exists; skipped paths are counted separately. Set `--extension` to limit inputs. Add `--json` for progress, per-file success/error records in input order, and a final summary as JSON Lines.
+`proxy-dir` applies the same proxy settings to video files in a directory tree, preserving relative folders beneath an existing output directory. It skips files already inside that output directory, never overwrites existing proxies, continues after per-file errors, and returns a nonzero exit status if any file failed. It runs up to 4 `ffmpeg` processes by default; `--jobs` accepts 1–16. Add `--skip-existing` to resume a batch without touching any output path that already exists; skipped paths are counted separately. Set `--extension` to limit inputs. Add `--json` for completion-count progress, per-file success/error records in input order, and a final summary as JSON Lines.
 
 `extract-audio` writes the selected audio stream as MP3 (192k by default), WAV, or FLAC. `--stream` selects a zero-based audio stream; `--bitrate` selects an MP3 bitrate from 64k to 320k. The output extension must match `--format`. FFmpeg must include the selected encoder, and existing files are never overwritten.
 
-`extract-audio-dir` applies those settings to video/audio files in a directory tree and preserves relative folders beneath an existing output directory. It skips inputs already inside that output directory, refuses collisions, and continues after per-file errors. It runs up to 4 `ffmpeg` processes by default; `--jobs` accepts 1–16. Add `--json` for progress, per-file results in input order, and a final summary as JSON Lines.
+`extract-audio-dir` applies those settings to video/audio files in a directory tree and preserves relative folders beneath an existing output directory. It skips inputs already inside that output directory, refuses collisions, and continues after per-file errors. It runs up to 4 `ffmpeg` processes by default; `--jobs` accepts 1–16. Add `--json` for completion-count progress, per-file results in input order, and a final summary as JSON Lines.
 
 To run the Python reference implementation during comparison:
 
