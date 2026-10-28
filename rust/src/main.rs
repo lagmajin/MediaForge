@@ -488,75 +488,72 @@ fn glob_matches(pattern: &[GlobToken], value: &str) -> bool {
         }) && characters.next().is_none();
     }
     let value: Vec<char> = value.chars().collect();
-    let mut memo = HashMap::<(usize, usize), bool>::new();
-    fn matches(
-        pattern: &[GlobToken],
-        value: &[char],
-        p: usize,
-        v: usize,
-        memo: &mut HashMap<(usize, usize), bool>,
-    ) -> bool {
-        if let Some(result) = memo.get(&(p, v)) {
-            return *result;
-        }
-        let result = if p == pattern.len() {
-            v == value.len()
-        } else {
-            match &pattern[p] {
-                GlobToken::Star { crosses_slash } => {
-                    matches(pattern, value, p + 1, v, memo)
-                        || (v < value.len()
-                            && (*crosses_slash || value[v] != '/')
-                            && matches(pattern, value, p, v + 1, memo))
-                }
-                GlobToken::AnyDirectories => {
-                    matches(pattern, value, p + 1, v, memo)
-                        || (v < value.len() && matches(pattern, value, p, v + 1, memo))
-                        || (v < value.len()
-                            && value[v] == '/'
-                            && matches(pattern, value, p + 1, v + 1, memo))
-                }
-                GlobToken::Any => {
-                    v < value.len()
-                        && value[v] != '/'
-                        && matches(pattern, value, p + 1, v + 1, memo)
-                }
-                GlobToken::Class { negated, members } => {
-                    if v >= value.len() || value[v] == '/' {
-                        false
-                    } else {
-                        let members = if members.first().is_some_and(|ch| *ch == '!' || *ch == '^')
-                        {
-                            &members[1..]
-                        } else {
-                            members.as_slice()
-                        };
-                        let mut included = false;
-                        let mut index = 0;
-                        while index < members.len() {
-                            if index + 2 < members.len() && members[index + 1] == '-' {
-                                included |=
-                                    members[index] <= value[v] && value[v] <= members[index + 2];
-                                index += 3;
-                            } else {
-                                included |= members[index] == value[v];
-                                index += 1;
-                            }
-                        }
-                        (included != *negated) && matches(pattern, value, p + 1, v + 1, memo)
-                    }
-                }
-                GlobToken::Literal(ch) => {
-                    v < value.len()
-                        && *ch == value[v]
-                        && matches(pattern, value, p + 1, v + 1, memo)
+    let mut previous = vec![false; value.len() + 1];
+    let mut current = vec![false; value.len() + 1];
+    let mut directory_prefix = vec![false; value.len() + 1];
+    previous[0] = true;
+    for token in pattern {
+        current.fill(false);
+        match token {
+            GlobToken::Literal(expected) => {
+                for index in 1..=value.len() {
+                    current[index] = previous[index - 1] && value[index - 1] == *expected;
                 }
             }
-        };
-        memo.insert((p, v), result);
-        result
+            GlobToken::Any => {
+                for index in 1..=value.len() {
+                    current[index] = previous[index - 1] && value[index - 1] != '/';
+                }
+            }
+            GlobToken::Class { negated, members } => {
+                for index in 1..=value.len() {
+                    let character = value[index - 1];
+                    current[index] = previous[index - 1]
+                        && character != '/'
+                        && character_class_matches(members, *negated, character);
+                }
+            }
+            GlobToken::Star { crosses_slash } => {
+                current[0] = previous[0];
+                for index in 1..=value.len() {
+                    let character = value[index - 1];
+                    current[index] = previous[index]
+                        || ((*crosses_slash || character != '/') && current[index - 1]);
+                }
+            }
+            GlobToken::AnyDirectories => {
+                current[0] = previous[0];
+                directory_prefix[0] = previous[0];
+                for index in 1..=value.len() {
+                    directory_prefix[index] = previous[index] || directory_prefix[index - 1];
+                    current[index] =
+                        previous[index] || (value[index - 1] == '/' && directory_prefix[index - 1]);
+                }
+            }
+        }
+        std::mem::swap(&mut previous, &mut current);
     }
-    matches(&pattern, &value, 0, 0, &mut memo)
+    previous[value.len()]
+}
+
+fn character_class_matches(members: &[char], negated: bool, character: char) -> bool {
+    let members = if members.first().is_some_and(|ch| *ch == '!' || *ch == '^') {
+        &members[1..]
+    } else {
+        members
+    };
+    let mut included = false;
+    let mut index = 0;
+    while index < members.len() {
+        if index + 2 < members.len() && members[index + 1] == '-' {
+            included |= members[index] <= character && character <= members[index + 2];
+            index += 3;
+        } else {
+            included |= members[index] == character;
+            index += 1;
+        }
+    }
+    included != negated
 }
 
 fn rule_matches_path(rule: &IgnoreRule, relative: &str, target_is_directory: bool) -> bool {
