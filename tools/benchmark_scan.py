@@ -58,8 +58,13 @@ def main() -> int:
         reports: dict[str, dict] = {}
         durations: dict[str, list[float]] = {name: [] for name in commands}
         for name, command in commands.items():
-            for _ in range(args.repeats):
-                report, elapsed = run_command(command, repo, env)
+            reports[name], _ = run_command(command, repo, env)
+
+        names = list(commands)
+        for repeat in range(args.repeats):
+            order = names if repeat % 2 == 0 else list(reversed(names))
+            for name in order:
+                report, elapsed = run_command(commands[name], repo, env)
                 reports[name] = report
                 durations[name].append(elapsed)
 
@@ -70,12 +75,12 @@ def main() -> int:
 
         medians = {name: statistics.median(values) for name, values in durations.items()}
         print(f"Verified identical scan summary: {reports['Rust']['files']} files, {reports['Rust']['total_bytes']} bytes")
-        print(f"Runs per implementation: {args.repeats}; generated files: {args.files}")
+        print(f"Warm-up runs: 1 per implementation; measured runs: {args.repeats}; generated files: {args.files}")
         for name in commands:
             values = ", ".join(f"{value * 1000:.2f}" for value in durations[name])
             print(f"{name:>6}: median {medians[name] * 1000:.2f} ms; runs [{values}] ms")
         print(f"Rust/Python median speed ratio: {medians['Python'] / medians['Rust']:.2f}x")
-        print("Both processes ran locally with warm filesystem cache; use results as a comparative sample, not a hardware-independent guarantee.")
+        print("Implementations were warmed once and run in alternating order with a warm filesystem cache; use results as a comparative sample, not a hardware-independent guarantee.")
     return 0
 
 
