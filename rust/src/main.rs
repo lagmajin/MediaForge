@@ -1277,7 +1277,7 @@ fn fraction_ceil_scaled(fraction: &str, multiplier: u128) -> u128 {
 
 fn print_help() {
     println!(
-        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS] [--largest N]\n  mediaforge dupes [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--top-groups N]\n  mediaforge probe <FILE> [--compact]\n  mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--jobs N] [--summary]\n  mediaforge storyboard <VIDEO> --output <IMAGE> [--interval SECONDS] [--columns N] [--rows N] [--width PIXELS]\n  mediaforge proxy <VIDEO> --output <FILE.mp4> [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge proxy-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET] [--json]\n  mediaforge extract-audio <VIDEO> --output <FILE> [--format mp3|wav|flac] [--bitrate RATE] [--stream N]\n  mediaforge project [PATH] [--json]\n  mediaforge gitignore [PATH] [--apply]\n  mediaforge organize [PATH] [--by type|extension] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--apply]\n  mediaforge sequence [PATH] [--prefix NAME] [--start N] [--padding N] [--extension EXTENSIONS] [--include-hidden] [--json] [--apply]\n  mediaforge undo [PATH] [--json]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--include-hidden] [--include-generated] [--dry-run] [--json] [--list]\n  mediaforge --version\n  mediaforge --help"
+        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS] [--largest N]\n  mediaforge dupes [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--top-groups N]\n  mediaforge probe <FILE> [--compact]\n  mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--jobs N] [--summary]\n  mediaforge storyboard <VIDEO> --output <IMAGE> [--interval SECONDS] [--columns N] [--rows N] [--width PIXELS]\n  mediaforge proxy <VIDEO> --output <FILE.mp4> [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge proxy-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET] [--json]\n  mediaforge proxy-config init [FILE] [--profile fast|balanced|quality] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge extract-audio <VIDEO> --output <FILE> [--format mp3|wav|flac] [--bitrate RATE] [--stream N]\n  mediaforge project [PATH] [--json]\n  mediaforge gitignore [PATH] [--apply]\n  mediaforge organize [PATH] [--by type|extension] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--apply]\n  mediaforge sequence [PATH] [--prefix NAME] [--start N] [--padding N] [--extension EXTENSIONS] [--include-hidden] [--json] [--apply]\n  mediaforge undo [PATH] [--json]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--include-hidden] [--include-generated] [--dry-run] [--json] [--list]\n  mediaforge --version\n  mediaforge --help"
     );
 }
 
@@ -1847,6 +1847,146 @@ fn resolve_proxy_settings(
         ));
     }
     Ok((max_width, crf, preset))
+}
+
+fn run_proxy_config(args: &[String]) -> Result<(), String> {
+    let mut iter = args.iter();
+    let action = iter
+        .next()
+        .ok_or_else(|| "proxy-config requires the 'init' action".to_owned())?;
+    if action == "--help" || action == "-h" {
+        println!(
+            "Usage: mediaforge proxy-config init [FILE] [--profile fast|balanced|quality] [--max-width PIXELS] [--crf N] [--preset PRESET]\n\nCreate a proxy settings file without overwriting existing files. Defaults to .mediaforge-proxy in the current directory."
+        );
+        return Ok(());
+    }
+    if action != "init" {
+        return Err(format!("unknown proxy-config action '{action}'; use init"));
+    }
+    let mut path = None;
+    let mut profile = "balanced".to_owned();
+    let mut max_width = None;
+    let mut crf = None;
+    let mut preset = None;
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--profile" => {
+                profile = iter
+                    .next()
+                    .ok_or_else(|| "--profile requires fast, balanced, or quality".to_owned())?
+                    .clone();
+            }
+            "--max-width" => {
+                let value = iter
+                    .next()
+                    .ok_or_else(|| "--max-width requires pixels".to_owned())?;
+                max_width = Some(
+                    value
+                        .parse::<u32>()
+                        .map_err(|_| format!("invalid maximum width '{value}'"))?,
+                );
+            }
+            "--crf" => {
+                let value = iter
+                    .next()
+                    .ok_or_else(|| "--crf requires a value from 0 to 51".to_owned())?;
+                crf = Some(
+                    value
+                        .parse::<u8>()
+                        .map_err(|_| format!("invalid CRF '{value}'; use a value from 0 to 51"))?,
+                );
+            }
+            "--preset" => {
+                preset = Some(
+                    iter.next()
+                        .ok_or_else(|| "--preset requires an x264 preset".to_owned())?
+                        .clone(),
+                );
+            }
+            value if value.starts_with('-') => return Err(format!("unknown option: {value}")),
+            value => {
+                if path.is_some() {
+                    return Err("proxy-config init accepts one file path".into());
+                }
+                path = Some(PathBuf::from(value));
+            }
+        }
+    }
+    let (width, resolved_crf, encoder_preset) = resolve_proxy_settings(
+        ProxySettings::default(),
+        Some(&profile),
+        max_width,
+        crf,
+        preset.clone(),
+    )?;
+    let path = path.unwrap_or_else(|| PathBuf::from(".mediaforge-proxy"));
+    let name = path
+        .file_name()
+        .ok_or_else(|| "settings path must name a file".to_owned())?;
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let parent = fs::canonicalize(parent).map_err(|error| {
+        format!(
+            "cannot access settings directory {}: {error}",
+            parent.display()
+        )
+    })?;
+    let path = parent.join(name);
+    if entry_state(&path)
+        .map_err(|error| format!("cannot inspect settings file {}: {error}", path.display()))?
+        != EntryState::Missing
+    {
+        return Err(format!(
+            "settings file already exists; refusing to overwrite: {}",
+            path.display()
+        ));
+    }
+
+    let mut contents = format!("# MediaForge proxy settings\nprofile={profile}\n");
+    if let Some(max_width) = max_width {
+        contents.push_str(&format!("max_width={max_width}\n"));
+    }
+    if let Some(crf) = crf {
+        contents.push_str(&format!("crf={crf}\n"));
+    }
+    if let Some(preset) = &preset {
+        contents.push_str(&format!("preset={preset}\n"));
+    }
+    let temporary = parent.join(format!(
+        ".mediaforge-proxy-{}-{}.tmp",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    ));
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temporary)
+        .map_err(|error| format!("cannot create temporary settings file: {error}"))?;
+    let write_result = file
+        .write_all(contents.as_bytes())
+        .and_then(|()| file.sync_all());
+    drop(file);
+    if let Err(error) = write_result {
+        let _ = fs::remove_file(&temporary);
+        return Err(format!("could not write proxy settings: {error}"));
+    }
+    move_file_no_replace(&temporary, &path).map_err(|error| {
+        let _ = fs::remove_file(&temporary);
+        format!(
+            "could not publish proxy settings {}: {error}",
+            path.display()
+        )
+    })?;
+    println!(
+        "Created proxy settings {} (max width {width}, CRF {resolved_crf}, preset {encoder_preset})",
+        path.display()
+    );
+    Ok(())
 }
 
 fn run_proxy(args: &[String]) -> Result<(), String> {
@@ -5195,6 +5335,7 @@ fn run() -> Result<(), String> {
         Some("storyboard") => run_storyboard(&args[1..]),
         Some("proxy") => run_proxy(&args[1..]),
         Some("proxy-dir") => run_proxy_dir(&args[1..]),
+        Some("proxy-config") => run_proxy_config(&args[1..]),
         Some("extract-audio") => run_extract_audio(&args[1..]),
         Some("project") => run_project(&args[1..]),
         Some("gitignore") => run_gitignore(&args[1..]),

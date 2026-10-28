@@ -40,6 +40,7 @@ mediaforge probe-dir ./Media --summary --jobs 4
 mediaforge storyboard ./Media/shot.mp4 --output ./Media/shot-sheet.jpg
 mediaforge storyboard ./Media/shot.mp4 -o ./Media/shot-sheet.png --interval 5 --columns 6 --rows 4 --width 240
 mediaforge proxy ./Media/shot.mp4 --output ./Proxies/shot-proxy.mp4
+mediaforge proxy-config init --profile fast --max-width 960 --crf 30 --preset ultrafast
 mediaforge proxy ./Media/shot.mp4 -o ./Proxies/shot-proxy.mp4 --profile fast
 mediaforge proxy ./Media/shot.mp4 -o ./Proxies/shot-proxy.mp4 --settings ./edit-proxy.conf
 mediaforge proxy-dir ./Media --output-dir ./Proxies --extension mov,mxf --max-width 1280 --preset veryfast
@@ -54,7 +55,7 @@ mediaforge extract-audio ./Media/shot.mp4 -o ./Audio/shot.wav --format wav --str
 
 `proxy` creates an H.264/AAC MP4 suitable for smoother editing. `--profile fast` uses 960 pixels, CRF 32, and `ultrafast`; `balanced` uses 1280, CRF 28, and `veryfast`; `quality` uses 1920, CRF 22, and `fast`. `balanced` is the default. Explicit `--max-width`, `--crf` (0–51), and `--preset` values override the selected profile. Lower CRF preserves more quality; faster presets trade compression efficiency for shorter encoding time. FFmpeg must include libx264 and AAC support. Existing files are never overwritten.
 
-Both proxy commands automatically read `.mediaforge-proxy` from the current working directory when present. Use `--settings FILE` to select another file. The plain `key=value` format supports `profile`, `max_width`, `crf`, and `preset`; command-line options override file values. For example:
+Both proxy commands automatically read `.mediaforge-proxy` from the current working directory when present. Create it with `mediaforge proxy-config init`; choose a profile and optional overrides when initializing. The command refuses to overwrite an existing file. Use `--settings FILE` to select another file. The plain `key=value` format supports `profile`, `max_width`, `crf`, and `preset`; command-line options override file values. For example:
 
 ```ini
 # .mediaforge-proxy
