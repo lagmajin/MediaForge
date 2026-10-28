@@ -369,7 +369,7 @@ fn run_with_bounded_stderr(
         let _ = child.wait();
         return Err(io::Error::other("could not capture command diagnostics"));
     };
-    let mut detail_head = Vec::with_capacity(8192);
+    let mut detail_head = Vec::new();
     let mut detail_tail = VecDeque::new();
     let mut truncated = false;
     let mut buffer = [0; 8192];
