@@ -2914,7 +2914,7 @@ fn collect_snapshot_entries(
     if hash_content && !records.is_empty() {
         let next = std::sync::atomic::AtomicUsize::new(0);
         let worker_count = jobs.min(records.len());
-        let results = std::thread::scope(|scope| {
+        let worker_results = std::thread::scope(|scope| {
             let handles = (0..worker_count)
                 .map(|_| {
                     scope.spawn(|| {
@@ -2932,10 +2932,10 @@ fn collect_snapshot_entries(
                 .collect::<Vec<_>>();
             handles
                 .into_iter()
-                .flat_map(|handle| handle.join().expect("snapshot hashing worker panicked"))
+                .map(|handle| handle.join().expect("snapshot hashing worker panicked"))
                 .collect::<Vec<_>>()
         });
-        for (index, result) in results {
+        for (index, result) in worker_results.into_iter().flatten() {
             match result {
                 Ok(hash) => hashes[index] = Some(hash),
                 Err(error) => errors[index] = Some(error),
