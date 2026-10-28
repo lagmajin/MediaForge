@@ -92,10 +92,12 @@ def main() -> int:
             values = ", ".join(f"{value * 1000:.2f}" for value in durations[name])
             first = position_durations[name]["first"]
             second = position_durations[name]["second"]
+            first_median = f"{statistics.median(first) * 1000:.2f}" if first else "n/a"
+            second_median = f"{statistics.median(second) * 1000:.2f}" if second else "n/a"
             print(
                 f"{name:>6}: overall median {medians[name] * 1000:.2f} ms; "
-                f"first median {statistics.median(first) * 1000:.2f} ms ({len(first)} runs); "
-                f"second median {statistics.median(second) * 1000:.2f} ms ({len(second)} runs); "
+                f"first median {first_median} ms ({len(first)} runs); "
+                f"second median {second_median} ms ({len(second)} runs); "
                 f"all [{values}] ms"
             )
         for position in ("first", "second"):
