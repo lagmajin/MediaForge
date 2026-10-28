@@ -35,7 +35,7 @@ const PROJECT_ARTIFACT_DIRS: &[&str] = &[
     ".godot",
 ];
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 enum Kind {
     Video,
     Audio,
@@ -596,7 +596,7 @@ fn parse_size(value: &str) -> Result<u64, String> {
 
 fn print_help() {
     println!(
-        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE]\n  mediaforge dupes [PATH] [--json] [--min-size SIZE]\n  mediaforge probe <FILE> [--compact]\n  mediaforge project [PATH] [--json]\n  mediaforge organize [PATH] [--by type|extension] [--apply]\n  mediaforge undo [PATH]\n  mediaforge pack <PATH> --output <FILE.tar> [--include-hidden] [--include-generated] [--dry-run]\n  mediaforge --version\n  mediaforge --help"
+        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE]\n  mediaforge dupes [PATH] [--json] [--min-size SIZE]\n  mediaforge probe <FILE> [--compact]\n  mediaforge project [PATH] [--json]\n  mediaforge organize [PATH] [--by type|extension] [--apply]\n  mediaforge undo [PATH]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--include-hidden] [--include-generated] [--dry-run]\n  mediaforge --version\n  mediaforge --help"
     );
 }
 
@@ -1510,12 +1510,38 @@ fn archive_mode(_: &fs::Metadata) -> u32 {
     0o644
 }
 
+fn parse_pack_types(value: &str) -> Result<HashSet<Kind>, String> {
+    let mut kinds = HashSet::new();
+    for name in value.split(',').map(str::trim) {
+        if name.is_empty() {
+            return Err("--type contains an empty value".to_owned());
+        }
+        let kind = match name.to_ascii_lowercase().as_str() {
+            "video" => Kind::Video,
+            "audio" => Kind::Audio,
+            "image" => Kind::Image,
+            "model" => Kind::Model,
+            "texture" => Kind::Texture,
+            "project" => Kind::Project,
+            "other" => Kind::Other,
+            _ => {
+                return Err(format!(
+                    "unknown pack type '{name}'; choose video, audio, image, model, texture, project, or other"
+                ));
+            }
+        };
+        kinds.insert(kind);
+    }
+    Ok(kinds)
+}
+
 fn run_pack(args: &[String]) -> Result<(), String> {
     let mut path = None;
     let mut output = None;
     let mut include_hidden = false;
     let mut include_generated = false;
     let mut dry_run = false;
+    let mut selected_types: Option<HashSet<Kind>> = None;
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
         match arg.as_str() {
@@ -1528,9 +1554,15 @@ fn run_pack(args: &[String]) -> Result<(), String> {
             "--include-hidden" => include_hidden = true,
             "--include-generated" => include_generated = true,
             "--dry-run" => dry_run = true,
+            "--type" => {
+                let value = iter
+                    .next()
+                    .ok_or_else(|| "--type requires a comma-separated type list".to_owned())?;
+                selected_types = Some(parse_pack_types(value)?);
+            }
             "--help" | "-h" => {
                 println!(
-                    "Usage: mediaforge pack <PATH> --output <FILE.tar> [--include-hidden] [--include-generated] [--dry-run]\n\nCreate an uncompressed, stream-written tar archive. Git-ignored and hidden files are skipped by default. Common Unity, Unreal, and Godot generated folders are excluded unless --include-generated is used. PAX extensions support long paths and files larger than 8 GiB."
+                    "Usage: mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--include-hidden] [--include-generated] [--dry-run]\n\nCreate an uncompressed, stream-written tar archive. --type accepts comma-separated scan types: video, audio, image, model, texture, project, other. Git-ignored and hidden files are skipped by default. Common Unity, Unreal, and Godot generated folders are excluded unless --include-generated is used. PAX extensions support long paths and files larger than 8 GiB."
                 );
                 return Ok(());
             }
@@ -1589,6 +1621,9 @@ fn run_pack(args: &[String]) -> Result<(), String> {
         &mut records,
     );
     records.retain(|record| !is_ignored(&record.relative, &ignored));
+    if let Some(types) = &selected_types {
+        records.retain(|record| types.contains(&record.kind));
+    }
     let mut entries = Vec::<(&FileRecord, String)>::with_capacity(records.len());
     let mut total_bytes = 0_u64;
     for record in &records {

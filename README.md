@@ -95,9 +95,11 @@ Organization is a preview unless `--apply` is supplied. Moves preserve paths bel
 ```sh
 mediaforge pack ./Game --output ../Game.tar --dry-run
 mediaforge pack ./Game --output ../Game.tar
+mediaforge pack ./Game --output ../Game-videos.tar --type video
+mediaforge pack ./Game --output ../Game-assets.tar --type image,model,texture
 ```
 
-`pack` creates an uncompressed tar archive using only Rust's standard library. It streams file contents, preserves relative paths and Unix file permissions, and uses PAX extensions for long Unicode paths and files larger than 8 GiB. Hidden files, simple `.gitignore` patterns, and common Unity/Unreal/Godot generated folders (`Library`, `Intermediate`, `DerivedDataCache`, `.godot`, and related folders) are skipped by default. Use `--include-generated` to include those folders. Unreal's `Saved` folder is retained because it can contain backups and logs. Symlinks are never followed. Empty directories are not stored. The output must be outside the input folder and must not already exist. Already-compressed video and image files are copied as-is, so the archive can be large.
+`pack` creates an uncompressed tar archive using only Rust's standard library. It streams file contents, preserves relative paths and Unix file permissions, and uses PAX extensions for long Unicode paths and files larger than 8 GiB. `--type` can limit the archive to one or more scan types: `video`, `audio`, `image`, `model`, `texture`, `project`, or `other`. Hidden files, simple `.gitignore` patterns, and common Unity/Unreal/Godot generated folders (`Library`, `Intermediate`, `DerivedDataCache`, `.godot`, and related folders) are skipped by default. Use `--include-generated` to include those folders. Unreal's `Saved` folder is retained because it can contain backups and logs. Symlinks are never followed. Empty directories are not stored. The output must be outside the input folder and must not already exist. Already-compressed video and image files are copied as-is, so the archive can be large.
 
 ## Cross-platform roadmap
 
