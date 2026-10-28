@@ -12015,7 +12015,7 @@ fn run_pack(args: &[String]) -> Result<(), String> {
             }
             "--help" | "-h" => {
                 println!(
-                    "Usage: mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--exclude-path-contains TEXT ...] [--include-hidden] [--include-generated] [--dry-run] [--json] [--list]\n\nCreate an uncompressed, stream-written tar archive. --type accepts comma-separated scan types: video, audio, image, model, texture, project, other. --extension accepts comma-separated extensions such as mov,mxf; use none for files without an extension. --min-size and --max-size accept bytes or K/M/G/T binary units. Repeat --exclude-path-contains to omit matching relative paths; matching directory names prune their subtrees. Git-ignored and hidden files are skipped by default. Common Unity, Unreal, and Godot generated folders are excluded unless --include-generated is used. PAX extensions support long paths and files larger than 8 GiB. --json emits a machine-readable result summary; --list includes per-file paths, sizes, and types in text or JSON output."
+                    "Usage: mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--exclude-path-contains TEXT ...] [--include-hidden] [--include-generated] [--dry-run] [--json] [--list]\n\nCreate an uncompressed, stream-written tar archive. --type accepts comma-separated scan types: video, audio, image, model, texture, project, other. --extension accepts comma-separated extensions such as mov,mxf; use none for files without an extension. Matching Unity .meta sidecars are included with selected assets. --min-size and --max-size accept bytes or K/M/G/T binary units. Repeat --exclude-path-contains to omit matching relative paths; matching directory names prune their subtrees. Git-ignored and hidden files are skipped by default. Common Unity, Unreal, and Godot generated folders are excluded unless --include-generated is used. PAX extensions support long paths and files larger than 8 GiB. --json emits a machine-readable result summary; --list includes per-file paths, sizes, and types in text or JSON output."
                 );
                 return Ok(());
             }
@@ -12114,6 +12114,71 @@ fn run_pack(args: &[String]) -> Result<(), String> {
             Ok(())
         },
     )?;
+    let selected_path_keys = records
+        .iter()
+        .map(|record| output_path_collision_key(&record.path))
+        .collect::<HashSet<_>>();
+    let mut sidecars_by_directory = HashMap::<PathBuf, HashMap<String, Option<String>>>::new();
+    let mut unity_sidecars = Vec::<PackFileRecord>::new();
+    for record in &records {
+        let Some(asset_name) = record.path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        if strip_ascii_case_insensitive_suffix(asset_name, ".meta").is_some() {
+            continue;
+        }
+        let parent = record.path.parent().unwrap_or(Path::new(".")).to_path_buf();
+        if !sidecars_by_directory.contains_key(&parent) {
+            let directory = root.join(&parent);
+            let entries = fs::read_dir(&directory)
+                .map_err(|error| format!("cannot read directory {}: {error}", directory.display()))?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|error| {
+                    format!("cannot read directory {}: {error}", directory.display())
+                })?;
+            sidecars_by_directory.insert(parent.clone(), collect_unity_meta_sidecars(&entries));
+        }
+        let sidecar_name = match sidecars_by_directory
+            .get(&parent)
+            .and_then(|sidecars| sidecars.get(&unity_meta_asset_key(asset_name)))
+        {
+            Some(Some(name)) => name,
+            Some(None) => {
+                return Err(format!(
+                    "ambiguous Unity .meta sidecars for {}",
+                    record.relative
+                ));
+            }
+            None => continue,
+        };
+        let relative_path = parent.join(sidecar_name);
+        let path_key = output_path_collision_key(&relative_path);
+        if selected_path_keys.contains(&path_key) {
+            continue;
+        }
+        let relative = relative_path.to_string_lossy().replace('\\', "/");
+        let relative_lower = relative.to_lowercase();
+        if exclude_path_contains_lower
+            .iter()
+            .any(|value| relative_lower.contains(value))
+        {
+            continue;
+        }
+        let sidecar_path = root.join(&relative_path);
+        let metadata = fs::symlink_metadata(&sidecar_path)
+            .map_err(|error| format!("cannot inspect {}: {error}", sidecar_path.display()))?;
+        if !metadata.is_file() || metadata.file_type().is_symlink() {
+            continue;
+        }
+        unity_sidecars.push(PackFileRecord {
+            relative,
+            path: relative_path,
+            size: metadata.len(),
+            modified: metadata.modified().ok(),
+            kind: Kind::Other,
+        });
+    }
+    records.extend(unity_sidecars);
     let mut portable_names = HashMap::<String, (usize, usize, bool)>::with_capacity(records.len());
     let mut portable_prefix = String::new();
     let mut total_bytes = 0_u64;
