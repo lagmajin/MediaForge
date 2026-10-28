@@ -3404,27 +3404,26 @@ fn snapshot_csv_event(
     relative: &str,
     old: Option<SnapshotEntry>,
     new: Option<SnapshotEntry>,
-) -> Vec<String> {
+) -> [String; 16] {
     let size_delta = match (old, new) {
         (Some(old), Some(new)) => i128::from(new.size) - i128::from(old.size),
         (None, Some(new)) => i128::from(new.size),
         (Some(old), None) => -i128::from(old.size),
         (None, None) => 0,
     };
-    let mut values = Vec::with_capacity(16);
-    values.extend([
-        change.to_owned(),
-        classify(Path::new(relative)).as_str().to_owned(),
-        relative.to_owned(),
-        old.map_or(String::new(), |entry| entry.size.to_string()),
-        new.map_or(String::new(), |entry| entry.size.to_string()),
-        size_delta.to_string(),
-        old.and_then(|entry| entry.modified_ns)
-            .map_or(String::new(), |value| value.to_string()),
-        new.and_then(|entry| entry.modified_ns)
-            .map_or(String::new(), |value| value.to_string()),
-    ]);
-    values.resize_with(16, String::new);
+    let mut values: [String; 16] = std::array::from_fn(|_| String::new());
+    values[0] = change.to_owned();
+    values[1] = classify(Path::new(relative)).as_str().to_owned();
+    values[2] = relative.to_owned();
+    values[3] = old.map_or(String::new(), |entry| entry.size.to_string());
+    values[4] = new.map_or(String::new(), |entry| entry.size.to_string());
+    values[5] = size_delta.to_string();
+    values[6] = old
+        .and_then(|entry| entry.modified_ns)
+        .map_or(String::new(), |value| value.to_string());
+    values[7] = new
+        .and_then(|entry| entry.modified_ns)
+        .map_or(String::new(), |value| value.to_string());
     values
 }
 
