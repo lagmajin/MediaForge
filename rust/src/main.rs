@@ -4765,12 +4765,15 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
             .map(|record| u128::from(record.size))
             .sum::<u128>();
         if json {
-            println!(
-                "{{\"type\":\"snapshot\",\"root\":{},\"output\":{},\"files\":{},\"bytes\":{total_bytes},\"include_hidden\":{use_hidden},\"include_generated\":{use_generated},\"hash\":{use_hash}}}",
-                json_string(&root.to_string_lossy()),
-                json_string(&output.to_string_lossy()),
-                records.len()
-            );
+            write_json_stdout("snapshot JSON", |writer| {
+                writeln!(
+                    writer,
+                    "{{\"type\":\"snapshot\",\"root\":{},\"output\":{},\"files\":{},\"bytes\":{total_bytes},\"include_hidden\":{use_hidden},\"include_generated\":{use_generated},\"hash\":{use_hash}}}",
+                    json_string(&root.to_string_lossy()),
+                    json_string(&output.to_string_lossy()),
+                    records.len()
+                )
+            })?;
         } else {
             println!(
                 "Saved snapshot {} ({} files, {})",
