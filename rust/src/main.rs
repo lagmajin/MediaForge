@@ -7295,34 +7295,7 @@ fn run_proxy_config(args: &[String]) -> Result<(), String> {
     if let Some(preset) = &preset {
         contents.push_str(&format!("preset={preset}\n"));
     }
-    let temporary = parent.join(format!(
-        ".mediaforge-proxy-{}-{}.tmp",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos()
-    ));
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&temporary)
-        .map_err(|error| format!("cannot create temporary settings file: {error}"))?;
-    let write_result = file
-        .write_all(contents.as_bytes())
-        .and_then(|()| file.sync_all());
-    drop(file);
-    if let Err(error) = write_result {
-        let _ = fs::remove_file(&temporary);
-        return Err(format!("could not write proxy settings: {error}"));
-    }
-    move_file_no_replace(&temporary, &path).map_err(|error| {
-        let _ = fs::remove_file(&temporary);
-        format!(
-            "could not publish proxy settings {}: {error}",
-            path.display()
-        )
-    })?;
+    write_new_file_atomically(&path, contents.as_bytes(), "proxy settings")?;
     println!(
         "Created proxy settings {} (max width {width}, CRF {resolved_crf}, preset {encoder_preset})",
         path.display()
@@ -9918,14 +9891,7 @@ fn run_gitignore(args: &[String]) -> Result<(), String> {
 
     match current_state {
         EntryState::Missing => {
-            let mut file = OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&gitignore)
-                .map_err(|error| format!("cannot create {}: {error}", gitignore.display()))?;
-            file.write_all(addition.as_bytes())
-                .and_then(|()| file.sync_all())
-                .map_err(|error| format!("could not write {}: {error}", gitignore.display()))?;
+            write_new_file_atomically(&gitignore, addition.as_bytes(), ".gitignore")?;
         }
         EntryState::File => {
             let mut file = OpenOptions::new()
