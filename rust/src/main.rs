@@ -1412,8 +1412,7 @@ fn print_json(
     strict: bool,
 ) -> Result<(), String> {
     let mut by_type: BTreeMap<&str, (u64, u128)> = BTreeMap::new();
-    let mut extensions: BTreeMap<&str, usize> = BTreeMap::new();
-    let mut extension_bytes: BTreeMap<&str, u128> = BTreeMap::new();
+    let mut extensions: BTreeMap<&str, (usize, u128)> = BTreeMap::new();
     let mut by_size: HashMap<u64, usize> = HashMap::new();
     let mut seen_sizes = HashSet::new();
     let mut duplicate_sizes = HashSet::new();
@@ -1423,8 +1422,9 @@ fn print_json(
         let entry = by_type.entry(record.kind.as_str()).or_default();
         entry.0 += 1;
         entry.1 += u128::from(record.size);
-        *extensions.entry(&record.extension).or_default() += 1;
-        *extension_bytes.entry(&record.extension).or_default() += u128::from(record.size);
+        let extension = extensions.entry(&record.extension).or_default();
+        extension.0 += 1;
+        extension.1 += u128::from(record.size);
         if include_same_size {
             *by_size.entry(record.size).or_default() += 1;
         } else if !seen_sizes.insert(record.size) {
@@ -1515,8 +1515,8 @@ fn print_json(
     }
     println!("  }},\n  \"extensions\": {{");
     let mut ext_sorted: Vec<_> = extensions.iter().collect();
-    ext_sorted.sort_by(|a, b| b.1.cmp(a.1).then_with(|| a.0.cmp(b.0)));
-    for (index, (extension, count)) in ext_sorted.iter().enumerate() {
+    ext_sorted.sort_by(|a, b| b.1.0.cmp(&a.1.0).then_with(|| a.0.cmp(b.0)));
+    for (index, (extension, (count, _))) in ext_sorted.iter().enumerate() {
         let comma = if index + 1 == ext_sorted.len() {
             ""
         } else {
@@ -1525,8 +1525,8 @@ fn print_json(
         println!("    {}: {}{}", json_string(extension), count, comma);
     }
     println!("  }},\n  \"extension_bytes\": {{");
-    for (index, (extension, bytes)) in extension_bytes.iter().enumerate() {
-        let comma = if index + 1 == extension_bytes.len() {
+    for (index, (extension, (_, bytes))) in extensions.iter().enumerate() {
+        let comma = if index + 1 == extensions.len() {
             ""
         } else {
             ","
