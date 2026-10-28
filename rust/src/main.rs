@@ -11036,6 +11036,29 @@ fn run_sequence(args: &[String]) -> Result<(), String> {
     } else {
         sort_entries(&mut entries);
     }
+    let mut sidecars_by_asset = HashMap::<String, Option<String>>::new();
+    for entry in &entries {
+        let file_name = entry.file_name();
+        let Some(file_name) = file_name.to_str() else {
+            continue;
+        };
+        let Some(asset_name) = strip_ascii_case_insensitive_suffix(file_name, ".meta") else {
+            continue;
+        };
+        let key = if cfg!(any(target_os = "windows", target_os = "macos")) {
+            asset_name.to_lowercase()
+        } else {
+            asset_name.to_owned()
+        };
+        match sidecars_by_asset.entry(key) {
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                entry.insert(Some(file_name.to_owned()));
+            }
+            std::collections::hash_map::Entry::Occupied(mut entry) => {
+                entry.insert(None);
+            }
+        }
+    }
     let mut moves = Vec::<PlannedMove>::new();
     let mut skipped = 0_usize;
     let mut collision_examples = Vec::<(String, String)>::new();
@@ -11118,7 +11141,23 @@ fn run_sequence(args: &[String]) -> Result<(), String> {
             skipped += 1;
             continue;
         };
-        let sidecar_name = format!("{name_text}.meta");
+        let sidecar_key = if cfg!(any(target_os = "windows", target_os = "macos")) {
+            name_text.to_lowercase()
+        } else {
+            name_text.to_owned()
+        };
+        let sidecar_name = match sidecars_by_asset.get(&sidecar_key) {
+            Some(Some(sidecar_name)) => sidecar_name.clone(),
+            Some(None) => {
+                skipped += 1;
+                collision_count += 1;
+                if collision_examples.len() < 100 {
+                    collision_examples.push((from_text, "ambiguous_sidecar".to_owned()));
+                }
+                continue;
+            }
+            None => format!("{name_text}.meta"),
+        };
         let sidecar = root.join(&sidecar_name);
         let sidecar_state = entry_state(&sidecar)
             .map_err(|error| format!("cannot inspect sidecar {}: {error}", sidecar.display()))?;
