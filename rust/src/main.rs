@@ -3749,20 +3749,31 @@ fn snapshot_entries_equal(old: SnapshotEntry, new: SnapshotEntry, hash_content: 
     }
 }
 
-fn snapshot_records_contain_path(records: &[SnapshotFileRecord], relative: &str) -> bool {
+fn snapshot_records_contain_sorted_path(
+    records: &[SnapshotFileRecord],
+    relative: &str,
+    cursor: &mut usize,
+) -> bool {
+    while *cursor < records.len() && records[*cursor].relative.as_str() < relative {
+        *cursor += 1;
+    }
     records
-        .binary_search_by(|record| record.relative.as_str().cmp(relative))
-        .is_ok()
+        .get(*cursor)
+        .is_some_and(|record| record.relative == relative)
 }
 
-fn snapshot_entries_find<'a>(
+fn snapshot_entries_find_sorted<'a>(
     entries: &'a SnapshotEntries,
     relative: &str,
+    cursor: &mut usize,
 ) -> Option<&'a SnapshotEntry> {
+    while *cursor < entries.len() && entries[*cursor].0.as_str() < relative {
+        *cursor += 1;
+    }
     entries
-        .binary_search_by(|(path, _)| path.as_str().cmp(relative))
-        .ok()
-        .map(|index| &entries[index].1)
+        .get(*cursor)
+        .filter(|(path, _)| path == relative)
+        .map(|(_, entry)| entry)
 }
 
 fn snapshot_path_is_valid(path: &str) -> bool {
@@ -4471,11 +4482,12 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
     let mut modified_size_delta_bytes = 0_i128;
     let mut by_type = BTreeMap::<&'static str, SnapshotTypeStats>::new();
     let mut by_size = BTreeMap::<&'static str, SnapshotSizeStats>::new();
+    let mut old_cursor = 0;
     for (record, current) in records.iter().zip(&current_entries) {
         let relative = record.relative.as_str();
         let asset_type = classify(Path::new(relative)).as_str();
         let stats = by_type.entry(asset_type).or_default();
-        match snapshot_entries_find(&old_entries, relative) {
+        match snapshot_entries_find_sorted(&old_entries, relative, &mut old_cursor) {
             None => {
                 let size_stats = by_size.entry(size_category(current.size)).or_default();
                 added += 1;
@@ -4501,8 +4513,9 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
             }
         }
     }
+    let mut current_cursor = 0;
     for (relative, previous) in &old_entries {
-        if !snapshot_records_contain_path(&records, relative) {
+        if !snapshot_records_contain_sorted_path(&records, relative, &mut current_cursor) {
             removed += 1;
             removed_bytes += u128::from(previous.size);
             let asset_type = classify(Path::new(relative)).as_str();
@@ -4556,9 +4569,11 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
             ],
         )?;
         if !summary_only {
+            let mut old_cursor = 0;
             for (record, current) in records.iter().zip(&current_entries) {
                 let relative = record.relative.as_str();
-                let old = snapshot_entries_find(&old_entries, relative).copied();
+                let old =
+                    snapshot_entries_find_sorted(&old_entries, relative, &mut old_cursor).copied();
                 let change = match old {
                     None => "added",
                     Some(previous) if !snapshot_entries_equal(previous, *current, use_hash) => {
@@ -4568,8 +4583,9 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
                 };
                 write_snapshot_csv_event(&mut stdout, change, relative, old, Some(*current))?;
             }
+            let mut current_cursor = 0;
             for (relative, old) in &old_entries {
-                if !snapshot_records_contain_path(&records, relative) {
+                if !snapshot_records_contain_sorted_path(&records, relative, &mut current_cursor) {
                     write_snapshot_csv_event(&mut stdout, "removed", relative, Some(*old), None)?;
                 }
             }
@@ -4613,9 +4629,10 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
         let stdout = io::stdout();
         let mut output = io::BufWriter::with_capacity(64 * 1024, stdout.lock());
         if !summary_only {
+            let mut old_cursor = 0;
             for (record, current) in records.iter().zip(&current_entries) {
                 let relative = record.relative.as_str();
-                let old = snapshot_entries_find(&old_entries, relative);
+                let old = snapshot_entries_find_sorted(&old_entries, relative, &mut old_cursor);
                 let kind = match old {
                     None => "added",
                     Some(previous) if !snapshot_entries_equal(*previous, *current, use_hash) => {
@@ -4631,8 +4648,9 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
                     Some(*current),
                 )?;
             }
+            let mut current_cursor = 0;
             for (relative, old) in &old_entries {
-                if snapshot_records_contain_path(&records, relative) {
+                if snapshot_records_contain_sorted_path(&records, relative, &mut current_cursor) {
                     continue;
                 }
                 write_snapshot_json_event(&mut output, "removed", relative, Some(*old), None)?;
@@ -4706,10 +4724,11 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
             );
         }
         if !summary_only {
+            let mut old_cursor = 0;
             for (record, current) in records.iter().zip(&current_entries) {
                 let relative = record.relative.as_str();
                 let asset_type = classify(Path::new(relative)).as_str();
-                match snapshot_entries_find(&old_entries, relative) {
+                match snapshot_entries_find_sorted(&old_entries, relative, &mut old_cursor) {
                     None => println!(
                         "  added    {asset_type:<9} {:>10}  {relative}",
                         human_size(current.size)
@@ -4722,8 +4741,9 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
                     Some(_) => {}
                 }
             }
+            let mut current_cursor = 0;
             for (relative, previous) in &old_entries {
-                if !snapshot_records_contain_path(&records, relative) {
+                if !snapshot_records_contain_sorted_path(&records, relative, &mut current_cursor) {
                     println!(
                         "  removed  {:<9} {:>10}  {relative}",
                         classify(Path::new(relative)).as_str(),
