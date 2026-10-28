@@ -5314,7 +5314,7 @@ fn fraction_ceil_scaled(fraction: &str, multiplier: u128) -> u128 {
 
 fn print_help() {
     println!(
-        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge doctor [--json] [--strict]\n  mediaforge scan-config <init|validate|show> [FILE] [--json]\n  mediaforge scan [PATH] [--json|--csv] [--csv-info] [--show-filters] [--include-hidden] [--strict] [--no-same-size] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--modified-since UNIX_SECONDS] [--modified-until UNIX_SECONDS] [--modified-within DURATION] [--path-contains TEXT ...] [--exclude-path-contains TEXT ...] [--extension EXTENSIONS ...] [--largest N] [--sort path|size|modified] [--settings FILE]\n  mediaforge dupes [PATH] [--json] [--summary] [--include-hidden] [--exclude-path-contains TEXT ...] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--top-groups N] [--jobs N]\n  mediaforge probe <FILE> [--compact] [--summary]\n  mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--type video|audio] [--min-size SIZE] [--max-size SIZE] [--jobs N] [--summary] [--compare] [--csv]\n  mediaforge storyboard <VIDEO> --output <IMAGE> [--interval SECONDS] [--columns N] [--rows N] [--width PIXELS]\n  mediaforge scene-detect-dir <PATH> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--summary] [--fps RATE] [--extension EXTENSIONS] [--include-hidden] [--jobs N]\n  mediaforge scene-detect <VIDEO> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--format jsonl|csv] [--fps RATE]\n  mediaforge proxy <VIDEO> --output <FILE.mp4> [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge proxy-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET] [--jobs N] [--skip-existing] [--json]\n  mediaforge proxy-config init [FILE] [--profile fast|balanced|quality] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge extract-audio <VIDEO> --output <FILE> [--format mp3|wav|flac] [--bitrate RATE] [--stream N]\n  mediaforge extract-audio-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--format mp3|wav|flac] [--bitrate RATE] [--stream N] [--jobs N] [--skip-existing] [--json]\n  mediaforge snapshot [PATH] (--output FILE [--overwrite] | --diff FILE [--update]) [--json|--csv] [--summary] [--include-hidden] [--include-generated] [--hash] [--jobs N] [--fail-on-change]\n  mediaforge project [PATH] [--json] [--no-cache-sizes]\n  mediaforge unity-meta [PROJECT_PATH] [--json] [--summary] [--include-hidden]\n  mediaforge gitignore [PATH] [--apply] [--json]\n  mediaforge organize [PATH] [--by type|extension|size] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--apply]\n  mediaforge rename [PATH] [--replace OLD NEW] [--prefix TEXT] [--suffix TEXT] [--extension-case keep|lower|upper] [--extension EXTENSIONS] [--include-hidden] [--json] [--apply]
+        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge doctor [--json] [--strict]\n  mediaforge scan-config <init|validate|show> [FILE] [--json]\n  mediaforge scan [PATH] [--json|--csv] [--csv-info] [--show-filters] [--include-hidden] [--strict] [--no-same-size] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--modified-since UNIX_SECONDS] [--modified-until UNIX_SECONDS] [--modified-within DURATION] [--path-contains TEXT ...] [--exclude-path-contains TEXT ...] [--extension EXTENSIONS ...] [--largest N] [--sort path|size|modified] [--settings FILE]\n  mediaforge dupes [PATH] [--json] [--summary] [--include-hidden] [--exclude-path-contains TEXT ...] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--top-groups N] [--jobs N]\n  mediaforge probe <FILE> [--compact] [--summary]\n  mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--type video|audio] [--min-size SIZE] [--max-size SIZE] [--jobs N] [--summary] [--compare] [--csv]\n  mediaforge storyboard <VIDEO> --output <IMAGE> [--interval SECONDS] [--columns N] [--rows N] [--width PIXELS]\n  mediaforge scene-detect-dir <PATH> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--summary] [--fps RATE] [--extension EXTENSIONS] [--include-hidden] [--jobs N]\n  mediaforge scene-detect <VIDEO> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--format jsonl|csv] [--fps RATE]\n  mediaforge proxy <VIDEO> --output <FILE.mp4> [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge proxy-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET] [--jobs N] [--skip-existing] [--json]\n  mediaforge proxy-config init [FILE] [--profile fast|balanced|quality] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge extract-audio <VIDEO> --output <FILE> [--format mp3|wav|flac] [--bitrate RATE] [--stream N]\n  mediaforge extract-audio-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--format mp3|wav|flac] [--bitrate RATE] [--stream N] [--jobs N] [--skip-existing] [--json]\n  mediaforge snapshot [PATH] (--output FILE [--overwrite] | --diff FILE [--update]) [--json|--csv] [--summary] [--include-hidden] [--include-generated] [--hash] [--jobs N] [--fail-on-change]\n  mediaforge project [PATH] [--json] [--no-cache-sizes] [--no-editor-files]\n  mediaforge unity-meta [PROJECT_PATH] [--json] [--summary] [--include-hidden]\n  mediaforge gitignore [PATH] [--apply] [--json]\n  mediaforge organize [PATH] [--by type|extension|size] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--apply]\n  mediaforge rename [PATH] [--replace OLD NEW] [--prefix TEXT] [--suffix TEXT] [--extension-case keep|lower|upper] [--extension EXTENSIONS] [--include-hidden] [--json] [--apply]
   mediaforge sequence [PATH] [--prefix NAME] [--start N] [--padding N] [--extension EXTENSIONS] [--include-hidden] [--natural] [--json] [--apply]\n  mediaforge undo [PATH] [--json]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--exclude-path-contains TEXT ...] [--include-hidden] [--include-generated] [--dry-run] [--json] [--list]\n  mediaforge --version\n  mediaforge --help"
     );
 }
@@ -8796,14 +8796,16 @@ fn godot_project_features(contents: &str) -> Vec<String> {
 fn run_project(args: &[String]) -> Result<(), String> {
     let mut json = false;
     let mut cache_sizes = true;
+    let mut editor_files = true;
     let mut path = None;
     for arg in args {
         match arg.as_str() {
             "--json" => json = true,
             "--no-cache-sizes" => cache_sizes = false,
+            "--no-editor-files" => editor_files = false,
             "--help" | "-h" => {
                 println!(
-                    "Usage: mediaforge project [PATH] [--json] [--no-cache-sizes]\n\nInspect Unity, Unreal, Godot, Blender and video-editor project markers and report generated cache sizes. --no-cache-sizes skips recursive cache folder measurement for a faster marker-only inspection. This command is read-only."
+                    "Usage: mediaforge project [PATH] [--json] [--no-cache-sizes] [--no-editor-files]\n\nInspect Unity, Unreal, Godot, Blender and video-editor project markers and report generated cache sizes. --no-cache-sizes skips recursive cache folder measurement. --no-editor-files also skips the recursive search for editor project files, leaving a fast project-marker inspection. This command is read-only."
                 );
                 return Ok(());
             }
@@ -8913,15 +8915,17 @@ fn run_project(args: &[String]) -> Result<(), String> {
     };
 
     let mut project_files = Vec::<(String, &'static str)>::new();
-    let ignored = ignored_by_git(&root)?;
-    let mut pending = vec![(
-        root.clone(),
-        Arc::<[IgnoreRule]>::from(ignored),
-        Some(root_entries),
-    )];
-    while let Some((directory, active_ignored, preloaded_entries)) = pending.pop() {
-        let mut process_entry =
-            |entry: fs::DirEntry, file_type: fs::FileType| -> Result<(), String> {
+    if editor_files {
+        let ignored = ignored_by_git(&root)?;
+        let mut pending = vec![(
+            root.clone(),
+            Arc::<[IgnoreRule]>::from(ignored),
+            Some(root_entries),
+        )];
+        while let Some((directory, active_ignored, preloaded_entries)) = pending.pop() {
+            let mut process_entry = |entry: fs::DirEntry,
+                                     file_type: fs::FileType|
+             -> Result<(), String> {
                 let path = entry.path();
                 if file_type.is_symlink() {
                     return Ok(());
@@ -8965,28 +8969,29 @@ fn run_project(args: &[String]) -> Result<(), String> {
                 }
                 Ok(())
             };
-        if let Some(entries) = preloaded_entries {
-            for (entry, file_type) in entries {
-                process_entry(entry, file_type)?;
-            }
-        } else {
-            let entries = fs::read_dir(&directory).map_err(|error| {
-                format!(
-                    "cannot read project directory {}: {error}",
-                    directory.display()
-                )
-            })?;
-            for entry in entries {
-                let entry = entry.map_err(|error| {
-                    format!("cannot read entry in {}: {error}", directory.display())
-                })?;
-                let file_type = entry.file_type().map_err(|error| {
+            if let Some(entries) = preloaded_entries {
+                for (entry, file_type) in entries {
+                    process_entry(entry, file_type)?;
+                }
+            } else {
+                let entries = fs::read_dir(&directory).map_err(|error| {
                     format!(
-                        "cannot inspect project entry {}: {error}",
-                        entry.path().display()
+                        "cannot read project directory {}: {error}",
+                        directory.display()
                     )
                 })?;
-                process_entry(entry, file_type)?;
+                for entry in entries {
+                    let entry = entry.map_err(|error| {
+                        format!("cannot read entry in {}: {error}", directory.display())
+                    })?;
+                    let file_type = entry.file_type().map_err(|error| {
+                        format!(
+                            "cannot inspect project entry {}: {error}",
+                            entry.path().display()
+                        )
+                    })?;
+                    process_entry(entry, file_type)?;
+                }
             }
         }
     }
@@ -9076,7 +9081,9 @@ fn run_project(args: &[String]) -> Result<(), String> {
                 write_json_string(&mut writer, missing_path)?;
                 writer.write_all(b"}")?;
             }
-            writer.write_all(b"\n  ],\n  \"cache_sizes_included\": ")?;
+            writer.write_all(b"\n  ],\n  \"editor_project_files_included\": ")?;
+            writer.write_all(if editor_files { b"true" } else { b"false" })?;
+            writer.write_all(b",\n  \"cache_sizes_included\": ")?;
             writer.write_all(if cache_sizes { b"true" } else { b"false" })?;
             writer.write_all(b",\n  \"known_build_or_cache_dirs\": [\n")?;
             for (index, (name, bytes, files)) in caches.iter().enumerate() {
@@ -9145,7 +9152,9 @@ fn run_project(args: &[String]) -> Result<(), String> {
         if !cache_sizes {
             println!("\nCache size measurement skipped.");
         }
-        if !project_files.is_empty() {
+        if !editor_files {
+            println!("\nEditor project file search skipped.");
+        } else if !project_files.is_empty() {
             println!("\nEditor project files");
             for (relative, kind) in &project_files {
                 println!("  {kind:<24} {relative}");
