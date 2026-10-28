@@ -5518,11 +5518,17 @@ fn detect_scene_cuts(
     {
         return Err(format!("expected a video file: {}", input.display()));
     }
-    let timing = probe_video_timing(&input)?;
-    let fps = fps_override.unwrap_or(timing.fps);
+    let timing = if fps_override.is_none() || segments {
+        Some(probe_video_timing(&input)?)
+    } else {
+        None
+    };
+    let fps = fps_override
+        .or_else(|| timing.map(|timing| timing.fps))
+        .expect("video timing is probed when no FPS override is given");
     let nominal_fps = fps.round().max(1.0) as u32;
     let duration = if segments {
-        Some(timing.duration.ok_or_else(|| {
+        Some(timing.and_then(|timing| timing.duration).ok_or_else(|| {
             "ffprobe did not return a valid video duration required by --segments".to_owned()
         })?)
     } else {
