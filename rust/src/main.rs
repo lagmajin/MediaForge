@@ -165,6 +165,73 @@ fn walk_with_skip_dirs(
     }
 }
 
+fn walk_strict(
+    root: &Path,
+    current: &Path,
+    include_hidden: bool,
+    include_generated: bool,
+    skip_dirs: &[&str],
+    records: &mut Vec<FileRecord>,
+) -> Result<(), String> {
+    let entries = fs::read_dir(current)
+        .map_err(|error| format!("cannot read directory {}: {error}", current.display()))?;
+    let mut entries = entries
+        .map(|entry| {
+            entry.map_err(|error| format!("cannot read entry in {}: {error}", current.display()))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    entries.sort_by_key(|entry| entry.file_name().to_string_lossy().to_lowercase());
+    for entry in entries {
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let file_type = entry
+            .file_type()
+            .map_err(|error| format!("cannot inspect {}: {error}", path.display()))?;
+        if file_type.is_symlink() {
+            continue;
+        }
+        if file_type.is_dir() {
+            let generated_hidden =
+                include_generated && PACK_GENERATED_DIRS.contains(&name.as_str());
+            if skip_dirs.contains(&name.as_str())
+                || (!include_hidden && is_hidden(&name) && !generated_hidden)
+            {
+                continue;
+            }
+            walk_strict(
+                root,
+                &path,
+                include_hidden,
+                include_generated,
+                skip_dirs,
+                records,
+            )?;
+        } else if file_type.is_file() && (include_hidden || !is_hidden(&name)) {
+            let metadata = entry
+                .metadata()
+                .map_err(|error| format!("cannot inspect {}: {error}", path.display()))?;
+            let relative = path
+                .strip_prefix(root)
+                .map_err(|error| format!("cannot relativize {}: {error}", path.display()))?
+                .to_string_lossy()
+                .replace('\\', "/");
+            let extension = path
+                .extension()
+                .and_then(|value| value.to_str())
+                .map(|value| format!(".{}", value.to_ascii_lowercase()))
+                .unwrap_or_else(|| "[no extension]".to_owned());
+            records.push(FileRecord {
+                relative,
+                path: path.clone(),
+                size: metadata.len(),
+                kind: classify(&path),
+                extension,
+            });
+        }
+    }
+    Ok(())
+}
+
 fn ignored_by_git(root: &Path) -> HashSet<String> {
     let Ok(text) = fs::read_to_string(root.join(".gitignore")) else {
         return HashSet::new();
@@ -1727,13 +1794,14 @@ fn run_pack(args: &[String]) -> Result<(), String> {
     if !include_generated {
         skip_dirs.extend_from_slice(PACK_GENERATED_DIRS);
     }
-    walk_with_skip_dirs(
+    walk_strict(
         &root,
         &root,
-        include_hidden || include_generated,
+        include_hidden,
+        include_generated,
         &skip_dirs,
         &mut records,
-    );
+    )?;
     records.retain(|record| !is_ignored(&record.relative, &ignored));
     if let Some(types) = &selected_types {
         records.retain(|record| types.contains(&record.kind));
