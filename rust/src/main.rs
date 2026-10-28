@@ -1181,9 +1181,13 @@ fn run_probe(args: &[String]) -> Result<(), String> {
         }
     }
     let path = path.ok_or_else(|| "probe requires a file path".to_owned())?;
-    if !path.is_file() {
-        return Err(format!("file does not exist: {}", path.display()));
+    let metadata = fs::metadata(&path)
+        .map_err(|error| format!("cannot access media file {}: {error}", path.display()))?;
+    if !metadata.is_file() {
+        return Err(format!("expected a media file: {}", path.display()));
     }
+    let path = fs::canonicalize(&path)
+        .map_err(|error| format!("cannot resolve media file {}: {error}", path.display()))?;
 
     let mut command = Command::new("ffprobe");
     command.args(["-v", "error", "-show_format", "-show_streams"]);
@@ -1210,7 +1214,7 @@ fn run_probe(args: &[String]) -> Result<(), String> {
     }
     let json = String::from_utf8(output.stdout)
         .map_err(|error| format!("ffprobe returned invalid UTF-8: {error}"))?;
-    print!("{json}");
+    println!("{json}");
     Ok(())
 }
 
