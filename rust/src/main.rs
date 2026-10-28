@@ -4,7 +4,7 @@ use std::env;
 use std::fmt::Write as FmtWrite;
 use std::fs::{self, File, OpenOptions};
 use std::hash::{DefaultHasher, Hash, Hasher};
-use std::io::{self, BufRead, BufReader, BufWriter, Cursor, Read, Seek, Write};
+use std::io::{self, BufReader, BufWriter, Cursor, Read, Seek, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 use std::sync::{Arc, LazyLock};
@@ -308,6 +308,18 @@ fn read_retry_interrupted(reader: &mut impl Read, buffer: &mut [u8]) -> io::Resu
             result => return result,
         }
     }
+}
+
+fn read_up_to_full_or_eof(reader: &mut impl Read, buffer: &mut [u8]) -> io::Result<usize> {
+    let mut filled = 0;
+    while filled < buffer.len() {
+        let count = read_retry_interrupted(reader, &mut buffer[filled..])?;
+        if count == 0 {
+            break;
+        }
+        filled += count;
+    }
+    Ok(filled)
 }
 
 fn sort_entries(entries: &mut Vec<fs::DirEntry>) {
@@ -2232,28 +2244,19 @@ fn files_identical(left: &Path, right: &Path, size: u64) -> io::Result<bool> {
     let capacity = usize::try_from(size)
         .unwrap_or(MAX_BUFFER_SIZE)
         .clamp(DEFAULT_BUFFER_SIZE, MAX_BUFFER_SIZE);
-    let mut left = BufReader::with_capacity(capacity, fs::File::open(left)?);
-    let mut right = BufReader::with_capacity(capacity, fs::File::open(right)?);
+    let mut left = fs::File::open(left)?;
+    let mut right = fs::File::open(right)?;
+    let mut left_buffer = vec![0_u8; capacity];
+    let mut right_buffer = vec![0_u8; capacity];
     loop {
-        let (left_empty, right_empty, count, equal) = {
-            let left_chunk = left.fill_buf()?;
-            let right_chunk = right.fill_buf()?;
-            let count = left_chunk.len().min(right_chunk.len());
-            (
-                left_chunk.is_empty(),
-                right_chunk.is_empty(),
-                count,
-                left_chunk[..count] == right_chunk[..count],
-            )
-        };
-        if left_empty || right_empty {
-            return Ok(left_empty && right_empty);
-        }
-        if !equal {
+        let left_count = read_up_to_full_or_eof(&mut left, &mut left_buffer)?;
+        let right_count = read_up_to_full_or_eof(&mut right, &mut right_buffer)?;
+        if left_count != right_count || left_buffer[..left_count] != right_buffer[..right_count] {
             return Ok(false);
         }
-        left.consume(count);
-        right.consume(count);
+        if left_count == 0 {
+            return Ok(true);
+        }
     }
 }
 
