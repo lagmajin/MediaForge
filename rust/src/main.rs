@@ -12923,7 +12923,7 @@ fn run_doctor(args: &[String]) -> Result<(), String> {
             "--strict" => strict = true,
             "--help" | "-h" => {
                 println!(
-                    "Usage: mediaforge doctor [--json] [--strict] [--strict]\n\nCheck whether ffmpeg and ffprobe are available on PATH, and whether FFmpeg includes the H.264/AAC, MP3, WAV, and FLAC encoders used by MediaForge. --strict returns a nonzero exit status if any check fails."
+                    "Usage: mediaforge doctor [--json] [--strict]\n\nCheck whether ffmpeg and ffprobe are available on PATH, and whether FFmpeg includes the H.264/AAC, MP3, WAV, and FLAC encoders used by MediaForge. --strict returns a nonzero exit status if any check fails."
                 );
                 return Ok(());
             }
