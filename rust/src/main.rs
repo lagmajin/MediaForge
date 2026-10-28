@@ -563,20 +563,6 @@ struct StrictWalkFilters<'a> {
     omit_extension: bool,
 }
 
-fn extension_matches_filter(extension: Option<&str>, accepted: &HashSet<String>) -> bool {
-    accepted.iter().any(|candidate| {
-        if candidate == "[no extension]" {
-            extension.is_none()
-        } else {
-            extension.is_some_and(|extension| {
-                candidate
-                    .strip_prefix('.')
-                    .is_some_and(|candidate| candidate.eq_ignore_ascii_case(extension))
-            })
-        }
-    })
-}
-
 fn walk_strict_filtered(
     root: &Path,
     current: &Path,
@@ -674,19 +660,19 @@ where
                     continue;
                 }
                 let extension_value = path.extension().and_then(|value| value.to_str());
-                if filters
-                    .extensions
-                    .is_some_and(|values| !extension_matches_filter(extension_value, values))
-                {
-                    continue;
-                }
-                let extension = if filters.omit_extension {
+                let extension = if filters.omit_extension && filters.extensions.is_none() {
                     String::new()
                 } else {
                     extension_value
                         .map(|value| format!(".{}", value.to_ascii_lowercase()))
                         .unwrap_or_else(|| "[no extension]".to_owned())
                 };
+                if filters
+                    .extensions
+                    .is_some_and(|values| !values.contains(&extension))
+                {
+                    continue;
+                }
                 let metadata = entry
                     .metadata()
                     .map_err(|error| format!("cannot inspect {}: {error}", path.display()))?;
