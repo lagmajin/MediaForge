@@ -2158,6 +2158,29 @@ struct VerifiedDuplicateGroup {
     count: usize,
 }
 
+struct SampleSignatureBucket {
+    first: VerifiedDuplicateGroup,
+    collisions: Option<Vec<VerifiedDuplicateGroup>>,
+}
+
+impl SampleSignatureBucket {
+    fn groups_mut(&mut self) -> impl Iterator<Item = &mut VerifiedDuplicateGroup> {
+        std::iter::once(&mut self.first).chain(self.collisions.iter_mut().flatten())
+    }
+
+    fn push_collision(&mut self, group: VerifiedDuplicateGroup) {
+        if let Some(collisions) = &mut self.collisions {
+            collisions.push(group);
+        } else {
+            self.collisions = Some(vec![group]);
+        }
+    }
+
+    fn into_groups(self) -> impl Iterator<Item = VerifiedDuplicateGroup> {
+        std::iter::once(self.first).chain(self.collisions.unwrap_or_default())
+    }
+}
+
 struct DuplicateSizeBucket<'a> {
     first: Option<Cow<'a, str>>,
     duplicates: Option<Vec<Cow<'a, str>>>,
@@ -2401,14 +2424,28 @@ fn run_dupes(args: &[String]) -> Result<(), String> {
     let mut duplicate_files = 0_usize;
     let mut reclaimable = 0_u128;
     for (size, paths) in duplicate_sizes {
-        let mut by_sample: HashMap<u64, Vec<VerifiedDuplicateGroup>> = HashMap::new();
+        let mut by_sample: HashMap<u64, SampleSignatureBucket> = HashMap::new();
         for_each_sample_signature(&root, &paths, size, jobs, |index, signature| {
             let relative = paths[index].as_ref();
             let signature = signature?;
             let candidate = root.join(relative);
-            let candidates = by_sample.entry(signature).or_default();
+            let entry = by_sample.entry(signature);
+            let bucket = match entry {
+                std::collections::hash_map::Entry::Vacant(entry) => {
+                    entry.insert(SampleSignatureBucket {
+                        first: VerifiedDuplicateGroup {
+                            representative: index,
+                            files: None,
+                            count: 1,
+                        },
+                        collisions: None,
+                    });
+                    return Ok(());
+                }
+                std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
+            };
             let mut matched = false;
-            for group in candidates.iter_mut() {
+            for group in bucket.groups_mut() {
                 let representative = root.join(paths[group.representative].as_ref());
                 match files_identical(&representative, &candidate, size) {
                     Ok(true) => {
@@ -2432,7 +2469,7 @@ fn run_dupes(args: &[String]) -> Result<(), String> {
                 }
             }
             if !matched {
-                candidates.push(VerifiedDuplicateGroup {
+                bucket.push_collision(VerifiedDuplicateGroup {
                     representative: index,
                     files: None,
                     count: 1,
@@ -2442,7 +2479,7 @@ fn run_dupes(args: &[String]) -> Result<(), String> {
         })?;
         for group in by_sample
             .into_values()
-            .flatten()
+            .flat_map(SampleSignatureBucket::into_groups)
             .filter(|group| group.count > 1)
         {
             total_groups += 1;
