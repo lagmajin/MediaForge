@@ -4884,17 +4884,11 @@ fn summarize_probe_differences(
         if failure_index > 0 {
             output.push(',');
         }
-        let mut error_fields = BTreeMap::new();
-        let mut cursor = 0;
-        collect_json_scalars(result.as_bytes(), &mut cursor, "", &mut error_fields, 0)?;
-        let error = error_fields
-            .get("error")
-            .map(String::as_str)
-            .unwrap_or("null");
         write!(
             output,
-            "{{\"path\":{},\"error\":{error}}}",
-            json_string(&records[*index].relative)
+            "{{\"path\":{},\"error\":{}}}",
+            json_string(&records[*index].relative),
+            json_string(result)
         )
         .map_err(|error| format!("could not format comparison: {error}"))?;
     }
@@ -5159,7 +5153,7 @@ fn run_probe_dir(args: &[String]) -> Result<(), String> {
                             (true, json, None)
                         }
                         Ok(probe) => (true, String::new(), Some(probe)),
-                        Err(error) => (
+                        Err(error) if stream_results => (
                             false,
                             format!(
                                 "{{\"path\":{},\"ok\":false,\"error\":{}}}",
@@ -5168,6 +5162,7 @@ fn run_probe_dir(args: &[String]) -> Result<(), String> {
                             ),
                             None,
                         ),
+                        Err(error) => (false, error, None),
                     };
                     if !success {
                         failures.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -5208,19 +5203,12 @@ fn run_probe_dir(args: &[String]) -> Result<(), String> {
             .write_all(b"path,ok,error,format_name,duration_seconds,codec_type,codec,profile,width,height,frame_rate,pixel_format,sample_rate,channels,channel_layout,size_bytes,bit_rate\n")
             .map_err(|error| format!("could not write probe CSV header: {error}"))?;
         for (index, success, record, probe) in &results {
-            let error = if *success {
-                String::new()
-            } else {
-                let mut fields = BTreeMap::new();
-                let mut cursor = 0;
-                collect_json_scalars(record.as_bytes(), &mut cursor, "", &mut fields, 0)?;
-                probe_csv_value(&fields, "error").into_owned()
-            };
+            let error = if *success { "" } else { record.as_str() };
             print_probe_csv_row(
                 &mut output,
                 &records[*index].relative,
                 *success,
-                &error,
+                error,
                 probe.as_deref(),
             )?;
         }
