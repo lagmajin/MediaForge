@@ -983,6 +983,69 @@ fn json_top_level_string_field(contents: &str, field: &str) -> Option<String> {
     None
 }
 
+fn parse_godot_string_array(value: &str) -> Vec<String> {
+    let Some((_, array)) = value.split_once('(') else {
+        return Vec::new();
+    };
+    let mut chars = array.chars().peekable();
+    let mut values = Vec::new();
+    while let Some(character) = chars.next() {
+        match character {
+            ')' => break,
+            ',' | ' ' | '\t' | '\r' | '\n' => {}
+            '"' => {
+                let mut value = String::new();
+                let mut closed = false;
+                while let Some(character) = chars.next() {
+                    match character {
+                        '"' => {
+                            closed = true;
+                            break;
+                        }
+                        '\\' => match chars.next() {
+                            Some('n') => value.push('\n'),
+                            Some('r') => value.push('\r'),
+                            Some('t') => value.push('\t'),
+                            Some('"') => value.push('"'),
+                            Some('\\') => value.push('\\'),
+                            Some(other) => {
+                                value.push('\\');
+                                value.push(other);
+                            }
+                            None => return Vec::new(),
+                        },
+                        other => value.push(other),
+                    }
+                }
+                if !closed {
+                    return Vec::new();
+                }
+                values.push(value);
+            }
+            _ => return Vec::new(),
+        }
+    }
+    values
+}
+
+fn godot_project_features(contents: &str) -> Vec<String> {
+    let mut section = "";
+    for line in contents.lines().map(str::trim) {
+        if line.starts_with('[') && line.ends_with(']') {
+            section = &line[1..line.len() - 1];
+            continue;
+        }
+        if section == "application" {
+            if let Some((key, value)) = line.split_once('=') {
+                if key.trim() == "config/features" {
+                    return parse_godot_string_array(value.trim());
+                }
+            }
+        }
+    }
+    Vec::new()
+}
+
 fn run_project(args: &[String]) -> Result<(), String> {
     let mut json = false;
     let mut path = None;
@@ -1079,9 +1142,20 @@ fn run_project(args: &[String]) -> Result<(), String> {
             vec!["Intermediate", "Saved", "DerivedDataCache", "Binaries"],
         ));
     }
-    if root.join("project.godot").is_file() {
+    let godot_project_path = root.join("project.godot");
+    let godot_features = if godot_project_path.is_file() {
+        let contents = fs::read_to_string(&godot_project_path).map_err(|error| {
+            format!(
+                "cannot read Godot project file {}: {error}",
+                godot_project_path.display()
+            )
+        })?;
+        let features = godot_project_features(&contents);
         engines.push(("Godot", vec!["project.godot"], vec![".godot", ".import"]));
-    }
+        features
+    } else {
+        Vec::new()
+    };
 
     let mut project_files = Vec::<(String, &'static str)>::new();
     let ignored = ignored_by_git(&root)?;
@@ -1203,6 +1277,14 @@ fn run_project(args: &[String]) -> Result<(), String> {
             );
         }
         println!("  ],");
+        println!(
+            "  \"godot_features\": [{}],",
+            godot_features
+                .iter()
+                .map(|feature| json_string(feature))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
         println!("  \"missing_required_paths\": [");
         for (index, (engine, missing_path)) in missing.iter().enumerate() {
             let comma = if index + 1 == missing.len() { "" } else { "," };
@@ -1257,6 +1339,9 @@ fn run_project(args: &[String]) -> Result<(), String> {
             } else {
                 println!("Unreal project: {project_file}");
             }
+        }
+        if !godot_features.is_empty() {
+            println!("Godot project features: {}", godot_features.join(", "));
         }
         if !missing.is_empty() {
             println!("\nMissing expected paths");
