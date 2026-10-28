@@ -106,6 +106,7 @@ struct ScanTraversalFilters<'a> {
     extensions: Option<&'a HashSet<String>>,
     path_contains_lower: &'a [String],
     exclude_path_contains_lower: &'a [String],
+    sort_entries_per_directory: bool,
 }
 
 static ASSET_KIND_BY_EXTENSION: LazyLock<Vec<(&'static str, Kind)>> = LazyLock::new(|| {
@@ -428,38 +429,22 @@ fn walk_with_skip_dirs_mode_counted(
                 ));
             }
         };
-        let mut entries = entries
-            .map(|entry| match entry {
-                Ok(entry) => Ok(entry),
-                Err(_) if !strict => {
-                    record_skipped_path(&directory, skipped_paths, skipped_examples);
-                    Err(None)
-                }
-                Err(error) => Err(Some(error)),
-            })
-            .filter_map(|entry| match entry {
-                Ok(entry) => Some(Ok(entry)),
-                Err(None) => None,
-                Err(Some(error)) => Some(Err(error)),
-            })
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|error| format!("cannot read entry in {}: {error}", directory.display()))?;
-        sort_entries(&mut entries);
-        for entry in entries {
+        let mut skipped_entries = Vec::new();
+        let mut process_entry = |entry: fs::DirEntry| -> Result<(), String> {
             let path = entry.path();
             if !include_hidden && is_dot_hidden(&path) {
-                continue;
+                return Ok(());
             }
             let file_type = match entry.file_type() {
                 Ok(file_type) => file_type,
                 Err(_) if !strict => {
-                    record_skipped_path(&path, skipped_paths, skipped_examples);
-                    continue;
+                    skipped_entries.push(path.clone());
+                    return Ok(());
                 }
                 Err(error) => return Err(format!("cannot inspect {}: {error}", path.display())),
             };
             if file_type.is_symlink() {
-                continue;
+                return Ok(());
             }
             let needs_relative_lower = !filters.exclude_path_contains_lower.is_empty()
                 || (!path_filter_satisfied && !filters.path_contains_lower.is_empty());
@@ -497,7 +482,7 @@ fn walk_with_skip_dirs_mode_counted(
                             .is_some_and(|value| value.contains(needle))
                     })
                 {
-                    continue;
+                    return Ok(());
                 }
                 let child_rules = extend_ignore_rules(root, &path, active_ignored.as_ref())?;
                 let child_ignored = match child_rules {
@@ -518,17 +503,17 @@ fn walk_with_skip_dirs_mode_counted(
                             .is_some_and(|value| value.contains(needle))
                     }))
                 {
-                    continue;
+                    return Ok(());
                 }
                 let kind = classify(&path);
                 if filters.kind.is_some_and(|filter| filter != kind) {
-                    continue;
+                    return Ok(());
                 }
                 let extension_value = path.extension().and_then(|value| value.to_str());
                 if filters.extensions.is_some_and(|extensions| {
                     !matches_extension_filter(extension_value, extensions)
                 }) {
-                    continue;
+                    return Ok(());
                 }
                 if !active_ignored.is_empty() {
                     let relative = relative.get_or_insert_with(|| {
@@ -538,27 +523,27 @@ fn walk_with_skip_dirs_mode_counted(
                             .replace('\\', "/")
                     });
                     if is_ignored(relative, &active_ignored) {
-                        continue;
+                        return Ok(());
                     }
                 }
                 let metadata = match entry.metadata() {
                     Ok(metadata) => metadata,
                     Err(_) if !strict => {
-                        record_skipped_path(&path, skipped_paths, skipped_examples);
-                        continue;
+                        skipped_entries.push(path.clone());
+                        return Ok(());
                     }
                     Err(error) => {
                         return Err(format!("cannot inspect {}: {error}", path.display()));
                     }
                 };
                 if !include_hidden && metadata_has_hidden_attribute(&metadata) {
-                    continue;
+                    return Ok(());
                 }
                 let size = metadata.len();
                 if filters.min_size.is_some_and(|minimum| size < minimum)
                     || filters.max_size.is_some_and(|maximum| size > maximum)
                 {
-                    continue;
+                    return Ok(());
                 }
                 let relative = relative.take().unwrap_or_else(|| {
                     path.strip_prefix(root)
@@ -582,7 +567,7 @@ fn walk_with_skip_dirs_mode_counted(
                         .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
                         .map(|duration| duration.as_secs())
                     else {
-                        continue;
+                        return Ok(());
                     };
                     if filters
                         .modified_since
@@ -591,7 +576,7 @@ fn walk_with_skip_dirs_mode_counted(
                             .modified_until
                             .is_some_and(|until| modified_seconds > until)
                     {
-                        continue;
+                        return Ok(());
                     }
                 }
                 records.push(FileRecord {
@@ -607,6 +592,52 @@ fn walk_with_skip_dirs_mode_counted(
                     path: PathBuf::new(),
                 });
             }
+            Ok(())
+        };
+        if filters.sort_entries_per_directory {
+            let mut entries = entries
+                .map(|entry| match entry {
+                    Ok(entry) => Ok(entry),
+                    Err(_) if !strict => {
+                        record_skipped_path(&directory, skipped_paths, skipped_examples);
+                        Err(None)
+                    }
+                    Err(error) => Err(Some(error)),
+                })
+                .filter_map(|entry| match entry {
+                    Ok(entry) => Some(Ok(entry)),
+                    Err(None) => None,
+                    Err(Some(error)) => Some(Err(error)),
+                })
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|error| {
+                    format!("cannot read entry in {}: {error}", directory.display())
+                })?;
+            sort_entries(&mut entries);
+            for entry in entries {
+                process_entry(entry)?;
+            }
+        } else {
+            for entry in entries {
+                let entry = match entry {
+                    Ok(entry) => entry,
+                    Err(_) if !strict => {
+                        record_skipped_path(&directory, skipped_paths, skipped_examples);
+                        continue;
+                    }
+                    Err(error) => {
+                        return Err(format!(
+                            "cannot read entry in {}: {error}",
+                            directory.display()
+                        ));
+                    }
+                };
+                process_entry(entry)?;
+            }
+        }
+        drop(process_entry);
+        for path in skipped_entries {
+            record_skipped_path(&path, skipped_paths, skipped_examples);
         }
     }
     Ok(())
@@ -3033,6 +3064,7 @@ fn run_scan(args: &[String]) -> Result<(), String> {
         extensions: extension_filter.as_ref(),
         path_contains_lower: &path_contains_lower,
         exclude_path_contains_lower: &exclude_path_contains_lower,
+        sort_entries_per_directory: csv_sort.is_none(),
     };
     walk_with_skip_dirs_mode_counted(
         &root,
