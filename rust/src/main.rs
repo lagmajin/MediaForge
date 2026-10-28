@@ -1560,7 +1560,7 @@ fn append_json_string(out: &mut String, value: &str) {
     out.push('"');
 }
 
-fn write_json_string(output: &mut impl Write, value: &str) -> io::Result<()> {
+fn write_json_string<W: Write + ?Sized>(output: &mut W, value: &str) -> io::Result<()> {
     output.write_all(b"\"")?;
     let mut segment_start = 0;
     for (index, character) in value.char_indices() {
@@ -1587,6 +1587,17 @@ fn write_json_string(output: &mut impl Write, value: &str) -> io::Result<()> {
     }
     output.write_all(&value.as_bytes()[segment_start..])?;
     output.write_all(b"\"")
+}
+
+fn write_json_stdout(
+    description: &str,
+    write: impl FnOnce(&mut dyn Write) -> io::Result<()>,
+) -> Result<(), String> {
+    let stdout = io::stdout();
+    let mut output = io::BufWriter::with_capacity(64 * 1024, stdout.lock());
+    write(&mut output)
+        .and_then(|()| output.flush())
+        .map_err(|error| format!("could not write {description}: {error}"))
 }
 
 #[derive(Clone, Copy)]
@@ -10365,28 +10376,33 @@ fn run_organize(args: &[String]) -> Result<(), String> {
     }
 
     if json && !apply {
-        println!(
-            "{{\n  \"root\": {},\n  \"by\": {},\n  \"include_hidden\": {},\n  \"include_generated\": {},\n  \"applied\": {},\n  \"moves\": [",
-            json_string(&root.to_string_lossy()),
-            json_string(by),
-            if include_hidden { "true" } else { "false" },
-            if include_generated { "true" } else { "false" },
-            if apply { "true" } else { "false" }
-        );
-        for (index, movement) in moves.iter().enumerate() {
-            let comma = if index + 1 == moves.len() { "" } else { "," };
-            println!(
-                "    {{\"from\": {}, \"to\": {}}}{}",
-                json_string(&movement.from),
-                json_string(&movement.to),
-                comma
-            );
-        }
-        println!(
-            "  ],\n  \"move_count\": {},\n  \"skipped_count\": {}\n}}",
-            moves.len(),
-            skipped
-        );
+        write_json_stdout("organize JSON", |output| {
+            writeln!(
+                output,
+                "{{\n  \"root\": {},\n  \"by\": {},\n  \"include_hidden\": {},\n  \"include_generated\": {},\n  \"applied\": {},\n  \"moves\": [",
+                json_string(&root.to_string_lossy()),
+                json_string(by),
+                if include_hidden { "true" } else { "false" },
+                if include_generated { "true" } else { "false" },
+                if apply { "true" } else { "false" }
+            )?;
+            for (index, movement) in moves.iter().enumerate() {
+                let comma = if index + 1 == moves.len() { "" } else { "," };
+                writeln!(
+                    output,
+                    "    {{\"from\": {}, \"to\": {}}}{}",
+                    json_string(&movement.from),
+                    json_string(&movement.to),
+                    comma
+                )?;
+            }
+            writeln!(
+                output,
+                "  ],\n  \"move_count\": {},\n  \"skipped_count\": {}\n}}",
+                moves.len(),
+                skipped
+            )
+        })?;
     } else if !json {
         println!(
             "Organize preview by {by}: {} file(s) to move; {skipped} skipped",
@@ -10410,15 +10426,18 @@ fn run_organize(args: &[String]) -> Result<(), String> {
     }
     if moves.is_empty() {
         if json {
-            println!(
-                "{{\"root\": {}, \"by\": {}, \"include_hidden\": {}, \"include_generated\": {}, \"applied\": {}, \"moves\": [], \"move_count\": 0, \"moved_count\": 0, \"skipped_count\": {}, \"result\": \"no_changes\"}}",
-                json_string(&root.to_string_lossy()),
-                json_string(by),
-                if include_hidden { "true" } else { "false" },
-                if include_generated { "true" } else { "false" },
-                if apply { "true" } else { "false" },
-                skipped
-            );
+            write_json_stdout("organize JSON", |output| {
+                writeln!(
+                    output,
+                    "{{\"root\": {}, \"by\": {}, \"include_hidden\": {}, \"include_generated\": {}, \"applied\": {}, \"moves\": [], \"move_count\": 0, \"moved_count\": 0, \"skipped_count\": {}, \"result\": \"no_changes\"}}",
+                    json_string(&root.to_string_lossy()),
+                    json_string(by),
+                    if include_hidden { "true" } else { "false" },
+                    if include_generated { "true" } else { "false" },
+                    if apply { "true" } else { "false" },
+                    skipped
+                )
+            })?;
         } else {
             println!("No files need moving.");
         }
@@ -10466,29 +10485,34 @@ fn run_organize(args: &[String]) -> Result<(), String> {
         ));
     }
     if json {
-        println!(
-            "{{\n  \"root\": {},\n  \"by\": {},\n  \"include_hidden\": {},\n  \"include_generated\": {},\n  \"applied\": true,\n  \"moves\": [",
-            json_string(&root.to_string_lossy()),
-            json_string(by),
-            if include_hidden { "true" } else { "false" },
-            if include_generated { "true" } else { "false" }
-        );
-        for (index, movement) in moves.iter().enumerate() {
-            let comma = if index + 1 == moves.len() { "" } else { "," };
-            println!(
-                "    {{\"from\": {}, \"to\": {}}}{}",
-                json_string(&movement.from),
-                json_string(&movement.to),
-                comma
-            );
-        }
-        println!(
-            "  ],\n  \"move_count\": {},\n  \"moved_count\": {},\n  \"skipped_count\": {},\n  \"result\": \"applied\",\n  \"undo_manifest\": {}\n}}",
-            moves.len(),
-            moved,
-            skipped,
-            json_string(&root.join(ORGANIZE_MANIFEST).to_string_lossy())
-        );
+        write_json_stdout("organize JSON", |output| {
+            writeln!(
+                output,
+                "{{\n  \"root\": {},\n  \"by\": {},\n  \"include_hidden\": {},\n  \"include_generated\": {},\n  \"applied\": true,\n  \"moves\": [",
+                json_string(&root.to_string_lossy()),
+                json_string(by),
+                if include_hidden { "true" } else { "false" },
+                if include_generated { "true" } else { "false" }
+            )?;
+            for (index, movement) in moves.iter().enumerate() {
+                let comma = if index + 1 == moves.len() { "" } else { "," };
+                writeln!(
+                    output,
+                    "    {{\"from\": {}, \"to\": {}}}{}",
+                    json_string(&movement.from),
+                    json_string(&movement.to),
+                    comma
+                )?;
+            }
+            writeln!(
+                output,
+                "  ],\n  \"move_count\": {},\n  \"moved_count\": {},\n  \"skipped_count\": {},\n  \"result\": \"applied\",\n  \"undo_manifest\": {}\n}}",
+                moves.len(),
+                moved,
+                skipped,
+                json_string(&root.join(ORGANIZE_MANIFEST).to_string_lossy())
+            )
+        })?;
     } else {
         println!(
             "Moved {moved} file(s). Undo manifest: {}",
@@ -10601,18 +10625,21 @@ fn run_undo(args: &[String]) -> Result<(), String> {
         remove_organize_manifests(&root)?;
     }
     if json {
-        println!(
-            "{{\n  \"root\": {},\n  \"restored_count\": {},\n  \"conflict_count\": {},\n  \"manifest_retained\": {},\n  \"result\": {}\n}}",
-            json_string(&root.to_string_lossy()),
-            restored,
-            conflicts,
-            if manifest_retained { "true" } else { "false" },
-            json_string(if manifest_retained {
-                "partial"
-            } else {
-                "restored"
-            })
-        );
+        write_json_stdout("undo JSON", |output| {
+            writeln!(
+                output,
+                "{{\n  \"root\": {},\n  \"restored_count\": {},\n  \"conflict_count\": {},\n  \"manifest_retained\": {},\n  \"result\": {}\n}}",
+                json_string(&root.to_string_lossy()),
+                restored,
+                conflicts,
+                if manifest_retained { "true" } else { "false" },
+                json_string(if manifest_retained {
+                    "partial"
+                } else {
+                    "restored"
+                })
+            )
+        })?;
     } else if manifest_retained {
         println!(
             "Restored {restored} file(s); {conflicts} conflict(s) remain. Manifest retained for recovery."
@@ -10946,40 +10973,47 @@ fn run_rename(args: &[String]) -> Result<(), String> {
         });
     }
     if json && !apply {
-        println!(
-            "{{\n  \"root\": {},\n  \"applied\": false,\n  \"moves\": [",
-            json_string(&root.to_string_lossy())
-        );
-        for (position, movement) in moves.iter().enumerate() {
-            println!(
-                "    {{\"from\": {}, \"to\": {}}}{}",
-                json_string(&movement.from),
-                json_string(&movement.to),
-                if position + 1 == moves.len() { "" } else { "," }
-            );
-        }
-        println!(
-            "  ],\n  \"move_count\": {},\n  \"skipped_count\": {},\n  \"collision_count\": {collision_count},\n  \"skipped_examples\": [",
-            moves.len(),
-            skipped
-        );
-        for (position, (path, reason)) in collision_examples.iter().enumerate() {
-            let comma = if position + 1 == collision_examples.len() {
-                ""
-            } else {
-                ","
-            };
-            println!(
-                "    {{\"path\": {}, \"reason\": {}}}{}",
-                json_string(path),
-                json_string(reason),
-                comma
-            );
-        }
-        println!(
-            "  ],\n  \"skipped_examples_truncated\": {}\n}}",
-            collision_count > collision_examples.len()
-        );
+        write_json_stdout("rename JSON", |output| {
+            writeln!(
+                output,
+                "{{\n  \"root\": {},\n  \"applied\": false,\n  \"moves\": [",
+                json_string(&root.to_string_lossy())
+            )?;
+            for (position, movement) in moves.iter().enumerate() {
+                writeln!(
+                    output,
+                    "    {{\"from\": {}, \"to\": {}}}{}",
+                    json_string(&movement.from),
+                    json_string(&movement.to),
+                    if position + 1 == moves.len() { "" } else { "," }
+                )?;
+            }
+            writeln!(
+                output,
+                "  ],\n  \"move_count\": {},\n  \"skipped_count\": {},\n  \"collision_count\": {collision_count},\n  \"skipped_examples\": [",
+                moves.len(),
+                skipped
+            )?;
+            for (position, (path, reason)) in collision_examples.iter().enumerate() {
+                let comma = if position + 1 == collision_examples.len() {
+                    ""
+                } else {
+                    ","
+                };
+                writeln!(
+                    output,
+                    "    {{\"path\": {}, \"reason\": {}}}{}",
+                    json_string(path),
+                    json_string(reason),
+                    comma
+                )?;
+            }
+            writeln!(
+                output,
+                "  ],\n  \"skipped_examples_truncated\": {}\n}}",
+                collision_count > collision_examples.len()
+            )
+        })?;
     } else if !json {
         println!(
             "Rename preview: {} file(s) to rename; {skipped} skipped",
@@ -11003,10 +11037,13 @@ fn run_rename(args: &[String]) -> Result<(), String> {
     }
     if moves.is_empty() {
         if json {
-            println!(
-                "{{\"root\":{},\"applied\":true,\"moves\":[],\"move_count\":0,\"renamed_count\":0,\"skipped_count\":{skipped},\"result\":\"no_changes\"}}",
-                json_string(&root.to_string_lossy())
-            );
+            write_json_stdout("rename JSON", |output| {
+                writeln!(
+                    output,
+                    "{{\"root\":{},\"applied\":true,\"moves\":[],\"move_count\":0,\"renamed_count\":0,\"skipped_count\":{skipped},\"result\":\"no_changes\"}}",
+                    json_string(&root.to_string_lossy())
+                )
+            })?;
         } else {
             println!("No files need renaming.");
         }
@@ -11071,12 +11108,15 @@ fn run_rename(args: &[String]) -> Result<(), String> {
     }
     write_organize_complete_marker(&root)?;
     if json {
-        println!(
-            "{{\"root\":{},\"applied\":true,\"move_count\":{},\"renamed_count\":{renamed},\"skipped_count\":{skipped},\"result\":\"applied\",\"undo_manifest\":{}}}",
-            json_string(&root.to_string_lossy()),
-            moves.len(),
-            json_string(&root.join(ORGANIZE_MANIFEST).to_string_lossy())
-        );
+        write_json_stdout("rename JSON", |output| {
+            writeln!(
+                output,
+                "{{\"root\":{},\"applied\":true,\"move_count\":{},\"renamed_count\":{renamed},\"skipped_count\":{skipped},\"result\":\"applied\",\"undo_manifest\":{}}}",
+                json_string(&root.to_string_lossy()),
+                moves.len(),
+                json_string(&root.join(ORGANIZE_MANIFEST).to_string_lossy())
+            )
+        })?;
     } else {
         println!(
             "Renamed {renamed} file(s). Undo manifest: {}",
@@ -11356,42 +11396,49 @@ fn run_sequence(args: &[String]) -> Result<(), String> {
     }
 
     if json && !apply {
-        println!(
-            "{{\n  \"root\": {},\n  \"prefix\": {},\n  \"applied\": false,\n  \"moves\": [",
-            json_string(&root.to_string_lossy()),
-            json_string(&prefix)
-        );
-        for (position, movement) in moves.iter().enumerate() {
-            let comma = if position + 1 == moves.len() { "" } else { "," };
-            println!(
-                "    {{\"from\": {}, \"to\": {}}}{}",
-                json_string(&movement.from),
-                json_string(&movement.to),
-                comma
-            );
-        }
-        println!(
-            "  ],\n  \"move_count\": {},\n  \"skipped_count\": {},\n  \"skipped_examples\": [",
-            moves.len(),
-            skipped
-        );
-        for (position, (path, reason)) in collision_examples.iter().enumerate() {
-            let comma = if position + 1 == collision_examples.len() {
-                ""
-            } else {
-                ","
-            };
-            println!(
-                "    {{\"path\": {}, \"reason\": {}}}{}",
-                json_string(path),
-                json_string(reason),
-                comma
-            );
-        }
-        println!(
-            "  ],\n  \"skipped_examples_truncated\": {}\n}}",
-            collision_count > collision_examples.len()
-        );
+        write_json_stdout("sequence JSON", |output| {
+            writeln!(
+                output,
+                "{{\n  \"root\": {},\n  \"prefix\": {},\n  \"applied\": false,\n  \"moves\": [",
+                json_string(&root.to_string_lossy()),
+                json_string(&prefix)
+            )?;
+            for (position, movement) in moves.iter().enumerate() {
+                let comma = if position + 1 == moves.len() { "" } else { "," };
+                writeln!(
+                    output,
+                    "    {{\"from\": {}, \"to\": {}}}{}",
+                    json_string(&movement.from),
+                    json_string(&movement.to),
+                    comma
+                )?;
+            }
+            writeln!(
+                output,
+                "  ],\n  \"move_count\": {},\n  \"skipped_count\": {},\n  \"skipped_examples\": [",
+                moves.len(),
+                skipped
+            )?;
+            for (position, (path, reason)) in collision_examples.iter().enumerate() {
+                let comma = if position + 1 == collision_examples.len() {
+                    ""
+                } else {
+                    ","
+                };
+                writeln!(
+                    output,
+                    "    {{\"path\": {}, \"reason\": {}}}{}",
+                    json_string(path),
+                    json_string(reason),
+                    comma
+                )?;
+            }
+            writeln!(
+                output,
+                "  ],\n  \"skipped_examples_truncated\": {}\n}}",
+                collision_count > collision_examples.len()
+            )
+        })?;
     } else if !json {
         println!(
             "Sequence preview: {} file(s) to rename; {skipped} skipped",
@@ -11415,12 +11462,15 @@ fn run_sequence(args: &[String]) -> Result<(), String> {
     }
     if moves.is_empty() {
         if json {
-            println!(
-                "{{\"root\": {}, \"prefix\": {}, \"applied\": true, \"moves\": [], \"move_count\": 0, \"renamed_count\": 0, \"skipped_count\": {}, \"result\": \"no_changes\"}}",
-                json_string(&root.to_string_lossy()),
-                json_string(&prefix),
-                skipped
-            );
+            write_json_stdout("sequence JSON", |output| {
+                writeln!(
+                    output,
+                    "{{\"root\": {}, \"prefix\": {}, \"applied\": true, \"moves\": [], \"move_count\": 0, \"renamed_count\": 0, \"skipped_count\": {}, \"result\": \"no_changes\"}}",
+                    json_string(&root.to_string_lossy()),
+                    json_string(&prefix),
+                    skipped
+                )
+            })?;
         } else {
             println!("No files need renaming.");
         }
@@ -11459,27 +11509,32 @@ fn run_sequence(args: &[String]) -> Result<(), String> {
     }
     write_organize_complete_marker(&root)?;
     if json {
-        println!(
-            "{{\n  \"root\": {},\n  \"prefix\": {},\n  \"applied\": true,\n  \"moves\": [",
-            json_string(&root.to_string_lossy()),
-            json_string(&prefix)
-        );
-        for (position, movement) in moves.iter().enumerate() {
-            let comma = if position + 1 == moves.len() { "" } else { "," };
-            println!(
-                "    {{\"from\": {}, \"to\": {}}}{}",
-                json_string(&movement.from),
-                json_string(&movement.to),
-                comma
-            );
-        }
-        println!(
-            "  ],\n  \"move_count\": {},\n  \"renamed_count\": {},\n  \"skipped_count\": {},\n  \"result\": \"applied\",\n  \"undo_manifest\": {}\n}}",
-            moves.len(),
-            renamed,
-            skipped,
-            json_string(&root.join(ORGANIZE_MANIFEST).to_string_lossy())
-        );
+        write_json_stdout("sequence JSON", |output| {
+            writeln!(
+                output,
+                "{{\n  \"root\": {},\n  \"prefix\": {},\n  \"applied\": true,\n  \"moves\": [",
+                json_string(&root.to_string_lossy()),
+                json_string(&prefix)
+            )?;
+            for (position, movement) in moves.iter().enumerate() {
+                let comma = if position + 1 == moves.len() { "" } else { "," };
+                writeln!(
+                    output,
+                    "    {{\"from\": {}, \"to\": {}}}{}",
+                    json_string(&movement.from),
+                    json_string(&movement.to),
+                    comma
+                )?;
+            }
+            writeln!(
+                output,
+                "  ],\n  \"move_count\": {},\n  \"renamed_count\": {},\n  \"skipped_count\": {},\n  \"result\": \"applied\",\n  \"undo_manifest\": {}\n}}",
+                moves.len(),
+                renamed,
+                skipped,
+                json_string(&root.join(ORGANIZE_MANIFEST).to_string_lossy())
+            )
+        })?;
     } else {
         println!(
             "Renamed {renamed} file(s). Undo manifest: {}",
