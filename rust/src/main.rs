@@ -781,25 +781,72 @@ fn parse_size(value: &str) -> Result<u64, String> {
         .find(|ch: char| !ch.is_ascii_digit() && ch != '.')
         .unwrap_or(normalized.len());
     let (number, unit) = normalized.split_at(split);
-    let number: f64 = number
-        .parse()
-        .map_err(|_| format!("invalid size: {value}"))?;
-    if !number.is_finite() || number < 0.0 {
+    let (whole, fraction) = number.split_once('.').unwrap_or((number, ""));
+    if whole.is_empty() && fraction.is_empty()
+        || !whole.bytes().all(|digit| digit.is_ascii_digit())
+        || !fraction.bytes().all(|digit| digit.is_ascii_digit())
+    {
         return Err(format!("invalid size: {value}"));
     }
     let multiplier = match unit.trim() {
-        "" | "b" => 1.0,
-        "k" | "kb" | "kib" => 1024.0,
-        "m" | "mb" | "mib" => 1024.0_f64.powi(2),
-        "g" | "gb" | "gib" => 1024.0_f64.powi(3),
-        "t" | "tb" | "tib" => 1024.0_f64.powi(4),
+        "" | "b" => 1_u128,
+        "k" | "kb" | "kib" => 1024,
+        "m" | "mb" | "mib" => 1024_u128.pow(2),
+        "g" | "gb" | "gib" => 1024_u128.pow(3),
+        "t" | "tb" | "tib" => 1024_u128.pow(4),
         other => return Err(format!("unknown size unit '{other}' in '{value}'")),
     };
-    let bytes = number * multiplier;
-    if bytes > u64::MAX as f64 {
+    let whole: u128 = if whole.is_empty() {
+        0
+    } else {
+        whole
+            .parse()
+            .map_err(|_| format!("size is too large: {value}"))?
+    };
+    let whole_bytes = whole
+        .checked_mul(multiplier)
+        .ok_or_else(|| format!("size is too large: {value}"))?;
+    let fractional_bytes = fraction_ceil_scaled(fraction, multiplier);
+    let bytes = whole_bytes
+        .checked_add(fractional_bytes)
+        .ok_or_else(|| format!("size is too large: {value}"))?;
+    if bytes > u128::from(u64::MAX) {
         return Err(format!("size is too large: {value}"));
     }
-    Ok(bytes.ceil() as u64)
+    Ok(bytes as u64)
+}
+
+fn fraction_ceil_scaled(fraction: &str, multiplier: u128) -> u128 {
+    if fraction.is_empty() {
+        return 0;
+    }
+    let multiplier = multiplier as u64;
+    let mut product_digits = Vec::with_capacity(fraction.len() + 12);
+    let mut carry = 0_u64;
+    for digit in fraction.bytes().rev() {
+        let product = u64::from(digit - b'0') * multiplier + carry;
+        product_digits.push((product % 10) as u8);
+        carry = product / 10;
+    }
+    while carry > 0 {
+        product_digits.push((carry % 10) as u8);
+        carry /= 10;
+    }
+
+    let fractional_digits = fraction.len();
+    let mut scaled_integer = 0_u128;
+    for digit in product_digits
+        .get(fractional_digits..)
+        .unwrap_or_default()
+        .iter()
+        .rev()
+    {
+        scaled_integer = scaled_integer * 10 + u128::from(*digit);
+    }
+    let has_remainder = product_digits[..fractional_digits.min(product_digits.len())]
+        .iter()
+        .any(|digit| *digit != 0);
+    scaled_integer + u128::from(has_remainder)
 }
 
 fn print_help() {
