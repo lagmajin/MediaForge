@@ -1512,16 +1512,54 @@ fn hash_snapshot_file(record: &FileRecord) -> Result<[u8; 32], String> {
 fn collect_snapshot_entries(
     records: &[FileRecord],
     hash_content: bool,
+    jobs: usize,
 ) -> Result<BTreeMap<String, SnapshotEntry>, String> {
+    if jobs == 0 {
+        return Err("snapshot worker count must be greater than zero".to_owned());
+    }
+    let mut hashes = vec![None; records.len()];
+    let mut errors = vec![None; records.len()];
+    if hash_content && !records.is_empty() {
+        let next = std::sync::atomic::AtomicUsize::new(0);
+        let worker_count = jobs.min(records.len());
+        let results = std::thread::scope(|scope| {
+            let handles = (0..worker_count)
+                .map(|_| {
+                    scope.spawn(|| {
+                        let mut results = Vec::new();
+                        loop {
+                            let index = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            let Some(record) = records.get(index) else {
+                                break;
+                            };
+                            results.push((index, hash_snapshot_file(record)));
+                        }
+                        results
+                    })
+                })
+                .collect::<Vec<_>>();
+            handles
+                .into_iter()
+                .flat_map(|handle| handle.join().expect("snapshot hashing worker panicked"))
+                .collect::<Vec<_>>()
+        });
+        for (index, result) in results {
+            match result {
+                Ok(hash) => hashes[index] = Some(hash),
+                Err(error) => errors[index] = Some(error),
+            }
+        }
+    }
     let mut entries = BTreeMap::new();
-    for record in records {
-        let hash = if hash_content {
-            Some(hash_snapshot_file(record)?)
-        } else {
-            None
-        };
+    for (index, record) in records.iter().enumerate() {
+        if let Some(error) = errors[index].take() {
+            return Err(error);
+        }
         if entries
-            .insert(record.relative.clone(), snapshot_entry(record, hash))
+            .insert(
+                record.relative.clone(),
+                snapshot_entry(record, hashes[index]),
+            )
             .is_some()
         {
             return Err(format!(
@@ -1941,6 +1979,10 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
     let mut include_hidden = None;
     let mut include_generated = None;
     let mut hash_content = None;
+    let mut jobs = std::thread::available_parallelism()
+        .map(usize::from)
+        .unwrap_or(1)
+        .min(4);
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
         match arg.as_str() {
@@ -1963,9 +2005,20 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
             "--include-hidden" => include_hidden = Some(true),
             "--include-generated" => include_generated = Some(true),
             "--hash" => hash_content = Some(true),
+            "--jobs" => {
+                let value = iter
+                    .next()
+                    .ok_or_else(|| "--jobs requires a positive integer".to_owned())?;
+                jobs = value
+                    .parse::<usize>()
+                    .map_err(|_| format!("invalid worker count '{value}'"))?;
+                if jobs == 0 || jobs > 64 {
+                    return Err("--jobs must be between 1 and 64".to_owned());
+                }
+            }
             "--help" | "-h" => {
                 println!(
-                    "Usage: mediaforge snapshot [PATH] (--output FILE [--overwrite] | --diff FILE) [--json|--csv] [--include-hidden] [--include-generated] [--hash] [--fail-on-change]\n\nSave or compare project snapshots using relative paths, sizes, and modification times. By default this is a fast metadata-only scan; --hash stores SHA-256 file fingerprints and compares contents, ignoring timestamp-only changes. Unity/Unreal/Godot generated cache directories and hidden files are skipped by default. Snapshot files store inclusion settings and can be compared on another supported OS. --csv and --json select diff output formats. --fail-on-change applies only to --diff."
+                    "Usage: mediaforge snapshot [PATH] (--output FILE [--overwrite] | --diff FILE) [--json|--csv] [--include-hidden] [--include-generated] [--hash] [--jobs N] [--fail-on-change]\n\nSave or compare project snapshots using relative paths, sizes, and modification times. By default this is a fast metadata-only scan; --hash stores SHA-256 file fingerprints and compares contents, ignoring timestamp-only changes. --jobs controls concurrent file hashing (1–64; default up to 4). Unity/Unreal/Godot generated cache directories and hidden files are skipped by default. Snapshot files store inclusion settings and can be compared on another supported OS. --csv and --json select diff output formats. --fail-on-change applies only to --diff."
                 );
                 return Ok(());
             }
@@ -2064,7 +2117,7 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
         records.retain(|record| record.path != excluded);
     }
     records.sort_by(|left, right| left.relative.cmp(&right.relative));
-    let current_entries = collect_snapshot_entries(&records, use_hash)?;
+    let current_entries = collect_snapshot_entries(&records, use_hash, jobs)?;
     if let Some(output) = output_abs {
         write_snapshot_manifest(
             &output,
@@ -2384,7 +2437,7 @@ fn fraction_ceil_scaled(fraction: &str, multiplier: u128) -> u128 {
 
 fn print_help() {
     println!(
-        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json|--csv] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS] [--largest N]\n  mediaforge dupes [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--top-groups N]\n  mediaforge probe <FILE> [--compact] [--summary]\n  mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--type video|audio] [--min-size SIZE] [--max-size SIZE] [--jobs N] [--summary] [--compare] [--csv]\n  mediaforge storyboard <VIDEO> --output <IMAGE> [--interval SECONDS] [--columns N] [--rows N] [--width PIXELS]\n  mediaforge scene-detect-dir <PATH> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--fps RATE] [--extension EXTENSIONS] [--include-hidden] [--jobs N]\n  mediaforge scene-detect <VIDEO> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--format jsonl|csv] [--fps RATE]\n  mediaforge proxy <VIDEO> --output <FILE.mp4> [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge proxy-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET] [--jobs N] [--skip-existing] [--json]\n  mediaforge proxy-config init [FILE] [--profile fast|balanced|quality] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge extract-audio <VIDEO> --output <FILE> [--format mp3|wav|flac] [--bitrate RATE] [--stream N]\n  mediaforge extract-audio-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--format mp3|wav|flac] [--bitrate RATE] [--stream N] [--jobs N] [--skip-existing] [--json]\n  mediaforge snapshot [PATH] (--output FILE [--overwrite] | --diff FILE) [--json|--csv] [--include-hidden] [--include-generated] [--hash] [--fail-on-change]\n  mediaforge project [PATH] [--json]\n  mediaforge unity-meta [PROJECT_PATH] [--json] [--include-hidden]\n  mediaforge gitignore [PATH] [--apply]\n  mediaforge organize [PATH] [--by type|extension|size] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--apply]\n  mediaforge sequence [PATH] [--prefix NAME] [--start N] [--padding N] [--extension EXTENSIONS] [--include-hidden] [--natural] [--json] [--apply]\n  mediaforge undo [PATH] [--json]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--include-hidden] [--include-generated] [--dry-run] [--json] [--list]\n  mediaforge --version\n  mediaforge --help"
+        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json|--csv] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS] [--largest N]\n  mediaforge dupes [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--top-groups N]\n  mediaforge probe <FILE> [--compact] [--summary]\n  mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--type video|audio] [--min-size SIZE] [--max-size SIZE] [--jobs N] [--summary] [--compare] [--csv]\n  mediaforge storyboard <VIDEO> --output <IMAGE> [--interval SECONDS] [--columns N] [--rows N] [--width PIXELS]\n  mediaforge scene-detect-dir <PATH> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--fps RATE] [--extension EXTENSIONS] [--include-hidden] [--jobs N]\n  mediaforge scene-detect <VIDEO> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--format jsonl|csv] [--fps RATE]\n  mediaforge proxy <VIDEO> --output <FILE.mp4> [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge proxy-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET] [--jobs N] [--skip-existing] [--json]\n  mediaforge proxy-config init [FILE] [--profile fast|balanced|quality] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge extract-audio <VIDEO> --output <FILE> [--format mp3|wav|flac] [--bitrate RATE] [--stream N]\n  mediaforge extract-audio-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--format mp3|wav|flac] [--bitrate RATE] [--stream N] [--jobs N] [--skip-existing] [--json]\n  mediaforge snapshot [PATH] (--output FILE [--overwrite] | --diff FILE) [--json|--csv] [--include-hidden] [--include-generated] [--hash] [--jobs N] [--fail-on-change]\n  mediaforge project [PATH] [--json]\n  mediaforge unity-meta [PROJECT_PATH] [--json] [--include-hidden]\n  mediaforge gitignore [PATH] [--apply]\n  mediaforge organize [PATH] [--by type|extension|size] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--apply]\n  mediaforge sequence [PATH] [--prefix NAME] [--start N] [--padding N] [--extension EXTENSIONS] [--include-hidden] [--natural] [--json] [--apply]\n  mediaforge undo [PATH] [--json]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--include-hidden] [--include-generated] [--dry-run] [--json] [--list]\n  mediaforge --version\n  mediaforge --help"
     );
 }
 
