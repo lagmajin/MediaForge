@@ -4849,51 +4849,52 @@ fn summarize_probe_differences(
         .into_iter()
         .filter(|(_, values)| values.len() > 1)
         .collect();
-    let mut output = String::new();
+    let stdout = io::stdout();
+    let mut output = io::BufWriter::with_capacity(64 * 1024, stdout.lock());
     let failed = failures.len();
-    write!(
-        output,
-        "{{\"files\":{},\"successful\":{successful},\"failed\":{failed},\"varying_fields\":[",
-        records.len()
-    )
-    .map_err(|error| format!("could not format comparison: {error}"))?;
-    for (field_index, (field, groups)) in varying.iter().enumerate() {
-        if field_index > 0 {
-            output.push(',');
-        }
-        write!(output, "{{\"field\":{},\"values\":[", json_string(field))
-            .map_err(|error| format!("could not format comparison: {error}"))?;
-        for (value_index, (value, paths)) in groups.iter().enumerate() {
-            if value_index > 0 {
-                output.push(',');
-            }
-            write!(output, "{{\"value\":{value},\"files\":[")
-                .map_err(|error| format!("could not format comparison: {error}"))?;
-            for (path_index, path) in paths.iter().enumerate() {
-                if path_index > 0 {
-                    output.push(',');
-                }
-                output.push_str(&json_string(path));
-            }
-            output.push_str("]}");
-        }
-        output.push_str("]}");
-    }
-    output.push_str("],\"failures\":[");
-    for (failure_index, (index, result)) in failures.iter().enumerate() {
-        if failure_index > 0 {
-            output.push(',');
-        }
+    let result = (|| -> io::Result<()> {
         write!(
             output,
-            "{{\"path\":{},\"error\":{}}}",
-            json_string(&records[*index].relative),
-            json_string(result)
-        )
-        .map_err(|error| format!("could not format comparison: {error}"))?;
-    }
-    output.push_str("]}");
-    println!("{output}");
+            "{{\"files\":{},\"successful\":{successful},\"failed\":{failed},\"varying_fields\":[",
+            records.len()
+        )?;
+        for (field_index, (field, groups)) in varying.iter().enumerate() {
+            if field_index > 0 {
+                output.write_all(b",")?;
+            }
+            output.write_all(b"{\"field\":")?;
+            write_json_string(&mut output, field)?;
+            output.write_all(b",\"values\":[")?;
+            for (value_index, (value, paths)) in groups.iter().enumerate() {
+                if value_index > 0 {
+                    output.write_all(b",")?;
+                }
+                write!(output, "{{\"value\":{value},\"files\":[")?;
+                for (path_index, path) in paths.iter().enumerate() {
+                    if path_index > 0 {
+                        output.write_all(b",")?;
+                    }
+                    write_json_string(&mut output, path)?;
+                }
+                output.write_all(b"]}")?;
+            }
+            output.write_all(b"]}")?;
+        }
+        output.write_all(b"],\"failures\":[")?;
+        for (failure_index, (index, error)) in failures.iter().enumerate() {
+            if failure_index > 0 {
+                output.write_all(b",")?;
+            }
+            output.write_all(b"{\"path\":")?;
+            write_json_string(&mut output, &records[*index].relative)?;
+            output.write_all(b",\"error\":")?;
+            write_json_string(&mut output, error)?;
+            output.write_all(b"}")?;
+        }
+        output.write_all(b"]}\n")?;
+        output.flush()
+    })();
+    result.map_err(|error| format!("could not write comparison JSON: {error}"))?;
     Ok(())
 }
 
