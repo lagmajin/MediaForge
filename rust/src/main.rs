@@ -1655,9 +1655,10 @@ fn summarize_probe_differences(
         .filter(|(_, values)| values.len() > 1)
         .collect();
     let mut output = String::new();
+    let failed = failures.len();
     write!(
         output,
-        "{{\"files\":{},\"successful\":{successful},\"varying_fields\":[",
+        "{{\"files\":{},\"successful\":{successful},\"failed\":{failed},\"varying_fields\":[",
         records.len()
     )
     .map_err(|error| format!("could not format comparison: {error}"))?;
@@ -1688,9 +1689,16 @@ fn summarize_probe_differences(
         if failure_index > 0 {
             output.push(',');
         }
+        let mut error_fields = BTreeMap::new();
+        let mut cursor = 0;
+        collect_json_scalars(result.as_bytes(), &mut cursor, "", &mut error_fields, 0)?;
+        let error = error_fields
+            .get("error")
+            .map(String::as_str)
+            .unwrap_or("null");
         write!(
             output,
-            "{{\"path\":{},\"result\":{result}}}",
+            "{{\"path\":{},\"error\":{error}}}",
             json_string(&records[*index].relative)
         )
         .map_err(|error| format!("could not format comparison: {error}"))?;
@@ -1813,7 +1821,9 @@ fn run_probe_dir(args: &[String]) -> Result<(), String> {
     records.sort_by(|left, right| left.relative.cmp(&right.relative));
     if records.is_empty() {
         if compare {
-            println!("{{\"files\":0,\"successful\":0,\"varying_fields\":[],\"failures\":[]}}");
+            println!(
+                "{{\"files\":0,\"successful\":0,\"failed\":0,\"varying_fields\":[],\"failures\":[]}}"
+            );
         }
         return Ok(());
     }
