@@ -3293,12 +3293,12 @@ fn run_scan(args: &[String]) -> Result<(), String> {
         extensions: extension_filter.as_ref(),
         path_contains_lower: &path_contains_lower,
         exclude_path_contains_lower: &exclude_path_contains_lower,
-        sort_entries_per_directory: csv_sort.is_none(),
+        sort_entries_per_directory: csv_sort.is_none() && (csv || strict),
     };
     let ScanWalkResult {
         mut records,
         skipped_paths,
-        skipped_examples,
+        mut skipped_examples,
     } = walk_with_skip_dirs_mode_counted(ScanWalkConfig {
         root: &root,
         include_hidden,
@@ -3307,6 +3307,7 @@ fn run_scan(args: &[String]) -> Result<(), String> {
         filters: &traversal_filters,
         strict,
     })?;
+    skipped_examples.sort_unstable_by(|left, right| compare_paths_case_insensitive(left, right));
     if let Some(sort) = csv_sort {
         match sort {
             ScanCsvSort::Size => records.sort_unstable_by(|left, right| {
