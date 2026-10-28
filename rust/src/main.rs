@@ -972,12 +972,11 @@ fn write_organize_manifest(root: &Path, moves: &[PlannedMove]) -> Result<(), Str
             root.display()
         ));
     }
-    let temp = root.join(format!("{ORGANIZE_MANIFEST}.tmp-{}", std::process::id()));
     let mut file = OpenOptions::new()
         .write(true)
         .create_new(true)
-        .open(&temp)
-        .map_err(|error| format!("cannot create temporary undo manifest: {error}"))?;
+        .open(&manifest)
+        .map_err(|error| format!("cannot create undo manifest: {error}"))?;
     let write_result = (|| -> io::Result<()> {
         file.write_all(ORGANIZE_MAGIC)?;
         let count = u32::try_from(moves.len())
@@ -1001,16 +1000,9 @@ fn write_organize_manifest(root: &Path, moves: &[PlannedMove]) -> Result<(), Str
     })();
     drop(file);
     if let Err(error) = write_result {
-        let _ = fs::remove_file(&temp);
+        let _ = fs::remove_file(&manifest);
         return Err(format!("could not write undo manifest: {error}"));
     }
-    if let Err(error) = fs::hard_link(&temp, &manifest) {
-        let _ = fs::remove_file(&temp);
-        return Err(format!("could not safely create undo manifest: {error}"));
-    }
-    fs::remove_file(&temp).map_err(|error| {
-        format!("undo manifest was created, but temporary file cleanup failed: {error}")
-    })?;
     Ok(())
 }
 
@@ -1152,7 +1144,7 @@ fn run_organize(args: &[String]) -> Result<(), String> {
         let to_text = to
             .to_str()
             .ok_or_else(|| format!("destination path is not UTF-8: {}", to.display()))?
-            .replace('\\', "/");
+            .to_owned();
         if !destinations.insert(to.clone()) || fs::symlink_metadata(root.join(&to)).is_ok() {
             skipped += 1;
             continue;
@@ -1164,7 +1156,7 @@ fn run_organize(args: &[String]) -> Result<(), String> {
             continue;
         }
         moves.push(PlannedMove {
-            from: relative_text.replace('\\', "/"),
+            from: relative_text.to_owned(),
             to: to_text,
         });
     }
