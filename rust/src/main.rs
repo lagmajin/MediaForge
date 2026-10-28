@@ -2280,7 +2280,13 @@ fn run_scan_config(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-fn files_identical(left: &Path, right: &Path, size: u64) -> io::Result<bool> {
+fn files_identical(
+    left: &Path,
+    right: &Path,
+    size: u64,
+    left_buffer: &mut Vec<u8>,
+    right_buffer: &mut Vec<u8>,
+) -> io::Result<bool> {
     const DEFAULT_BUFFER_SIZE: usize = 8 * 1024;
     const MAX_BUFFER_SIZE: usize = 1024 * 1024;
     let capacity = usize::try_from(size)
@@ -2288,11 +2294,11 @@ fn files_identical(left: &Path, right: &Path, size: u64) -> io::Result<bool> {
         .clamp(DEFAULT_BUFFER_SIZE, MAX_BUFFER_SIZE);
     let mut left = fs::File::open(left)?;
     let mut right = fs::File::open(right)?;
-    let mut left_buffer = vec![0_u8; capacity];
-    let mut right_buffer = vec![0_u8; capacity];
+    left_buffer.resize(capacity, 0);
+    right_buffer.resize(capacity, 0);
     loop {
-        let left_count = read_up_to_full_or_eof(&mut left, &mut left_buffer)?;
-        let right_count = read_up_to_full_or_eof(&mut right, &mut right_buffer)?;
+        let left_count = read_up_to_full_or_eof(&mut left, &mut left_buffer[..capacity])?;
+        let right_count = read_up_to_full_or_eof(&mut right, &mut right_buffer[..capacity])?;
         if left_count != right_count || left_buffer[..left_count] != right_buffer[..right_count] {
             return Ok(false);
         }
@@ -2660,6 +2666,7 @@ fn run_dupes(args: &[String]) -> Result<(), String> {
     let mut total_groups = 0_usize;
     let mut duplicate_files = 0_usize;
     let mut reclaimable = 0_u128;
+    let mut comparison_buffers = (Vec::new(), Vec::new());
     for (size, paths) in duplicate_sizes {
         let mut by_sample: HashMap<u64, SampleSignatureBucket> = HashMap::new();
         for_each_sample_signature(&root, &paths, size, jobs, |index, signature| {
@@ -2684,7 +2691,13 @@ fn run_dupes(args: &[String]) -> Result<(), String> {
             let mut matched = false;
             for group in bucket.groups_mut() {
                 let representative = root.join(paths[group.representative].as_ref());
-                match files_identical(&representative, &candidate, size) {
+                match files_identical(
+                    &representative,
+                    &candidate,
+                    size,
+                    &mut comparison_buffers.0,
+                    &mut comparison_buffers.1,
+                ) {
                     Ok(true) => {
                         group.count += 1;
                         if retain_group_paths {
