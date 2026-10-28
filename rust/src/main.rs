@@ -1772,6 +1772,14 @@ fn write_csv_field(output: &mut impl Write, value: &str) -> io::Result<()> {
     output.write_all(b"\"")
 }
 
+fn write_csv_column(output: &mut impl Write, first: &mut bool, value: &str) -> io::Result<()> {
+    if !*first {
+        output.write_all(b",")?;
+    }
+    *first = false;
+    write_csv_field(output, value)
+}
+
 fn print_csv(records: &[FileRecord]) -> Result<(), String> {
     let stdout = io::stdout();
     let mut output = io::BufWriter::new(stdout.lock());
@@ -4804,18 +4812,18 @@ fn summarize_probe_differences(
     Ok(())
 }
 
-fn probe_csv_value(fields: &BTreeMap<String, String>, name: &str) -> String {
+fn probe_csv_value<'a>(fields: &'a BTreeMap<String, String>, name: &str) -> Cow<'a, str> {
     let Some(value) = fields.get(name) else {
-        return String::new();
+        return Cow::Borrowed("");
     };
     if value == "null" {
-        return String::new();
+        return Cow::Borrowed("");
     }
     let Some(value) = value
         .strip_prefix('"')
         .and_then(|value| value.strip_suffix('"'))
     else {
-        return value.clone();
+        return Cow::Borrowed(value);
     };
     let mut decoded = String::with_capacity(value.len());
     let mut chars = value.chars();
@@ -4840,10 +4848,11 @@ fn probe_csv_value(fields: &BTreeMap<String, String>, name: &str) -> String {
             None => decoded.push('\\'),
         }
     }
-    decoded
+    Cow::Owned(decoded)
 }
 
 fn print_probe_csv_row(
+    output: &mut impl Write,
     path: &str,
     ok: bool,
     error: &str,
@@ -4854,37 +4863,32 @@ fn print_probe_csv_row(
         let mut cursor = 0;
         collect_json_scalars(probe.as_bytes(), &mut cursor, "", &mut fields, 0)?;
     }
-    let columns = [
-        path.to_owned(),
-        ok.to_string(),
-        error.to_owned(),
-        probe_csv_value(&fields, "format.format_name"),
-        probe_csv_value(&fields, "format.duration"),
-        probe_csv_value(&fields, "streams[0].codec_type"),
-        probe_csv_value(&fields, "streams[0].codec_name"),
-        probe_csv_value(&fields, "streams[0].profile"),
-        probe_csv_value(&fields, "streams[0].width"),
-        probe_csv_value(&fields, "streams[0].height"),
-        probe_csv_value(&fields, "streams[0].avg_frame_rate"),
-        probe_csv_value(&fields, "streams[0].pix_fmt"),
-        probe_csv_value(&fields, "streams[0].sample_rate"),
-        probe_csv_value(&fields, "streams[0].channels"),
-        probe_csv_value(&fields, "streams[0].channel_layout"),
-        probe_csv_value(&fields, "format.size"),
-        probe_csv_value(&fields, "format.bit_rate"),
-    ];
-    let row = format!(
-        "{}\n",
-        columns
-            .iter()
-            .map(|value| csv_field(value))
-            .collect::<Vec<_>>()
-            .join(",")
-    );
-    io::stdout()
-        .lock()
-        .write_all(row.as_bytes())
-        .map_err(|write_error| format!("could not write probe CSV row: {write_error}"))
+    let mut first = true;
+    let result = (|| -> io::Result<()> {
+        write_csv_column(output, &mut first, path)?;
+        write_csv_column(output, &mut first, if ok { "true" } else { "false" })?;
+        write_csv_column(output, &mut first, error)?;
+        for name in [
+            "format.format_name",
+            "format.duration",
+            "streams[0].codec_type",
+            "streams[0].codec_name",
+            "streams[0].profile",
+            "streams[0].width",
+            "streams[0].height",
+            "streams[0].avg_frame_rate",
+            "streams[0].pix_fmt",
+            "streams[0].sample_rate",
+            "streams[0].channels",
+            "streams[0].channel_layout",
+            "format.size",
+            "format.bit_rate",
+        ] {
+            write_csv_column(output, &mut first, &probe_csv_value(&fields, name))?;
+        }
+        output.write_all(b"\n")
+    })();
+    result.map_err(|write_error| format!("could not write probe CSV row: {write_error}"))
 }
 
 fn run_probe_dir(args: &[String]) -> Result<(), String> {
@@ -5096,9 +5100,11 @@ fn run_probe_dir(args: &[String]) -> Result<(), String> {
     if compare {
         summarize_probe_differences(&records, &results)?;
     } else if csv {
-        println!(
-            "path,ok,error,format_name,duration_seconds,codec_type,codec,profile,width,height,frame_rate,pixel_format,sample_rate,channels,channel_layout,size_bytes,bit_rate"
-        );
+        let stdout = io::stdout();
+        let mut output = io::BufWriter::with_capacity(64 * 1024, stdout.lock());
+        output
+            .write_all(b"path,ok,error,format_name,duration_seconds,codec_type,codec,profile,width,height,frame_rate,pixel_format,sample_rate,channels,channel_layout,size_bytes,bit_rate\n")
+            .map_err(|error| format!("could not write probe CSV header: {error}"))?;
         for (index, success, record, probe) in &results {
             let error = if *success {
                 String::new()
@@ -5106,15 +5112,19 @@ fn run_probe_dir(args: &[String]) -> Result<(), String> {
                 let mut fields = BTreeMap::new();
                 let mut cursor = 0;
                 collect_json_scalars(record.as_bytes(), &mut cursor, "", &mut fields, 0)?;
-                probe_csv_value(&fields, "error")
+                probe_csv_value(&fields, "error").into_owned()
             };
             print_probe_csv_row(
+                &mut output,
                 &records[*index].relative,
                 *success,
                 &error,
                 probe.as_deref(),
             )?;
         }
+        output
+            .flush()
+            .map_err(|error| format!("could not write probe CSV: {error}"))?;
     }
     if failures > 0 {
         return Err(format!("ffprobe failed for {failures} file(s)"));
