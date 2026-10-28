@@ -201,7 +201,11 @@ fn classify(path: &Path) -> Kind {
 }
 
 fn matches_extension_filter(extension: Option<&str>, filters: &HashSet<String>) -> bool {
+    const LINEAR_FILTER_LIMIT: usize = 8;
     match extension {
+        Some(extension) if filters.len() > LINEAR_FILTER_LIMIT => {
+            filters.contains(&format!(".{}", extension.to_ascii_lowercase()))
+        }
         Some(extension) => filters.iter().any(|candidate| {
             candidate
                 .strip_prefix('.')
