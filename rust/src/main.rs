@@ -64,6 +64,19 @@ impl Kind {
     }
 }
 
+fn parse_asset_kind(value: &str) -> Option<Kind> {
+    match value.to_ascii_lowercase().as_str() {
+        "video" => Some(Kind::Video),
+        "audio" => Some(Kind::Audio),
+        "image" => Some(Kind::Image),
+        "model" => Some(Kind::Model),
+        "texture" => Some(Kind::Texture),
+        "project" => Some(Kind::Project),
+        "other" => Some(Kind::Other),
+        _ => None,
+    }
+}
+
 #[derive(Debug)]
 struct FileRecord {
     relative: String,
@@ -899,6 +912,7 @@ fn run_dupes(args: &[String]) -> Result<(), String> {
     let mut json = false;
     let mut include_hidden = false;
     let mut min_size = 0;
+    let mut kind_filter = None;
     let mut extension_filter = None;
     let mut path = None;
     let mut iter = args.iter();
@@ -912,6 +926,16 @@ fn run_dupes(args: &[String]) -> Result<(), String> {
                     .ok_or_else(|| "--min-size requires a value".to_owned())?;
                 min_size = parse_size(value)?;
             }
+            "--type" => {
+                let value = iter
+                    .next()
+                    .ok_or_else(|| "--type requires a value".to_owned())?;
+                kind_filter = Some(parse_asset_kind(value).ok_or_else(|| {
+                    format!(
+                        "unknown asset type '{value}'; choose video, audio, image, model, texture, project, or other"
+                    )
+                })?);
+            }
             "--extension" => {
                 let value = iter.next().ok_or_else(|| {
                     "--extension requires a comma-separated extension list".to_owned()
@@ -920,7 +944,7 @@ fn run_dupes(args: &[String]) -> Result<(), String> {
             }
             "--help" | "-h" => {
                 println!(
-                    "Usage: mediaforge dupes [PATH] [--json] [--include-hidden] [--min-size SIZE] [--extension EXTENSIONS]\n\nFind byte-for-byte duplicate files. Files are compared in fixed-size chunks to keep memory use low. --extension accepts a comma-separated list such as mov,mxf; use none for files without an extension. Fractional size thresholds round up to the next byte."
+                    "Usage: mediaforge dupes [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS]\n\nFind byte-for-byte duplicate files. Files are compared in fixed-size chunks to keep memory use low. --type accepts video, audio, image, model, texture, project, or other. --extension accepts a comma-separated list such as mov,mxf; use none for files without an extension. Fractional size thresholds round up to the next byte."
                 );
                 return Ok(());
             }
@@ -949,6 +973,9 @@ fn run_dupes(args: &[String]) -> Result<(), String> {
         &ignored,
         &mut records,
     )?;
+    if let Some(kind) = kind_filter {
+        records.retain(|record| record.kind == kind);
+    }
     if let Some(extensions) = &extension_filter {
         records.retain(|record| extensions.contains(&record.extension));
     }
@@ -1061,16 +1088,11 @@ fn run_scan(args: &[String]) -> Result<(), String> {
                 let value = iter
                     .next()
                     .ok_or_else(|| "--type requires a value".to_owned())?;
-                let valid = [
-                    "video", "audio", "image", "model", "texture", "project", "other",
-                ];
-                if !valid.contains(&value.as_str()) {
-                    return Err(format!(
-                        "unknown asset type '{value}'; choose from {}",
-                        valid.join(", ")
-                    ));
-                }
-                kind_filter = Some(value.clone());
+                kind_filter = Some(parse_asset_kind(value).ok_or_else(|| {
+                    format!(
+                        "unknown asset type '{value}'; choose video, audio, image, model, texture, project, or other"
+                    )
+                })?);
             }
             "--min-size" => {
                 let value = iter
@@ -1109,7 +1131,7 @@ fn run_scan(args: &[String]) -> Result<(), String> {
     let mut records = Vec::new();
     walk(&root, &root, include_hidden, &ignored, &mut records)?;
     if let Some(kind) = kind_filter {
-        records.retain(|record| record.kind.as_str() == kind);
+        records.retain(|record| record.kind == kind);
     }
     if let Some(extensions) = extension_filter {
         records.retain(|record| extensions.contains(&record.extension));
@@ -1201,7 +1223,7 @@ fn fraction_ceil_scaled(fraction: &str, multiplier: u128) -> u128 {
 
 fn print_help() {
     println!(
-        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS]\n  mediaforge dupes [PATH] [--json] [--include-hidden] [--min-size SIZE] [--extension EXTENSIONS]\n  mediaforge probe <FILE> [--compact]\n  mediaforge project [PATH] [--json]\n  mediaforge gitignore [PATH] [--apply]\n  mediaforge organize [PATH] [--by type|extension] [--apply]\n  mediaforge undo [PATH]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--include-hidden] [--include-generated] [--dry-run] [--json]\n  mediaforge --version\n  mediaforge --help"
+        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS]\n  mediaforge dupes [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS]\n  mediaforge probe <FILE> [--compact]\n  mediaforge project [PATH] [--json]\n  mediaforge gitignore [PATH] [--apply]\n  mediaforge organize [PATH] [--by type|extension] [--apply]\n  mediaforge undo [PATH]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--include-hidden] [--include-generated] [--dry-run] [--json]\n  mediaforge --version\n  mediaforge --help"
     );
 }
 
@@ -3012,20 +3034,11 @@ fn parse_pack_types(value: &str) -> Result<HashSet<Kind>, String> {
         if name.is_empty() {
             return Err("--type contains an empty value".to_owned());
         }
-        let kind = match name.to_ascii_lowercase().as_str() {
-            "video" => Kind::Video,
-            "audio" => Kind::Audio,
-            "image" => Kind::Image,
-            "model" => Kind::Model,
-            "texture" => Kind::Texture,
-            "project" => Kind::Project,
-            "other" => Kind::Other,
-            _ => {
-                return Err(format!(
-                    "unknown pack type '{name}'; choose video, audio, image, model, texture, project, or other"
-                ));
-            }
-        };
+        let kind = parse_asset_kind(name).ok_or_else(|| {
+            format!(
+                "unknown pack type '{name}'; choose video, audio, image, model, texture, project, or other"
+            )
+        })?;
         kinds.insert(kind);
     }
     Ok(kinds)
