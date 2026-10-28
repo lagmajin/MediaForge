@@ -8,6 +8,8 @@ Fast, local-first command-line utilities for game development and video producti
 - Python 3.10 or newer only for the reference implementation
 - Windows, macOS, or Linux
 
+Run `mediaforge doctor` to check whether `ffmpeg` and `ffprobe` are available on `PATH`; `--json` emits the result as one object. The check confirms executable availability, not optional codec support such as libx264.
+
 ## Install from a checkout
 
 ```sh
