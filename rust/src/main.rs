@@ -6438,42 +6438,7 @@ fn run_scene_detect_dir(args: &[String]) -> Result<(), String> {
                         segments,
                         summary_only,
                     );
-                    let (success, output) = match result {
-                        Ok(detection) => {
-                            let mut output = Vec::new();
-                            match write_scene_detection_json(
-                                &mut output,
-                                &detection,
-                                threshold,
-                                min_gap,
-                                summary_only,
-                            ) {
-                                Ok(()) => (
-                                    true,
-                                    String::from_utf8(output)
-                                        .expect("JSON scene output is valid UTF-8"),
-                                ),
-                                Err(error) => (
-                                    false,
-                                    format!(
-                                        "{{\"type\":\"error\",\"path\":{},\"error\":{}}}\n",
-                                        json_string(&source_path.to_string_lossy()),
-                                        json_string(&format!(
-                                            "could not format scene output: {error}"
-                                        ))
-                                    ),
-                                ),
-                            }
-                        }
-                        Err(error) => (
-                            false,
-                            format!(
-                                "{{\"type\":\"error\",\"path\":{},\"error\":{}}}\n",
-                                json_string(&source_path.to_string_lossy()),
-                                json_string(&format!("mediaforge: {error}"))
-                            ),
-                        ),
-                    };
+                    let success = result.is_ok();
                     let write_error = {
                         let _guard = stream_output
                             .lock()
@@ -6482,20 +6447,32 @@ fn run_scene_detect_dir(args: &[String]) -> Result<(), String> {
                             + 1;
                         let stdout = io::stdout();
                         let mut stdout = stdout.lock();
-                        let write_result = if summary_only {
-                            stdout.write_all(output.as_bytes())
-                        } else {
-                            writeln!(
-                                stdout,
-                                "{{\"type\":\"progress\",\"current\":{current},\"total\":{},\"path\":{}}}",
-                                records.len(),
-                                json_string(&record.relative)
-                            )
-                            .and_then(|()| stdout.write_all(output.as_bytes()))
-                        };
-                        write_result
-                        .err()
-                        .map(|error| error.to_string())
+                        let write_result = (|| -> io::Result<()> {
+                            if !summary_only {
+                                writeln!(
+                                    stdout,
+                                    "{{\"type\":\"progress\",\"current\":{current},\"total\":{},\"path\":{}}}",
+                                    records.len(),
+                                    json_string(&record.relative)
+                                )?;
+                            }
+                            match result {
+                                Ok(detection) => write_scene_detection_json(
+                                    &mut stdout,
+                                    &detection,
+                                    threshold,
+                                    min_gap,
+                                    summary_only,
+                                ),
+                                Err(error) => writeln!(
+                                    stdout,
+                                    "{{\"type\":\"error\",\"path\":{},\"error\":{}}}",
+                                    json_string(&source_path.to_string_lossy()),
+                                    json_string(&format!("mediaforge: {error}"))
+                                ),
+                            }
+                        })();
+                        write_result.err().map(|error| error.to_string())
                     };
                     if !success {
                         failed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
