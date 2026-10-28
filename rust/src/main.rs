@@ -2971,8 +2971,12 @@ fn collect_snapshot_entries(
     if jobs == 0 {
         return Err("snapshot worker count must be greater than zero".to_owned());
     }
-    let mut hashes = vec![None; records.len()];
-    let mut errors = vec![None; records.len()];
+    let mut hashes = if hash_content {
+        vec![None; records.len()]
+    } else {
+        Vec::new()
+    };
+    let mut errors = Vec::new();
     if hash_content && !records.is_empty() {
         let next = std::sync::atomic::AtomicUsize::new(0);
         let worker_count = jobs.min(records.len());
@@ -3000,19 +3004,19 @@ fn collect_snapshot_entries(
         for (index, result) in worker_results.into_iter().flatten() {
             match result {
                 Ok(hash) => hashes[index] = Some(hash),
-                Err(error) => errors[index] = Some(error),
+                Err(error) => errors.push((index, error)),
             }
         }
     }
+    if let Some((_, error)) = errors.into_iter().min_by_key(|(index, _)| *index) {
+        return Err(error);
+    }
     let mut entries = BTreeMap::new();
     for (index, record) in records.iter().enumerate() {
-        if let Some(error) = errors[index].take() {
-            return Err(error);
-        }
         if entries
             .insert(
                 record.relative.clone(),
-                snapshot_entry(record, hashes[index]),
+                snapshot_entry(record, hashes.get(index).copied().flatten()),
             )
             .is_some()
         {
