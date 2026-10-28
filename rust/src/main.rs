@@ -1964,6 +1964,43 @@ struct VerifiedDuplicateGroup {
     count: usize,
 }
 
+struct DuplicateOutputGroup {
+    size: u64,
+    files: Vec<String>,
+}
+
+fn compare_duplicate_output_groups(
+    left: &DuplicateOutputGroup,
+    right: &DuplicateOutputGroup,
+) -> std::cmp::Ordering {
+    let left_reclaimable = u128::from(left.size) * left.files.len().saturating_sub(1) as u128;
+    let right_reclaimable = u128::from(right.size) * right.files.len().saturating_sub(1) as u128;
+    right_reclaimable
+        .cmp(&left_reclaimable)
+        .then_with(|| right.size.cmp(&left.size))
+        .then_with(|| left.files.first().cmp(&right.files.first()))
+}
+
+impl PartialEq for DuplicateOutputGroup {
+    fn eq(&self, other: &Self) -> bool {
+        compare_duplicate_output_groups(self, other).is_eq()
+    }
+}
+
+impl Eq for DuplicateOutputGroup {}
+
+impl PartialOrd for DuplicateOutputGroup {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for DuplicateOutputGroup {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        compare_duplicate_output_groups(self, other)
+    }
+}
+
 fn run_dupes(args: &[String]) -> Result<(), String> {
     let mut json = false;
     let mut summary_only = false;
@@ -2098,7 +2135,9 @@ fn run_dupes(args: &[String]) -> Result<(), String> {
             .push(record.relative);
     }
 
+    let retain_group_paths = !summary_only && top_groups != Some(0);
     let mut groups: Vec<(u64, Vec<String>)> = Vec::new();
+    let mut top_group_heap = BinaryHeap::<DuplicateOutputGroup>::new();
     let mut total_groups = 0_usize;
     let mut duplicate_files = 0_usize;
     let mut reclaimable = 0_u128;
@@ -2135,10 +2174,10 @@ fn run_dupes(args: &[String]) -> Result<(), String> {
                 }
             }
             if !matched {
-                let (representative, files) = if summary_only {
-                    (relative, None)
-                } else {
+                let (representative, files) = if retain_group_paths {
                     (relative.clone(), Some(vec![relative]))
+                } else {
+                    (relative, None)
                 };
                 candidates.push(VerifiedDuplicateGroup {
                     representative,
@@ -2156,10 +2195,27 @@ fn run_dupes(args: &[String]) -> Result<(), String> {
             duplicate_files += group.count;
             reclaimable += u128::from(size) * group.count.saturating_sub(1) as u128;
             if let Some(files) = group.files {
-                groups.push((size, files));
+                let candidate = DuplicateOutputGroup { size, files };
+                if let Some(limit) = top_groups {
+                    if top_group_heap.len() < limit {
+                        top_group_heap.push(candidate);
+                    } else if top_group_heap.peek().is_some_and(|worst| {
+                        compare_duplicate_output_groups(&candidate, worst).is_lt()
+                    }) {
+                        top_group_heap.pop();
+                        top_group_heap.push(candidate);
+                    }
+                } else {
+                    groups.push((candidate.size, candidate.files));
+                }
             }
         }
     }
+    groups.extend(
+        top_group_heap
+            .into_iter()
+            .map(|group| (group.size, group.files)),
+    );
     if !summary_only {
         groups.sort_by(|left, right| {
             (u128::from(right.0) * right.1.len().saturating_sub(1) as u128)
