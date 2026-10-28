@@ -301,6 +301,15 @@ fn is_real_file(path: &Path) -> bool {
     fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_file())
 }
 
+fn read_retry_interrupted(reader: &mut impl Read, buffer: &mut [u8]) -> io::Result<usize> {
+    loop {
+        match reader.read(buffer) {
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            result => return result,
+        }
+    }
+}
+
 fn sort_entries(entries: &mut Vec<fs::DirEntry>) {
     let mut keyed = entries
         .drain(..)
@@ -3308,8 +3317,7 @@ fn hash_snapshot_file(record: &FileRecord) -> Result<[u8; 32], String> {
     let mut hasher = Sha256::new();
     let mut buffer = [0_u8; 256 * 1024];
     loop {
-        let count = file
-            .read(&mut buffer)
+        let count = read_retry_interrupted(&mut file, &mut buffer)
             .map_err(|error| format!("could not hash {}: {error}", record.path.display()))?;
         if count == 0 {
             break;
@@ -10372,15 +10380,8 @@ fn pack_file(
     let mut remaining = record.size;
     while remaining > 0 {
         let requested = remaining.min(copy_buffer.len() as u64) as usize;
-        let count = loop {
-            match input.read(&mut copy_buffer[..requested]) {
-                Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
-                Err(error) => {
-                    return Err(format!("could not read {}: {error}", record.path.display()));
-                }
-                Ok(count) => break count,
-            }
-        };
+        let count = read_retry_interrupted(&mut input, &mut copy_buffer[..requested])
+            .map_err(|error| format!("could not read {}: {error}", record.path.display()))?;
         if count == 0 {
             break;
         }
@@ -10397,8 +10398,7 @@ fn pack_file(
         ));
     }
     let mut extra = [0_u8; 1];
-    if input
-        .read(&mut extra)
+    if read_retry_interrupted(&mut input, &mut extra)
         .map_err(|error| format!("could not verify {}: {error}", record.path.display()))?
         != 0
     {
