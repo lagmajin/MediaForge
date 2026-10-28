@@ -7,7 +7,7 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use std::io::{self, BufRead, BufReader, BufWriter, Cursor, Read, Seek, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const SKIP_DIRS: &[&str] = &[
@@ -108,32 +108,96 @@ struct ScanTraversalFilters<'a> {
     exclude_path_contains_lower: &'a [String],
 }
 
-fn classify(path: &Path) -> Kind {
-    let ext = path
-        .extension()
-        .and_then(|s| s.to_str())
-        .unwrap_or("")
-        .to_ascii_lowercase();
-    match ext.as_str() {
-        "mp4" | "mov" | "mxf" | "mkv" | "avi" | "webm" | "m4v" | "mpg" | "mpeg" | "mpe" | "mpv"
-        | "m2v" | "ts" | "mts" | "m2ts" | "vob" | "ogv" | "3gp" | "3g2" | "wmv" | "flv" | "f4v"
-        | "asf" | "divx" | "r3d" | "braw" | "crm" => Kind::Video,
-        "wav" | "aiff" | "aif" | "flac" | "mp3" | "ogg" | "m4a" | "aac" | "caf" | "ac3"
-        | "eac3" | "alac" | "opus" | "wma" | "amr" | "mid" | "midi" | "wem" | "bnk" | "bank"
-        | "fsb" => Kind::Audio,
-        "png" | "jpg" | "jpeg" | "tif" | "tiff" | "exr" | "hdr" | "tga" | "bmp" | "webp"
-        | "gif" | "heic" | "heif" | "jp2" | "j2k" | "dpx" | "cin" | "dng" | "cr2" | "cr3"
-        | "nef" | "arw" | "raf" | "orf" | "rw2" | "ari" => Kind::Image,
-        "fbx" | "obj" | "gltf" | "glb" | "usd" | "usda" | "usdc" | "usdz" | "abc" | "ma" | "mb"
-        | "stl" | "ply" | "3ds" | "dae" => Kind::Model,
-        "sbsar" | "psd" | "psb" | "ktx" | "ktx2" | "dds" | "material" | "basis" | "pvr"
-        | "astc" => Kind::Texture,
-        "uproject" | "uasset" | "umap" | "unity" | "unitypackage" | "asset" | "prefab"
-        | "godot" | "tscn" | "tres" | "scn" | "res" | "pak" | "utoc" | "ucas" | "pck" | "wproj"
-        | "wwu" | "fspro" | "drp" | "dra" | "prproj" | "aep" | "aepx" | "aaf" | "edl" | "mlt"
-        | "fcpxml" | "blend" | "sbs" | "spp" => Kind::Project,
-        _ => Kind::Other,
+static ASSET_KIND_BY_EXTENSION: LazyLock<Vec<(&'static str, Kind)>> = LazyLock::new(|| {
+    const VIDEO: &[&str] = &[
+        "mp4", "mov", "mxf", "mkv", "avi", "webm", "m4v", "mpg", "mpeg", "mpe", "mpv", "m2v", "ts",
+        "mts", "m2ts", "vob", "ogv", "3gp", "3g2", "wmv", "flv", "f4v", "asf", "divx", "r3d",
+        "braw", "crm",
+    ];
+    const AUDIO: &[&str] = &[
+        "wav", "aiff", "aif", "flac", "mp3", "ogg", "m4a", "aac", "caf", "ac3", "eac3", "alac",
+        "opus", "wma", "amr", "mid", "midi", "wem", "bnk", "bank", "fsb",
+    ];
+    const IMAGE: &[&str] = &[
+        "png", "jpg", "jpeg", "tif", "tiff", "exr", "hdr", "tga", "bmp", "webp", "gif", "heic",
+        "heif", "jp2", "j2k", "dpx", "cin", "dng", "cr2", "cr3", "nef", "arw", "raf", "orf", "rw2",
+        "ari",
+    ];
+    const MODEL: &[&str] = &[
+        "fbx", "obj", "gltf", "glb", "usd", "usda", "usdc", "usdz", "abc", "ma", "mb", "stl",
+        "ply", "3ds", "dae",
+    ];
+    const TEXTURE: &[&str] = &[
+        "sbsar", "psd", "psb", "ktx", "ktx2", "dds", "material", "basis", "pvr", "astc",
+    ];
+    const PROJECT: &[&str] = &[
+        "uproject",
+        "uasset",
+        "umap",
+        "unity",
+        "unitypackage",
+        "asset",
+        "prefab",
+        "godot",
+        "tscn",
+        "tres",
+        "scn",
+        "res",
+        "pak",
+        "utoc",
+        "ucas",
+        "pck",
+        "wproj",
+        "wwu",
+        "fspro",
+        "drp",
+        "dra",
+        "prproj",
+        "aep",
+        "aepx",
+        "aaf",
+        "edl",
+        "mlt",
+        "fcpxml",
+        "blend",
+        "sbs",
+        "spp",
+    ];
+    let mut kinds = Vec::with_capacity(
+        VIDEO.len() + AUDIO.len() + IMAGE.len() + MODEL.len() + TEXTURE.len() + PROJECT.len(),
+    );
+    for (extensions, kind) in [
+        (VIDEO, Kind::Video),
+        (AUDIO, Kind::Audio),
+        (IMAGE, Kind::Image),
+        (MODEL, Kind::Model),
+        (TEXTURE, Kind::Texture),
+        (PROJECT, Kind::Project),
+    ] {
+        for extension in extensions {
+            kinds.push((*extension, kind));
+        }
     }
+    kinds.sort_unstable_by_key(|(extension, _)| *extension);
+    kinds
+});
+
+fn compare_extensions_case_insensitive(left: &str, right: &str) -> std::cmp::Ordering {
+    left.bytes()
+        .map(|byte| byte.to_ascii_lowercase())
+        .cmp(right.bytes().map(|byte| byte.to_ascii_lowercase()))
+}
+
+fn classify(path: &Path) -> Kind {
+    let Some(extension) = path.extension().and_then(|extension| extension.to_str()) else {
+        return Kind::Other;
+    };
+    ASSET_KIND_BY_EXTENSION
+        .binary_search_by(|(candidate, _)| {
+            compare_extensions_case_insensitive(candidate, extension)
+        })
+        .ok()
+        .map_or(Kind::Other, |index| ASSET_KIND_BY_EXTENSION[index].1)
 }
 
 fn human_size(size: u64) -> String {
@@ -6853,28 +6917,35 @@ fn directory_size(root: &Path) -> Result<(u64, u64), String> {
     Ok((bytes, files))
 }
 
+static PROJECT_FORMAT_BY_EXTENSION: LazyLock<Vec<(&'static str, &'static str)>> =
+    LazyLock::new(|| {
+        let mut formats = vec![
+            ("blend", "Blender"),
+            ("drp", "DaVinci Resolve"),
+            ("dra", "DaVinci Resolve Archive"),
+            ("prproj", "Adobe Premiere Pro"),
+            ("aep", "Adobe After Effects"),
+            ("aepx", "Adobe After Effects XML"),
+            ("aaf", "Advanced Authoring Format"),
+            ("edl", "Edit Decision List"),
+            ("mlt", "MLT project"),
+            ("fcpxml", "Final Cut Pro XML"),
+            ("wproj", "Wwise Project"),
+            ("wwu", "Wwise Work Unit"),
+            ("fspro", "FMOD Studio Project"),
+        ];
+        formats.sort_unstable_by_key(|(extension, _)| *extension);
+        formats
+    });
+
 fn project_file_kind(path: &str) -> Option<&'static str> {
-    match Path::new(path)
-        .extension()?
-        .to_str()?
-        .to_ascii_lowercase()
-        .as_str()
-    {
-        "blend" => Some("Blender"),
-        "drp" => Some("DaVinci Resolve"),
-        "dra" => Some("DaVinci Resolve Archive"),
-        "prproj" => Some("Adobe Premiere Pro"),
-        "aep" => Some("Adobe After Effects"),
-        "aepx" => Some("Adobe After Effects XML"),
-        "aaf" => Some("Advanced Authoring Format"),
-        "edl" => Some("Edit Decision List"),
-        "mlt" => Some("MLT project"),
-        "fcpxml" => Some("Final Cut Pro XML"),
-        "wproj" => Some("Wwise Project"),
-        "wwu" => Some("Wwise Work Unit"),
-        "fspro" => Some("FMOD Studio Project"),
-        _ => None,
-    }
+    let extension = Path::new(path).extension()?.to_str()?;
+    PROJECT_FORMAT_BY_EXTENSION
+        .binary_search_by(|(candidate, _)| {
+            compare_extensions_case_insensitive(candidate, extension)
+        })
+        .ok()
+        .map(|index| PROJECT_FORMAT_BY_EXTENSION[index].1)
 }
 
 fn json_top_level_string_field(contents: &str, field: &str) -> Option<String> {
