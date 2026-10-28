@@ -1054,9 +1054,10 @@ fn reject_symlink_components(root: &Path, relative: &Path) -> Result<(), String>
 
 fn write_organize_manifest(root: &Path, moves: &[PlannedMove]) -> Result<(), String> {
     let manifest = root.join(ORGANIZE_MANIFEST);
-    if fs::symlink_metadata(&manifest).is_ok() {
+    let temporary = root.join(ORGANIZE_MANIFEST_TEMP);
+    if fs::symlink_metadata(&manifest).is_ok() || fs::symlink_metadata(&temporary).is_ok() {
         return Err(format!(
-            "an organize undo manifest already exists at {}; run 'mediaforge undo {}' first",
+            "an organize undo manifest or recovery file already exists under {}; run 'mediaforge undo {}' first",
             manifest.display(),
             root.display()
         ));
@@ -1095,109 +1096,16 @@ fn write_organize_manifest(root: &Path, moves: &[PlannedMove]) -> Result<(), Str
     Ok(())
 }
 
-fn write_manifest_file(path: &Path, moves: &[PlannedMove]) -> Result<(), String> {
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)
-        .map_err(|error| format!("cannot create undo manifest {}: {error}", path.display()))?;
-    let write_result = (|| -> io::Result<()> {
-        file.write_all(ORGANIZE_MAGIC)?;
-        let count = u32::try_from(moves.len())
-            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "too many moved files"))?;
-        file.write_all(&count.to_le_bytes())?;
-        for movement in moves {
-            let from = movement.from.as_bytes();
-            let to = movement.to.as_bytes();
-            let from_len = u32::try_from(from.len()).map_err(|_| {
-                io::Error::new(io::ErrorKind::InvalidInput, "source path is too long")
-            })?;
-            let to_len = u32::try_from(to.len()).map_err(|_| {
-                io::Error::new(io::ErrorKind::InvalidInput, "destination path is too long")
-            })?;
-            file.write_all(&from_len.to_le_bytes())?;
-            file.write_all(from)?;
-            file.write_all(&to_len.to_le_bytes())?;
-            file.write_all(to)?;
-        }
-        file.sync_all()
-    })();
-    drop(file);
-    if let Err(error) = write_result {
-        let _ = fs::remove_file(path);
-        return Err(format!("could not write undo manifest: {error}"));
-    }
-    Ok(())
-}
-
-#[cfg(unix)]
-fn replace_manifest_file(temporary: &Path, manifest: &Path) -> io::Result<()> {
-    fs::rename(temporary, manifest)
-}
-
-#[cfg(windows)]
-fn replace_manifest_file(temporary: &Path, manifest: &Path) -> io::Result<()> {
-    use std::os::windows::ffi::OsStrExt;
-
-    const MOVEFILE_REPLACE_EXISTING: u32 = 0x1;
-    const MOVEFILE_WRITE_THROUGH: u32 = 0x8;
-
-    unsafe extern "system" {
-        fn MoveFileExW(
-            existing_file_name: *const u16,
-            new_file_name: *const u16,
-            flags: u32,
-        ) -> i32;
-    }
-
-    let existing = temporary
-        .as_os_str()
-        .encode_wide()
-        .chain(Some(0))
-        .collect::<Vec<_>>();
-    let new = manifest
-        .as_os_str()
-        .encode_wide()
-        .chain(Some(0))
-        .collect::<Vec<_>>();
-    let result = unsafe {
-        MoveFileExW(
-            existing.as_ptr(),
-            new.as_ptr(),
-            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
-        )
-    };
-    if result == 0 {
-        Err(io::Error::last_os_error())
-    } else {
-        Ok(())
-    }
-}
-
-#[cfg(not(any(unix, windows)))]
-fn replace_manifest_file(temporary: &Path, manifest: &Path) -> io::Result<()> {
-    fs::rename(temporary, manifest)
-}
-
-fn replace_organize_manifest(root: &Path, moves: &[PlannedMove]) -> Result<(), String> {
+fn read_organize_manifest(root: &Path) -> Result<Vec<PlannedMove>, String> {
     let manifest = root.join(ORGANIZE_MANIFEST);
     let temporary = root.join(ORGANIZE_MANIFEST_TEMP);
-    if fs::symlink_metadata(&temporary).is_ok() {
-        return Err(format!(
-            "temporary undo manifest already exists: {}",
-            temporary.display()
-        ));
-    }
-    write_manifest_file(&temporary, moves)?;
-    if let Err(error) = replace_manifest_file(&temporary, &manifest) {
-        let _ = fs::remove_file(&temporary);
-        return Err(format!("could not install updated undo manifest: {error}"));
-    }
-    Ok(())
-}
-
-fn read_organize_manifest(root: &Path) -> Result<Vec<PlannedMove>, String> {
-    let path = root.join(ORGANIZE_MANIFEST);
+    let path = match fs::symlink_metadata(&temporary) {
+        Ok(_) => &temporary,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => &manifest,
+        Err(error) => {
+            return Err(format!("cannot inspect temporary undo manifest: {error}"));
+        }
+    };
     let metadata = fs::symlink_metadata(&path)
         .map_err(|error| format!("no organize undo manifest found: {error}"))?;
     if metadata.file_type().is_symlink() || !metadata.is_file() {
@@ -1233,6 +1141,23 @@ fn read_organize_manifest(root: &Path) -> Result<Vec<PlannedMove>, String> {
         return Err("undo manifest contains trailing data".to_owned());
     }
     Ok(moves)
+}
+
+fn remove_organize_manifests(root: &Path) -> Result<(), String> {
+    for name in [ORGANIZE_MANIFEST_TEMP, ORGANIZE_MANIFEST] {
+        let path = root.join(name);
+        match fs::remove_file(&path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(format!(
+                    "could not remove undo recovery file {}: {error}",
+                    path.display()
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn read_manifest_u32(cursor: &mut Cursor<&[u8]>) -> Result<u32, String> {
@@ -1408,12 +1333,6 @@ fn run_organize(args: &[String]) -> Result<(), String> {
             ));
         }
         moved += 1;
-        if let Err(manifest_error) = replace_organize_manifest(&root, &moves[..moved]) {
-            return Err(format!(
-                "moved {moved} file(s), but could not update recovery manifest: {manifest_error}; the previous manifest remains at {}",
-                root.join(ORGANIZE_MANIFEST).display()
-            ));
-        }
     }
     println!(
         "Moved {moved} file(s). Undo manifest: {}",
@@ -1482,9 +1401,7 @@ fn run_undo(args: &[String]) -> Result<(), String> {
         }
     }
     if conflicts == 0 {
-        fs::remove_file(root.join(ORGANIZE_MANIFEST)).map_err(|error| {
-            format!("restored files, but could not remove undo manifest: {error}")
-        })?;
+        remove_organize_manifests(&root)?;
         println!("Restored {restored} file(s); undo manifest removed.");
     } else {
         println!(
@@ -1882,8 +1799,14 @@ fn run_pack(args: &[String]) -> Result<(), String> {
     })();
     drop(archive);
     if let Err(error) = write_result {
-        let _ = fs::remove_file(&output_path);
-        return Err(error);
+        return match fs::remove_file(&output_path) {
+            Ok(()) => Err(error),
+            Err(cleanup_error) if cleanup_error.kind() == io::ErrorKind::NotFound => Err(error),
+            Err(cleanup_error) => Err(format!(
+                "{error}; incomplete archive could not be removed at {}: {cleanup_error}",
+                output_path.display()
+            )),
+        };
     }
     let archive_size = fs::metadata(&output_path)
         .map_err(|error| format!("archive was created but could not be inspected: {error}"))?
