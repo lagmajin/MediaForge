@@ -499,6 +499,7 @@ struct StrictWalkFilters<'a> {
     min_size: Option<u64>,
     max_size: Option<u64>,
     excluded_subtree: Option<&'a Path>,
+    exclude_path_contains_lower: Option<&'a [String]>,
 }
 
 fn walk_strict_filtered(
@@ -547,6 +548,10 @@ fn walk_strict_filtered(
                     || filters
                         .excluded_subtree
                         .is_some_and(|excluded| path.starts_with(excluded))
+                    || filters.exclude_path_contains_lower.is_some_and(|values| {
+                        let relative_lower = relative.to_lowercase();
+                        values.iter().any(|value| relative_lower.contains(value))
+                    })
                 {
                     continue;
                 }
@@ -556,7 +561,13 @@ fn walk_strict_filtered(
                     Cow::Owned(rules) => Arc::from(rules),
                 };
                 pending.push((path, child_ignored));
-            } else if file_type.is_file() && !is_ignored(&relative, &active_ignored) {
+            } else if file_type.is_file()
+                && !is_ignored(&relative, &active_ignored)
+                && !filters.exclude_path_contains_lower.is_some_and(|values| {
+                    let relative_lower = relative.to_lowercase();
+                    values.iter().any(|value| relative_lower.contains(value))
+                })
+            {
                 let extension = path
                     .extension()
                     .and_then(|value| value.to_str())
@@ -1954,6 +1965,7 @@ fn run_dupes(args: &[String]) -> Result<(), String> {
         min_size: Some(min_size),
         max_size,
         excluded_subtree: None,
+        exclude_path_contains_lower: None,
     };
     walk_strict_filtered(
         &root,
@@ -3599,7 +3611,7 @@ fn fraction_ceil_scaled(fraction: &str, multiplier: u128) -> u128 {
 fn print_help() {
     println!(
         "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge doctor [--json]\n  mediaforge scan-config <init|validate|show> [FILE] [--json]\n  mediaforge scan [PATH] [--json|--csv] [--csv-info] [--show-filters] [--include-hidden] [--strict] [--no-same-size] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--modified-since UNIX_SECONDS] [--modified-until UNIX_SECONDS] [--modified-within DURATION] [--path-contains TEXT ...] [--exclude-path-contains TEXT ...] [--extension EXTENSIONS ...] [--largest N] [--sort path|size|modified] [--settings FILE]\n  mediaforge dupes [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--top-groups N] [--jobs N]\n  mediaforge probe <FILE> [--compact] [--summary]\n  mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--type video|audio] [--min-size SIZE] [--max-size SIZE] [--jobs N] [--summary] [--compare] [--csv]\n  mediaforge storyboard <VIDEO> --output <IMAGE> [--interval SECONDS] [--columns N] [--rows N] [--width PIXELS]\n  mediaforge scene-detect-dir <PATH> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--fps RATE] [--extension EXTENSIONS] [--include-hidden] [--jobs N]\n  mediaforge scene-detect <VIDEO> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--format jsonl|csv] [--fps RATE]\n  mediaforge proxy <VIDEO> --output <FILE.mp4> [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge proxy-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET] [--jobs N] [--skip-existing] [--json]\n  mediaforge proxy-config init [FILE] [--profile fast|balanced|quality] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge extract-audio <VIDEO> --output <FILE> [--format mp3|wav|flac] [--bitrate RATE] [--stream N]\n  mediaforge extract-audio-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--format mp3|wav|flac] [--bitrate RATE] [--stream N] [--jobs N] [--skip-existing] [--json]\n  mediaforge snapshot [PATH] (--output FILE [--overwrite] | --diff FILE [--update]) [--json|--csv] [--include-hidden] [--include-generated] [--hash] [--jobs N] [--fail-on-change]\n  mediaforge project [PATH] [--json]\n  mediaforge unity-meta [PROJECT_PATH] [--json] [--include-hidden]\n  mediaforge gitignore [PATH] [--apply] [--json]\n  mediaforge organize [PATH] [--by type|extension|size] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--apply]\n  mediaforge rename [PATH] [--replace OLD NEW] [--prefix TEXT] [--suffix TEXT] [--extension-case keep|lower|upper] [--extension EXTENSIONS] [--include-hidden] [--json] [--apply]
-  mediaforge sequence [PATH] [--prefix NAME] [--start N] [--padding N] [--extension EXTENSIONS] [--include-hidden] [--natural] [--json] [--apply]\n  mediaforge undo [PATH] [--json]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--include-hidden] [--include-generated] [--dry-run] [--json] [--list]\n  mediaforge --version\n  mediaforge --help"
+  mediaforge sequence [PATH] [--prefix NAME] [--start N] [--padding N] [--extension EXTENSIONS] [--include-hidden] [--natural] [--json] [--apply]\n  mediaforge undo [PATH] [--json]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--exclude-path-contains TEXT ...] [--include-hidden] [--include-generated] [--dry-run] [--json] [--list]\n  mediaforge --version\n  mediaforge --help"
     );
 }
 
@@ -4116,6 +4128,7 @@ fn run_probe_dir(args: &[String]) -> Result<(), String> {
         min_size: Some(min_size),
         max_size,
         excluded_subtree: None,
+        exclude_path_contains_lower: None,
     };
     walk_strict_filtered(
         &root,
@@ -9597,6 +9610,7 @@ fn print_pack_json(
     output_exists: bool,
     min_size: u64,
     max_size: Option<u64>,
+    exclude_path_contains: &[String],
     files: usize,
     input_bytes: u64,
     estimated_archive_bytes: u64,
@@ -9615,6 +9629,14 @@ fn print_pack_json(
         Some(size) => println!("  \"max_size_bytes\": {size},"),
         None => println!("  \"max_size_bytes\": null,"),
     }
+    println!(
+        "  \"exclude_path_contains\": [{}],",
+        exclude_path_contains
+            .iter()
+            .map(|value| json_string(value))
+            .collect::<Vec<_>>()
+            .join(",")
+    );
     println!("  \"files\": {files},");
     println!("  \"input_bytes\": {input_bytes},");
     println!("  \"estimated_archive_bytes\": {estimated_archive_bytes},");
@@ -9658,6 +9680,7 @@ fn run_pack(args: &[String]) -> Result<(), String> {
     let mut list_entries = false;
     let mut selected_types: Option<HashSet<Kind>> = None;
     let mut selected_extensions: Option<HashSet<String>> = None;
+    let mut exclude_path_contains = Vec::<String>::new();
     let mut min_size = 0_u64;
     let mut max_size = None;
     let mut iter = args.iter();
@@ -9686,6 +9709,15 @@ fn run_pack(args: &[String]) -> Result<(), String> {
                 })?;
                 selected_extensions = Some(parse_extensions(value)?);
             }
+            "--exclude-path-contains" => {
+                let value = iter
+                    .next()
+                    .ok_or_else(|| "--exclude-path-contains requires a substring".to_owned())?;
+                if value.is_empty() {
+                    return Err("--exclude-path-contains cannot be empty".to_owned());
+                }
+                exclude_path_contains.push(value.clone());
+            }
             "--min-size" => {
                 let value = iter
                     .next()
@@ -9700,7 +9732,7 @@ fn run_pack(args: &[String]) -> Result<(), String> {
             }
             "--help" | "-h" => {
                 println!(
-                    "Usage: mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--include-hidden] [--include-generated] [--dry-run] [--json] [--list]\n\nCreate an uncompressed, stream-written tar archive. --type accepts comma-separated scan types: video, audio, image, model, texture, project, other. --extension accepts comma-separated extensions such as mov,mxf; use none for files without an extension. --min-size and --max-size accept bytes or K/M/G/T binary units. Git-ignored and hidden files are skipped by default. Common Unity, Unreal, and Godot generated folders are excluded unless --include-generated is used. PAX extensions support long paths and files larger than 8 GiB. --json emits a machine-readable result summary; --list includes per-file paths, sizes, and types in text or JSON output."
+                    "Usage: mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--exclude-path-contains TEXT ...] [--include-hidden] [--include-generated] [--dry-run] [--json] [--list]\n\nCreate an uncompressed, stream-written tar archive. --type accepts comma-separated scan types: video, audio, image, model, texture, project, other. --extension accepts comma-separated extensions such as mov,mxf; use none for files without an extension. --min-size and --max-size accept bytes or K/M/G/T binary units. Repeat --exclude-path-contains to omit matching relative paths; matching directory names prune their subtrees. Git-ignored and hidden files are skipped by default. Common Unity, Unreal, and Godot generated folders are excluded unless --include-generated is used. PAX extensions support long paths and files larger than 8 GiB. --json emits a machine-readable result summary; --list includes per-file paths, sizes, and types in text or JSON output."
                 );
                 return Ok(());
             }
@@ -9761,6 +9793,10 @@ fn run_pack(args: &[String]) -> Result<(), String> {
     if !include_generated {
         skip_dirs.extend_from_slice(PACK_GENERATED_DIRS);
     }
+    let exclude_path_contains_lower = exclude_path_contains
+        .iter()
+        .map(|value| value.to_lowercase())
+        .collect::<Vec<_>>();
     let kinds = selected_types
         .as_ref()
         .map(|types| types.iter().copied().collect::<Vec<_>>());
@@ -9770,6 +9806,7 @@ fn run_pack(args: &[String]) -> Result<(), String> {
         min_size: Some(min_size),
         max_size,
         excluded_subtree: None,
+        exclude_path_contains_lower: Some(&exclude_path_contains_lower),
     };
     walk_strict_filtered(
         &root,
@@ -9846,6 +9883,7 @@ fn run_pack(args: &[String]) -> Result<(), String> {
                 output_exists,
                 min_size,
                 max_size,
+                &exclude_path_contains,
                 entries.len(),
                 total_bytes,
                 estimated_archive_bytes,
@@ -9965,6 +10003,7 @@ fn run_pack(args: &[String]) -> Result<(), String> {
             true,
             min_size,
             max_size,
+            &exclude_path_contains,
             entries.len(),
             total_bytes,
             estimated_archive_bytes,
