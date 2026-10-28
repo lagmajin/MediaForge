@@ -2257,7 +2257,7 @@ fn validate_archive_component(component: &str) -> Result<(), String> {
         || component.ends_with(' ')
         || component
             .chars()
-            .any(|character| character.is_control() || "<>\"|?*:\\/".contains(character))
+            .any(|character| character <= '\u{1f}' || "<>\"|?*:\\/".contains(character))
     {
         return Err(format!(
             "path component is not portable to Windows: {component:?}"
