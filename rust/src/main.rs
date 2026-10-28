@@ -9045,11 +9045,10 @@ fn run_gitignore(args: &[String]) -> Result<(), String> {
         return Err(format!("expected a project directory: {}", root.display()));
     }
 
-    let mut entries = fs::read_dir(&root)
+    let entries = fs::read_dir(&root)
         .map_err(|error| format!("cannot read project directory {}: {error}", root.display()))?
         .map(|entry| entry.map_err(|error| format!("cannot read project directory entry: {error}")))
         .collect::<Result<Vec<_>, _>>()?;
-    sort_entries(&mut entries);
     let unity = is_real_directory(&root.join("Assets"))
         || is_real_file(&root.join("ProjectSettings/ProjectVersion.txt"));
     let mut unreal = false;
