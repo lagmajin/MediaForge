@@ -2340,15 +2340,22 @@ fn files_identical(
     let mut right = fs::File::open(right)?;
     left_buffer.resize(capacity, 0);
     right_buffer.resize(capacity, 0);
+    let mut remaining = size;
     loop {
-        let left_count = read_up_to_full_or_eof(&mut left, &mut left_buffer[..capacity])?;
-        let right_count = read_up_to_full_or_eof(&mut right, &mut right_buffer[..capacity])?;
+        let requested = if remaining == 0 {
+            capacity
+        } else {
+            remaining.min(capacity as u64) as usize
+        };
+        let left_count = read_up_to_full_or_eof(&mut left, &mut left_buffer[..requested])?;
+        let right_count = read_up_to_full_or_eof(&mut right, &mut right_buffer[..requested])?;
         if left_count != right_count || left_buffer[..left_count] != right_buffer[..right_count] {
             return Ok(false);
         }
         if left_count == 0 {
             return Ok(true);
         }
+        remaining = remaining.saturating_sub(left_count as u64);
     }
 }
 
