@@ -2607,28 +2607,36 @@ fn run_scan_config(args: &[String]) -> Result<(), String> {
             .map_err(|error| format!("cannot read scan settings {}: {error}", path.display()))?;
         parse_scan_settings(&contents, &path)?;
         if json {
-            let mut settings = Vec::new();
-            for line in contents
-                .strip_prefix('\u{feff}')
-                .unwrap_or(&contents)
-                .lines()
-            {
-                let line = line.trim();
-                if line.is_empty() || line.starts_with('#') {
-                    continue;
+            write_json_stdout("scan settings JSON", |output| {
+                write!(
+                    output,
+                    "{{\"schema_version\":1,\"type\":\"scan_settings\",\"path\":"
+                )?;
+                write_json_string(output, &path.to_string_lossy())?;
+                output.write_all(b",\"settings\":[")?;
+                let mut first = true;
+                for line in contents
+                    .strip_prefix('\u{feff}')
+                    .unwrap_or(&contents)
+                    .lines()
+                {
+                    let line = line.trim();
+                    if line.is_empty() || line.starts_with('#') {
+                        continue;
+                    }
+                    let (key, value) = line.split_once('=').expect("settings were validated");
+                    if !first {
+                        output.write_all(b",")?;
+                    }
+                    first = false;
+                    output.write_all(b"{\"key\":")?;
+                    write_json_string(output, key.trim())?;
+                    output.write_all(b",\"value\":")?;
+                    write_json_string(output, value.trim())?;
+                    output.write_all(b"}")?;
                 }
-                let (key, value) = line.split_once('=').expect("settings were validated");
-                settings.push(format!(
-                    "{{\"key\":{},\"value\":{}}}",
-                    json_string(key.trim()),
-                    json_string(value.trim())
-                ));
-            }
-            println!(
-                "{{\"schema_version\":1,\"type\":\"scan_settings\",\"path\":{},\"settings\":[{}]}}",
-                json_string(&path.to_string_lossy()),
-                settings.join(",")
-            );
+                output.write_all(b"]}\n")
+            })?;
             return Ok(());
         }
         println!("Active scan settings from {}", path.display());
