@@ -4080,7 +4080,7 @@ fn run_probe_dir(args: &[String]) -> Result<(), String> {
             }
             "--help" | "-h" => {
                 println!(
-                    "Usage: mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--type video|audio] [--min-size SIZE] [--max-size SIZE] [--jobs N] [--summary] [--compare] [--csv]\n\nProbe video and audio assets in a directory with ffprobe. Emits one JSON Lines record per file by default. --csv writes one row per file with common video/audio metadata; failed probes are included with an error. --type filters to video or audio assets and selects only that stream type in the report. --min-size and --max-size filter file sizes before probing and accept bytes or K/M/G/T units. --jobs controls concurrent ffprobe processes (1–32). --summary selects compact fields. --compare implies --summary and emits only first-stream media-spec fields that differ across files, grouped by value. Use --type to compare video or audio streams consistently."
+                    "Usage: mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--type video|audio] [--min-size SIZE] [--max-size SIZE] [--jobs N] [--summary] [--compare] [--csv]\n\nProbe video and audio assets in a directory with ffprobe. Streams one JSON Lines result per file as probing finishes, with a completion counter. --csv writes one row per file with common video/audio metadata; failed probes are included with an error. --type filters to video or audio assets and selects only that stream type in the report. --min-size and --max-size filter file sizes before probing and accept bytes or K/M/G/T units. --jobs controls concurrent ffprobe processes (1–32). --summary selects compact fields. --compare implies --summary and emits only first-stream media-spec fields that differ across files, grouped by value. Use --type to compare video or audio streams consistently."
                 );
                 return Ok(());
             }
@@ -4140,6 +4140,9 @@ fn run_probe_dir(args: &[String]) -> Result<(), String> {
     }
 
     let next = std::sync::atomic::AtomicUsize::new(0);
+    let completed = std::sync::atomic::AtomicUsize::new(0);
+    let stream_results = !csv && !compare;
+    let stream_output = std::sync::Mutex::new(());
     let results = std::sync::Mutex::new(
         Vec::<(usize, bool, String, Option<String>)>::with_capacity(records.len()),
     );
@@ -4178,10 +4181,22 @@ fn run_probe_dir(args: &[String]) -> Result<(), String> {
                             None,
                         ),
                     };
-                    results
-                        .lock()
-                        .expect("probe result mutex poisoned")
-                        .push((index, success, json, probe));
+                    if stream_results {
+                        let _guard = stream_output.lock().expect("probe output lock poisoned");
+                        let current =
+                            completed.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                        println!(
+                            "{{\"current\":{current},\"total\":{},{}",
+                            records.len(),
+                            &json[1..]
+                        );
+                    }
+                    results.lock().expect("probe result mutex poisoned").push((
+                        index,
+                        success,
+                        if stream_results { String::new() } else { json },
+                        if stream_results { None } else { probe },
+                    ));
                 }
             });
         }
@@ -4189,7 +4204,9 @@ fn run_probe_dir(args: &[String]) -> Result<(), String> {
     let mut results = results
         .into_inner()
         .map_err(|_| "probe results could not be collected".to_owned())?;
-    results.sort_by_key(|(index, _, _, _)| *index);
+    if !stream_results {
+        results.sort_by_key(|(index, _, _, _)| *index);
+    }
     let failures = results.iter().filter(|(_, success, _, _)| !success).count();
     if compare {
         summarize_probe_differences(&records, &results)?;
@@ -4212,13 +4229,6 @@ fn run_probe_dir(args: &[String]) -> Result<(), String> {
                 &error,
                 probe.as_deref(),
             )?;
-        }
-    } else {
-        let stdout = io::stdout();
-        let mut stdout = stdout.lock();
-        for (_, _, record, _) in &results {
-            writeln!(stdout, "{record}")
-                .map_err(|error| format!("could not write probe results: {error}"))?;
         }
     }
     if failures > 0 {
