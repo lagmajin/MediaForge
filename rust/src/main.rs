@@ -1676,7 +1676,7 @@ struct ScanFilterPreviewOptions<'a> {
     filters: ScanFilterOptions<'a>,
 }
 
-fn print_scan_filter_preview(options: ScanFilterPreviewOptions<'_>) {
+fn print_scan_filter_preview(options: ScanFilterPreviewOptions<'_>) -> Result<(), String> {
     let ScanFilterPreviewOptions {
         path,
         json,
@@ -1700,21 +1700,24 @@ fn print_scan_filter_preview(options: ScanFilterPreviewOptions<'_>) {
         Some(ScanCsvSort::Modified) => "modified",
         None => "scan",
     };
-    println!(
-        "{{\"schema_version\":1,\"type\":\"scan_filter_preview\",\"scan_performed\":false,\"root\":{},\"output_format\":{},\"csv_order\":{},\"largest_limit\":{},\"largest_limit_default\":{},\"largest_limit_source\":{},\"largest_limit_applies\":{},\"filters\":{}}}",
-        json_string(&path.to_string_lossy()),
-        json_string(output_format),
-        json_string(csv_order),
-        largest_limit,
-        largest_limit_default,
-        json_string(if largest_limit_is_explicit {
-            "explicit"
-        } else {
-            "default"
-        }),
-        !csv,
-        scan_filters_json(filters),
-    );
+    write_json_stdout("scan filter preview JSON", |output| {
+        writeln!(
+            output,
+            "{{\"schema_version\":1,\"type\":\"scan_filter_preview\",\"scan_performed\":false,\"root\":{},\"output_format\":{},\"csv_order\":{},\"largest_limit\":{},\"largest_limit_default\":{},\"largest_limit_source\":{},\"largest_limit_applies\":{},\"filters\":{}}}",
+            json_string(&path.to_string_lossy()),
+            json_string(output_format),
+            json_string(csv_order),
+            largest_limit,
+            largest_limit_default,
+            json_string(if largest_limit_is_explicit {
+                "explicit"
+            } else {
+                "default"
+            }),
+            !csv,
+            scan_filters_json(filters),
+        )
+    })
 }
 
 fn compare_paths_case_insensitive(left: &str, right: &str) -> std::cmp::Ordering {
@@ -3372,7 +3375,7 @@ fn run_scan(args: &[String]) -> Result<(), String> {
                 include_hidden,
                 strict,
             },
-        });
+        })?;
         return Ok(());
     }
     let root =
