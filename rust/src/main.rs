@@ -2027,9 +2027,14 @@ fn run_scan_config(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-fn files_identical(left: &Path, right: &Path) -> io::Result<bool> {
-    let mut left = BufReader::new(fs::File::open(left)?);
-    let mut right = BufReader::new(fs::File::open(right)?);
+fn files_identical(left: &Path, right: &Path, size: u64) -> io::Result<bool> {
+    const DEFAULT_BUFFER_SIZE: usize = 8 * 1024;
+    const MAX_BUFFER_SIZE: usize = 256 * 1024;
+    let capacity = usize::try_from(size)
+        .unwrap_or(MAX_BUFFER_SIZE)
+        .clamp(DEFAULT_BUFFER_SIZE, MAX_BUFFER_SIZE);
+    let mut left = BufReader::with_capacity(capacity, fs::File::open(left)?);
+    let mut right = BufReader::with_capacity(capacity, fs::File::open(right)?);
     loop {
         let (left_empty, right_empty, count, equal) = {
             let left_chunk = left.fill_buf()?;
@@ -2405,7 +2410,7 @@ fn run_dupes(args: &[String]) -> Result<(), String> {
             let mut matched = false;
             for group in candidates.iter_mut() {
                 let representative = root.join(paths[group.representative].as_ref());
-                match files_identical(&representative, &candidate) {
+                match files_identical(&representative, &candidate, size) {
                     Ok(true) => {
                         group.count += 1;
                         if retain_group_paths {
