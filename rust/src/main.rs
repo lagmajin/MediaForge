@@ -1380,7 +1380,7 @@ fn fraction_ceil_scaled(fraction: &str, multiplier: u128) -> u128 {
 
 fn print_help() {
     println!(
-        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json|--csv] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS] [--largest N]\n  mediaforge dupes [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--top-groups N]\n  mediaforge probe <FILE> [--compact] [--summary]\n  mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--type video|audio] [--min-size SIZE] [--max-size SIZE] [--jobs N] [--summary] [--compare] [--csv]\n  mediaforge storyboard <VIDEO> --output <IMAGE> [--interval SECONDS] [--columns N] [--rows N] [--width PIXELS]\n  mediaforge scene-detect <VIDEO> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--format jsonl|csv] [--fps RATE]\n  mediaforge proxy <VIDEO> --output <FILE.mp4> [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge proxy-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET] [--jobs N] [--skip-existing] [--json]\n  mediaforge proxy-config init [FILE] [--profile fast|balanced|quality] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge extract-audio <VIDEO> --output <FILE> [--format mp3|wav|flac] [--bitrate RATE] [--stream N]\n  mediaforge extract-audio-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--format mp3|wav|flac] [--bitrate RATE] [--stream N] [--jobs N] [--skip-existing] [--json]\n  mediaforge project [PATH] [--json]\n  mediaforge gitignore [PATH] [--apply]\n  mediaforge organize [PATH] [--by type|extension|size] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--apply]\n  mediaforge sequence [PATH] [--prefix NAME] [--start N] [--padding N] [--extension EXTENSIONS] [--include-hidden] [--natural] [--json] [--apply]\n  mediaforge undo [PATH] [--json]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--include-hidden] [--include-generated] [--dry-run] [--json] [--list]\n  mediaforge --version\n  mediaforge --help"
+        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json|--csv] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS] [--largest N]\n  mediaforge dupes [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--top-groups N]\n  mediaforge probe <FILE> [--compact] [--summary]\n  mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--type video|audio] [--min-size SIZE] [--max-size SIZE] [--jobs N] [--summary] [--compare] [--csv]\n  mediaforge storyboard <VIDEO> --output <IMAGE> [--interval SECONDS] [--columns N] [--rows N] [--width PIXELS]\n  mediaforge scene-detect-dir <PATH> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--fps RATE] [--extension EXTENSIONS] [--include-hidden] [--jobs N]\n  mediaforge scene-detect <VIDEO> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--format jsonl|csv] [--fps RATE]\n  mediaforge proxy <VIDEO> --output <FILE.mp4> [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge proxy-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET] [--jobs N] [--skip-existing] [--json]\n  mediaforge proxy-config init [FILE] [--profile fast|balanced|quality] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge extract-audio <VIDEO> --output <FILE> [--format mp3|wav|flac] [--bitrate RATE] [--stream N]\n  mediaforge extract-audio-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--format mp3|wav|flac] [--bitrate RATE] [--stream N] [--jobs N] [--skip-existing] [--json]\n  mediaforge project [PATH] [--json]\n  mediaforge gitignore [PATH] [--apply]\n  mediaforge organize [PATH] [--by type|extension|size] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--apply]\n  mediaforge sequence [PATH] [--prefix NAME] [--start N] [--padding N] [--extension EXTENSIONS] [--include-hidden] [--natural] [--json] [--apply]\n  mediaforge undo [PATH] [--json]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--include-hidden] [--include-generated] [--dry-run] [--json] [--list]\n  mediaforge --version\n  mediaforge --help"
     );
 }
 
@@ -2541,6 +2541,196 @@ fn run_scene_detect(args: &[String]) -> Result<(), String> {
             "{{\"type\":\"summary\",\"path\":{source},\"cuts\":{},\"fps\":{fps:.6},\"nominal_fps\":{nominal_fps},\"threshold\":{threshold:.6},\"min_gap_seconds\":{min_gap:.6}}}",
             cuts.len()
         );
+    }
+    Ok(())
+}
+
+fn run_scene_detect_dir(args: &[String]) -> Result<(), String> {
+    const MAX_JOBS: usize = 16;
+    let mut root = None;
+    let mut threshold = 0.4_f64;
+    let mut min_gap = 1.0_f64;
+    let mut segments = false;
+    let mut include_hidden = false;
+    let mut extensions = None;
+    let mut fps = None;
+    let mut jobs = std::thread::available_parallelism()
+        .map(usize::from)
+        .unwrap_or(1)
+        .min(4);
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--threshold" => {
+                let value = iter
+                    .next()
+                    .ok_or_else(|| "--threshold requires a value from 0 to 1".to_owned())?;
+                threshold = value
+                    .parse::<f64>()
+                    .map_err(|_| format!("invalid scene threshold '{value}'"))?;
+                if !threshold.is_finite() || !(0.0..=1.0).contains(&threshold) {
+                    return Err("--threshold must be between 0 and 1".to_owned());
+                }
+            }
+            "--min-gap" => {
+                let value = iter
+                    .next()
+                    .ok_or_else(|| "--min-gap requires seconds".to_owned())?;
+                min_gap = value
+                    .parse::<f64>()
+                    .map_err(|_| format!("invalid minimum gap '{value}'"))?;
+                if !min_gap.is_finite() || min_gap < 0.0 {
+                    return Err("--min-gap must be a non-negative number of seconds".to_owned());
+                }
+            }
+            "--fps" => {
+                let value = iter
+                    .next()
+                    .ok_or_else(|| "--fps requires a rate such as 30 or 30000/1001".to_owned())?;
+                fps = Some(parse_requested_fps(value)?);
+            }
+            "--extension" => {
+                let value = iter.next().ok_or_else(|| {
+                    "--extension requires a comma-separated extension list".to_owned()
+                })?;
+                extensions = Some(parse_extensions(value)?);
+            }
+            "--jobs" => {
+                let value = iter
+                    .next()
+                    .ok_or_else(|| "--jobs requires a positive integer".to_owned())?;
+                jobs = value
+                    .parse::<usize>()
+                    .map_err(|_| format!("invalid --jobs value '{value}'"))?;
+                if jobs == 0 || jobs > MAX_JOBS {
+                    return Err(format!("--jobs must be between 1 and {MAX_JOBS}"));
+                }
+            }
+            "--segments" => segments = true,
+            "--include-hidden" => include_hidden = true,
+            "--help" | "-h" => {
+                println!(
+                    "Usage: mediaforge scene-detect-dir <PATH> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--fps RATE] [--extension EXTENSIONS] [--include-hidden] [--jobs N]\n\nFind likely scene cuts in every video under a directory. Emits JSON Lines records in stable path order, followed by a batch summary. --segments emits contiguous intervals instead of individual cuts. --jobs controls concurrent FFmpeg processes (1–16; default 4)."
+                );
+                return Ok(());
+            }
+            value if value.starts_with('-') => return Err(format!("unknown option: {value}")),
+            value => {
+                if root.is_some() {
+                    return Err("scene-detect-dir accepts one directory path".to_owned());
+                }
+                root = Some(PathBuf::from(value));
+            }
+        }
+    }
+    let root = root.ok_or_else(|| "scene-detect-dir requires a directory path".to_owned())?;
+    let root = fs::canonicalize(&root)
+        .map_err(|error| format!("cannot access {}: {error}", root.display()))?;
+    if !root.is_dir() {
+        return Err(format!("expected a directory: {}", root.display()));
+    }
+    let ignored = ignored_by_git(&root)?;
+    let mut records = Vec::new();
+    walk_strict(
+        &root,
+        &root,
+        include_hidden,
+        SKIP_DIRS,
+        &ignored,
+        &mut records,
+    )?;
+    records.retain(|record| record.kind == Kind::Video);
+    if let Some(extensions) = extensions {
+        records.retain(|record| extensions.contains(&record.extension));
+    }
+    records.sort_by(|left, right| left.relative.cmp(&right.relative));
+
+    let executable = env::current_exe()
+        .map_err(|error| format!("could not locate the mediaforge executable: {error}"))?;
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let results = std::sync::Mutex::new(Vec::<(usize, bool, String)>::with_capacity(records.len()));
+    std::thread::scope(|scope| {
+        for _ in 0..jobs.min(records.len()) {
+            scope.spawn(|| {
+                loop {
+                    let index = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    let Some(record) = records.get(index) else {
+                        break;
+                    };
+                    let mut command = Command::new(&executable);
+                    command
+                        .arg("scene-detect")
+                        .arg(&record.path)
+                        .args(["--threshold", &threshold.to_string()])
+                        .args(["--min-gap", &min_gap.to_string()])
+                        .args(["--format", "jsonl"]);
+                    if segments {
+                        command.arg("--segments");
+                    }
+                    if let Some(fps) = fps {
+                        command.args(["--fps", &fps.to_string()]);
+                    }
+                    let result = command.output();
+                    let (success, output) = match result {
+                        Ok(output) if output.status.success() => {
+                            (true, String::from_utf8_lossy(&output.stdout).into_owned())
+                        }
+                        Ok(output) => {
+                            let message = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+                            let message = if message.is_empty() {
+                                format!("scene-detect exited with {}", output.status)
+                            } else {
+                                message
+                            };
+                            (
+                                false,
+                                format!(
+                                    "{{\"type\":\"error\",\"path\":{},\"error\":{}}}\n",
+                                    json_string(&record.path.to_string_lossy()),
+                                    json_string(&message)
+                                ),
+                            )
+                        }
+                        Err(error) => (
+                            false,
+                            format!(
+                                "{{\"type\":\"error\",\"path\":{},\"error\":{}}}\n",
+                                json_string(&record.path.to_string_lossy()),
+                                json_string(&format!("could not start scene-detect: {error}"))
+                            ),
+                        ),
+                    };
+                    results
+                        .lock()
+                        .expect("scene detection result mutex poisoned")
+                        .push((index, success, output));
+                }
+            });
+        }
+    });
+    let mut results = results
+        .into_inner()
+        .map_err(|_| "scene detection results could not be collected".to_owned())?;
+    results.sort_by_key(|(index, _, _)| *index);
+    let failed = results.iter().filter(|(_, success, _)| !success).count();
+    let stdout = io::stdout();
+    let mut stdout = stdout.lock();
+    for (_, _, output) in &results {
+        stdout
+            .write_all(output.as_bytes())
+            .map_err(|error| format!("could not write scene detection output: {error}"))?;
+    }
+    writeln!(
+        stdout,
+        "{{\"type\":\"batch_summary\",\"files\":{},\"successful\":{},\"failed\":{},\"threshold\":{threshold:.6},\"min_gap_seconds\":{min_gap:.6},\"segments\":{segments},\"fps_override\":{}}}",
+        records.len(),
+        records.len() - failed,
+        failed,
+        fps.map_or("null".to_owned(), |value| format!("{value:.6}"))
+    )
+    .map_err(|error| format!("could not write scene detection summary: {error}"))?;
+    if failed > 0 {
+        return Err(format!("scene detection failed for {failed} file(s)"));
     }
     Ok(())
 }
@@ -6655,6 +6845,7 @@ fn run() -> Result<(), String> {
         Some("probe-dir") => run_probe_dir(&args[1..]),
         Some("storyboard") => run_storyboard(&args[1..]),
         Some("scene-detect") => run_scene_detect(&args[1..]),
+        Some("scene-detect-dir") => run_scene_detect_dir(&args[1..]),
         Some("proxy") => run_proxy(&args[1..]),
         Some("proxy-dir") => run_proxy_dir(&args[1..]),
         Some("proxy-config") => run_proxy_config(&args[1..]),
