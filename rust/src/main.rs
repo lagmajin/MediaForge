@@ -828,6 +828,8 @@ fn print_scan_filter_preview(
     csv: bool,
     csv_sort: Option<ScanCsvSort>,
     largest_limit: usize,
+    largest_limit_default: usize,
+    largest_limit_is_explicit: bool,
     kind_filter: Option<Kind>,
     min_size: Option<u64>,
     max_size: Option<u64>,
@@ -854,11 +856,17 @@ fn print_scan_filter_preview(
         None => "scan",
     };
     println!(
-        "{{\"schema_version\":1,\"type\":\"scan_filter_preview\",\"scan_performed\":false,\"root\":{},\"output_format\":{},\"csv_order\":{},\"largest_limit\":{},\"largest_limit_applies\":{},\"filters\":{}}}",
+        "{{\"schema_version\":1,\"type\":\"scan_filter_preview\",\"scan_performed\":false,\"root\":{},\"output_format\":{},\"csv_order\":{},\"largest_limit\":{},\"largest_limit_default\":{},\"largest_limit_source\":{},\"largest_limit_applies\":{},\"filters\":{}}}",
         json_string(&path.to_string_lossy()),
         json_string(output_format),
         json_string(csv_order),
         largest_limit,
+        largest_limit_default,
+        json_string(if largest_limit_is_explicit {
+            "explicit"
+        } else {
+            "default"
+        }),
         !csv,
         scan_filters_json(
             kind_filter,
@@ -1932,7 +1940,7 @@ fn run_scan(args: &[String]) -> Result<(), String> {
             }
             "--help" | "-h" => {
                 println!(
-                    "Usage: mediaforge scan [PATH] [--json|--csv] [--csv-info] [--show-filters] [--include-hidden] [--strict] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--modified-since UNIX_SECONDS] [--modified-until UNIX_SECONDS] [--modified-within DURATION] [--path-contains TEXT ...] [--exclude-path-contains TEXT ...] [--extension EXTENSIONS ...] [--largest N] [--sort path|size|modified] [--settings FILE]\n\nSummarize media and game assets in a folder. --show-filters prints the resolved filters as JSON and exits without scanning the target path, so it can preview --settings plus command-line overrides. The preview reports whether --largest applies; CSV always includes all matching rows. --min-size and --max-size select an inclusive byte range; fractional size values are rounded up to whole bytes. --modified-since and --modified-until select an inclusive modification-time range in Unix seconds. --modified-within selects recent files using a duration such as 12h or 7d and cannot be combined with those absolute-time filters. --settings loads key=value scan filters; explicit command-line values are applied afterward. --path-contains selects relative paths by a case-insensitive substring; repeat it to require every substring. --exclude-path-contains removes paths matching any repeated case-insensitive substring. --extension accepts comma-separated extensions; repeat it to combine more extensions. Permission and file-system errors are skipped by default; text/JSON report incomplete scans and CSV writes warnings to stderr. JSON uses schema_version 1 and includes incomplete, skipped_paths, up to 100 skipped_path_examples, skipped_paths_truncated, and the applied filters. Use --strict to fail on the first traversal error instead. --csv emits one row per matched file with path, type, extension, byte size, and modification time in Unix seconds; it always includes all matches. Add --csv-info to write a JSON scan-info record to stderr without changing CSV stdout. Use --sort path, --sort size, or --sort modified to control CSV row order; size order is largest first and modified order is newest first, with unavailable times last and deterministic path tie-breaking. --largest controls how many biggest files are shown (default: 10 in text, 20 in JSON). Defaults to the current directory.\n\nTypes: video, audio, image, model, texture, project, other\nExtensions: comma-separated, case-insensitive (for example exr,tif); use none to select files without an extension\nSizes: bytes, KiB/MiB/GiB, or K/M/G (for example 500M); fractional values round up to the next byte"
+                    "Usage: mediaforge scan [PATH] [--json|--csv] [--csv-info] [--show-filters] [--include-hidden] [--strict] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--modified-since UNIX_SECONDS] [--modified-until UNIX_SECONDS] [--modified-within DURATION] [--path-contains TEXT ...] [--exclude-path-contains TEXT ...] [--extension EXTENSIONS ...] [--largest N] [--sort path|size|modified] [--settings FILE]\n\nSummarize media and game assets in a folder. --show-filters prints the resolved filters as JSON and exits without scanning the target path, so it can preview --settings plus command-line overrides. The preview reports whether --largest applies and whether its value is explicit or the output-format default; CSV always includes all matching rows. --min-size and --max-size select an inclusive byte range; fractional size values are rounded up to whole bytes. --modified-since and --modified-until select an inclusive modification-time range in Unix seconds. --modified-within selects recent files using a duration such as 12h or 7d and cannot be combined with those absolute-time filters. --settings loads key=value scan filters; explicit command-line values are applied afterward. --path-contains selects relative paths by a case-insensitive substring; repeat it to require every substring. --exclude-path-contains removes paths matching any repeated case-insensitive substring. --extension accepts comma-separated extensions; repeat it to combine more extensions. Permission and file-system errors are skipped by default; text/JSON report incomplete scans and CSV writes warnings to stderr. JSON uses schema_version 1 and includes incomplete, skipped_paths, up to 100 skipped_path_examples, skipped_paths_truncated, and the applied filters. Use --strict to fail on the first traversal error instead. --csv emits one row per matched file with path, type, extension, byte size, and modification time in Unix seconds; it always includes all matches. Add --csv-info to write a JSON scan-info record to stderr without changing CSV stdout. Use --sort path, --sort size, or --sort modified to control CSV row order; size order is largest first and modified order is newest first, with unavailable times last and deterministic path tie-breaking. --largest controls how many biggest files are shown (default: 10 in text, 20 in JSON). Defaults to the current directory.\n\nTypes: video, audio, image, model, texture, project, other\nExtensions: comma-separated, case-insensitive (for example exr,tif); use none to select files without an extension\nSizes: bytes, KiB/MiB/GiB, or K/M/G (for example 500M); fractional values round up to the next byte"
                 );
                 return Ok(());
             }
@@ -1976,7 +1984,9 @@ fn run_scan(args: &[String]) -> Result<(), String> {
         modified_since = Some(now.saturating_sub(within));
     }
     let path = path.unwrap_or_else(|| PathBuf::from("."));
-    let largest_limit = largest_limit.unwrap_or(if json { 20 } else { 10 });
+    let largest_limit_default = if json { 20 } else { 10 };
+    let largest_limit_is_explicit = largest_limit.is_some();
+    let largest_limit = largest_limit.unwrap_or(largest_limit_default);
     if show_filters {
         print_scan_filter_preview(
             &path,
@@ -1984,6 +1994,8 @@ fn run_scan(args: &[String]) -> Result<(), String> {
             csv,
             csv_sort,
             largest_limit,
+            largest_limit_default,
+            largest_limit_is_explicit,
             kind_filter,
             min_size,
             max_size,
