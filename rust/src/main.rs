@@ -3384,6 +3384,8 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
             true,
         )?;
     }
+    let mut ordered_size_summaries = by_size.iter().collect::<Vec<_>>();
+    ordered_size_summaries.sort_by_key(|(bucket, _)| size_category_order(bucket));
     let change_count = added + removed + modified;
     if csv {
         let stdout = io::stdout();
@@ -3454,7 +3456,7 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
             type_summary[14] = stats.modified_size_delta_bytes.to_string();
             write_snapshot_csv_row(&mut stdout, &type_summary)?;
         }
-        for (bucket, stats) in &by_size {
+        for (bucket, stats) in &ordered_size_summaries {
             let mut size_summary = vec!["size_summary".to_owned(); 16];
             size_summary[8] = stats.added.to_string();
             size_summary[9] = stats.removed.to_string();
@@ -3462,7 +3464,7 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
             size_summary[12] = stats.added_bytes.to_string();
             size_summary[13] = stats.removed_bytes.to_string();
             size_summary[14] = stats.modified_size_delta_bytes.to_string();
-            size_summary[15] = (*bucket).to_owned();
+            size_summary[15] = (**bucket).to_owned();
             write_snapshot_csv_row(&mut stdout, &size_summary)?;
         }
     } else if json {
@@ -3521,7 +3523,7 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
             })
             .collect::<Vec<_>>()
             .join(",");
-        let size_summary = by_size
+        let size_summary = ordered_size_summaries
             .iter()
             .map(|(bucket, stats)| {
                 format!(
@@ -3555,7 +3557,7 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
                 stats.added, stats.removed, stats.modified, stats.unchanged
             );
         }
-        for (bucket, stats) in &by_size {
+        for (bucket, stats) in &ordered_size_summaries {
             println!(
                 "  {bucket:<18} +{} -{} ~{}",
                 stats.added, stats.removed, stats.modified
@@ -7913,6 +7915,17 @@ fn size_category(size: u64) -> &'static str {
         size if size < 512 * MIB => "size-64-512MiB",
         size if size < 2 * GIB => "size-512MiB-2GiB",
         _ => "size-2GiB-plus",
+    }
+}
+
+fn size_category_order(category: &str) -> u8 {
+    match category {
+        "size-under-1MiB" => 0,
+        "size-1-64MiB" => 1,
+        "size-64-512MiB" => 2,
+        "size-512MiB-2GiB" => 3,
+        "size-2GiB-plus" => 4,
+        _ => u8::MAX,
     }
 }
 
