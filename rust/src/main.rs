@@ -501,6 +501,7 @@ struct StrictWalkFilters<'a> {
     excluded_subtree: Option<&'a Path>,
     exclude_path_contains_lower: Option<&'a [String]>,
     omit_absolute_path: bool,
+    omit_modified_time: bool,
 }
 
 fn walk_strict_filtered(
@@ -602,7 +603,11 @@ fn walk_strict_filtered(
                         path.clone()
                     },
                     size,
-                    modified: metadata.modified().ok(),
+                    modified: if filters.omit_modified_time {
+                        None
+                    } else {
+                        metadata.modified().ok()
+                    },
                     kind,
                     extension,
                 });
@@ -2043,6 +2048,7 @@ fn run_dupes(args: &[String]) -> Result<(), String> {
         excluded_subtree: None,
         exclude_path_contains_lower: Some(&exclude_path_contains_lower),
         omit_absolute_path: true,
+        omit_modified_time: true,
     };
     walk_strict_filtered(
         &root,
@@ -4304,6 +4310,7 @@ fn run_probe_dir(args: &[String]) -> Result<(), String> {
         excluded_subtree: None,
         exclude_path_contains_lower: None,
         omit_absolute_path: false,
+        omit_modified_time: false,
     };
     walk_strict_filtered(
         &root,
@@ -9994,6 +10001,7 @@ fn run_pack(args: &[String]) -> Result<(), String> {
         excluded_subtree: None,
         exclude_path_contains_lower: Some(&exclude_path_contains_lower),
         omit_absolute_path: false,
+        omit_modified_time: false,
     };
     walk_strict_filtered(
         &root,
