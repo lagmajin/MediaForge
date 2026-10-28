@@ -12672,22 +12672,22 @@ fn run_doctor(args: &[String]) -> Result<(), String> {
             ),
             Err(error) => format!("{{\"available\":false,\"error\":{}}}", json_string(error)),
         };
-        let stdout = io::stdout();
-        writeln!(
-            stdout.lock(),
-            "{{\"schema_version\":1,\"type\":\"doctor\",\"media_tools_ready\":{ready},\"proxy_ready\":{proxy_ready},\"audio_encoders\":{{\"mp3\":{},\"wav\":{},\"flac\":{}}},\"ffmpeg\":{},\"ffprobe\":{},\"ffmpeg_encoder_check_error\":{}}}",
-            has_encoder("libmp3lame"),
-            has_encoder("pcm_s16le"),
-            has_encoder("flac"),
-            tool_json(&ffmpeg),
-            tool_json(&ffprobe),
-            encoders
-                .as_ref()
-                .err()
-                .map(|error| json_string(error))
-                .unwrap_or_else(|| "null".to_owned())
-        )
-        .map_err(|error| format!("could not write doctor JSON: {error}"))?;
+        write_json_stdout("doctor JSON", |output| {
+            writeln!(
+                output,
+                "{{\"schema_version\":1,\"type\":\"doctor\",\"media_tools_ready\":{ready},\"proxy_ready\":{proxy_ready},\"audio_encoders\":{{\"mp3\":{},\"wav\":{},\"flac\":{}}},\"ffmpeg\":{},\"ffprobe\":{},\"ffmpeg_encoder_check_error\":{}}}",
+                has_encoder("libmp3lame"),
+                has_encoder("pcm_s16le"),
+                has_encoder("flac"),
+                tool_json(&ffmpeg),
+                tool_json(&ffprobe),
+                encoders
+                    .as_ref()
+                    .err()
+                    .map(|error| json_string(error))
+                    .unwrap_or_else(|| "null".to_owned())
+            )
+        })?;
     } else {
         println!("MediaForge {VERSION} · {}", env::consts::OS);
         for (name, result) in [("ffmpeg", ffmpeg), ("ffprobe", ffprobe)] {
