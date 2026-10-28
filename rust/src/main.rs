@@ -2445,24 +2445,21 @@ fn run_scan(args: &[String]) -> Result<(), String> {
     )?;
     if let Some(sort) = csv_sort {
         match sort {
-            ScanCsvSort::Size => records.sort_by_cached_key(|record| {
-                (
-                    std::cmp::Reverse(record.size),
-                    record.relative.to_lowercase(),
-                    record.relative.clone(),
-                )
+            ScanCsvSort::Size => records.sort_unstable_by(|left, right| {
+                std::cmp::Reverse(left.size)
+                    .cmp(&std::cmp::Reverse(right.size))
+                    .then_with(|| compare_paths_case_insensitive(&left.relative, &right.relative))
             }),
             ScanCsvSort::Path => records.sort_by(|a, b| a.relative.cmp(&b.relative)),
-            ScanCsvSort::Modified => records.sort_by_cached_key(|record| {
-                (
-                    std::cmp::Reverse(
-                        record
-                            .modified
-                            .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok()),
-                    ),
-                    record.relative.to_lowercase(),
-                    record.relative.clone(),
+            ScanCsvSort::Modified => records.sort_unstable_by(|left, right| {
+                std::cmp::Reverse(
+                    left.modified
+                        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok()),
                 )
+                .cmp(&std::cmp::Reverse(right.modified.and_then(|time| {
+                    time.duration_since(std::time::UNIX_EPOCH).ok()
+                })))
+                .then_with(|| compare_paths_case_insensitive(&left.relative, &right.relative))
             }),
         }
     }
