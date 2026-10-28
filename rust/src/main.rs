@@ -9862,7 +9862,7 @@ fn run_organize(args: &[String]) -> Result<(), String> {
             "--json" => json = true,
             "--help" | "-h" => {
                 println!(
-                    "Usage: mediaforge organize [PATH] [--by type|extension|size] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--apply]\n\nPreview an asset organization plan. --by size groups files into <1 MiB, 1–64 MiB, 64–512 MiB, 512 MiB–2 GiB, and >=2 GiB buckets. --type and --extension select files; --min-size uses bytes or K/M/G/T binary units. Hidden files are skipped unless --include-hidden is set. Unity, Unreal, and Godot generated folders are skipped unless --include-generated is set. --json emits the plan and skipped count as JSON. Files are only moved with --apply; a manifest is written so the move can be undone."
+                    "Usage: mediaforge organize [PATH] [--by type|extension|size] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--apply]\n\nPreview an asset organization plan. Matching .meta sidecars move with their selected assets. --by size groups files into <1 MiB, 1–64 MiB, 64–512 MiB, 512 MiB–2 GiB, and >=2 GiB buckets. --type and --extension select files; --min-size uses bytes or K/M/G/T binary units. Hidden files are skipped unless --include-hidden is set. Unity, Unreal, and Godot generated folders are skipped unless --include-generated is set. --json emits the plan and skipped count as JSON. Files are only moved with --apply; a manifest is written so the move can be undone."
                 );
                 return Ok(());
             }
@@ -9922,12 +9922,31 @@ fn run_organize(args: &[String]) -> Result<(), String> {
     let mut moves = Vec::<PlannedMove>::new();
     let mut skipped = 0usize;
     let mut destinations = HashSet::<PathBuf>::new();
+    let mut paired_assets = HashSet::<PathBuf>::new();
     for record in records {
         let relative = record.path.as_path();
         let Some(from_text) = portable_relative_path(relative) else {
             skipped += 1;
             continue;
         };
+        if unity_meta_target(relative).is_some_and(|asset| paired_assets.remove(&asset)) {
+            continue;
+        }
+        let sidecar_relative = unity_meta_sidecar(relative);
+        let sidecar_source = root.join(&sidecar_relative);
+        let sidecar_state = entry_state(&sidecar_source).map_err(|error| {
+            format!(
+                "cannot inspect sidecar {}: {error}",
+                sidecar_source.display()
+            )
+        })?;
+        if sidecar_state == EntryState::Other {
+            skipped += 1;
+            continue;
+        }
+        if sidecar_state == EntryState::File {
+            paired_assets.insert(relative.to_path_buf());
+        }
         let category = match by {
             "type" => record.kind.as_str().to_owned(),
             "extension" if record.extension == "[no extension]" => "no-extension".to_owned(),
@@ -9946,17 +9965,65 @@ fn run_organize(args: &[String]) -> Result<(), String> {
             continue;
         };
         let to = validate_portable_relative_path(&to_text)?;
+        let sidecar_to = PathBuf::from(&category).join(&sidecar_relative);
+        let sidecar_pair = if sidecar_state == EntryState::File {
+            let Some(sidecar_from_text) = portable_relative_path(&sidecar_relative) else {
+                skipped += 1;
+                continue;
+            };
+            let Some(sidecar_to_text) = portable_relative_path(&sidecar_to) else {
+                skipped += 1;
+                continue;
+            };
+            let sidecar_from = validate_portable_relative_path(&sidecar_from_text)?;
+            let sidecar_to_path = validate_portable_relative_path(&sidecar_to_text)?;
+            Some((
+                sidecar_from_text,
+                sidecar_to_text,
+                sidecar_from,
+                sidecar_to_path,
+            ))
+        } else {
+            None
+        };
         let destination_state = entry_state(&root.join(&to))
             .map_err(|error| format!("cannot inspect destination {}: {error}", to.display()))?;
-        if !destinations.insert(to.clone()) || destination_state != EntryState::Missing {
+        let sidecar_destination_state = if sidecar_pair.is_some() {
+            entry_state(&root.join(&sidecar_to)).map_err(|error| {
+                format!(
+                    "cannot inspect sidecar destination {}: {error}",
+                    sidecar_to.display()
+                )
+            })?
+        } else {
+            EntryState::Missing
+        };
+        if destinations.contains(&to)
+            || destination_state != EntryState::Missing
+            || (sidecar_pair.is_some()
+                && (destinations.contains(&sidecar_to)
+                    || sidecar_destination_state != EntryState::Missing))
+        {
             skipped += 1;
             continue;
         }
         if reject_symlink_components(&root, &from).is_err()
             || reject_symlink_components(&root, &to).is_err()
+            || sidecar_pair.as_ref().is_some_and(|(_, _, from, to)| {
+                reject_symlink_components(&root, from).is_err()
+                    || reject_symlink_components(&root, to).is_err()
+            })
         {
             skipped += 1;
             continue;
+        }
+        destinations.insert(to);
+        if let Some((sidecar_from_text, sidecar_to_text, _, _)) = sidecar_pair {
+            destinations.insert(sidecar_to);
+            moves.push(PlannedMove {
+                from: sidecar_from_text,
+                to: sidecar_to_text,
+            });
         }
         moves.push(PlannedMove {
             from: from_text,
