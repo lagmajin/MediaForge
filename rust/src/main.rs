@@ -215,6 +215,11 @@ fn matches_extension_filter(extension: Option<&str>, filters: &HashSet<String>) 
     }
 }
 
+fn lowercase_into(value: &str, output: &mut String) {
+    output.clear();
+    output.extend(value.chars().flat_map(char::to_lowercase));
+}
+
 fn human_size(size: u64) -> String {
     human_size_wide(u128::from(size))
 }
@@ -373,6 +378,7 @@ fn walk_with_skip_dirs_mode_counted(
         Arc::<[IgnoreRule]>::from(ignored),
         filters.path_contains_lower.is_empty(),
     )];
+    let mut lowercase_scratch = String::new();
     while let Some((directory, active_ignored, path_filter_satisfied)) = pending.pop() {
         let entries = match fs::read_dir(&directory) {
             Ok(entries) => entries,
@@ -429,10 +435,11 @@ fn walk_with_skip_dirs_mode_counted(
                     .replace('\\', "/")
             });
             let relative_lower = needs_relative_lower.then(|| {
-                relative
-                    .as_ref()
-                    .expect("filtered paths are materialized")
-                    .to_lowercase()
+                lowercase_into(
+                    relative.as_ref().expect("filtered paths are materialized"),
+                    &mut lowercase_scratch,
+                );
+                lowercase_scratch.as_str()
             });
             if file_type.is_dir() {
                 let relative = relative
@@ -647,6 +654,7 @@ where
     F: FnMut(FileRecord) -> Result<(), String>,
 {
     let mut pending = vec![(current.to_path_buf(), Arc::<[IgnoreRule]>::from(ignored))];
+    let mut lowercase_scratch = String::new();
     while let Some((directory, active_ignored)) = pending.pop() {
         let entries = fs::read_dir(&directory)
             .map_err(|error| format!("cannot read directory {}: {error}", directory.display()))?;
@@ -694,8 +702,11 @@ where
                         .excluded_subtree
                         .is_some_and(|excluded| path.starts_with(excluded))
                     || filters.exclude_path_contains_lower.is_some_and(|values| {
-                        let relative_lower = relative.to_lowercase();
-                        values.iter().any(|value| relative_lower.contains(value))
+                        if values.is_empty() {
+                            return false;
+                        }
+                        lowercase_into(relative, &mut lowercase_scratch);
+                        values.iter().any(|value| lowercase_scratch.contains(value))
                     })
                 {
                     continue;
@@ -732,8 +743,11 @@ where
                     );
                     if is_ignored(relative, &active_ignored)
                         || filters.exclude_path_contains_lower.is_some_and(|values| {
-                            let relative_lower = relative.to_lowercase();
-                            values.iter().any(|value| relative_lower.contains(value))
+                            if values.is_empty() {
+                                return false;
+                            }
+                            lowercase_into(relative, &mut lowercase_scratch);
+                            values.iter().any(|value| lowercase_scratch.contains(value))
                         })
                     {
                         continue;
