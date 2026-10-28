@@ -62,6 +62,8 @@ mediaforge pack ./Game --output ../Game.tar --dry-run
 
 Hidden folders and common generated/dependency directories (`.git`, `node_modules`, virtual environments) are skipped by default. Symlinks are not followed. The duplicate section only groups equal file sizes; it does not claim the files have identical content. JSON output includes byte counts and relative paths for scripts and other tools.
 
+`--min-size` accepts byte values and binary size units (`K`/`KiB`, `M`/`MiB`, `G`/`GiB`, `T`/`TiB`), including decimal fractions. Fractional thresholds are rounded up to the next whole byte.
+
 ## Find exact duplicates
 
 `dupes` groups candidates by file size, then compares possible matches byte-for-byte in streaming chunks. It reports reclaimable space without loading entire video files into memory. It never deletes or modifies files.

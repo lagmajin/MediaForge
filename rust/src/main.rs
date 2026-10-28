@@ -595,7 +595,7 @@ fn run_dupes(args: &[String]) -> Result<(), String> {
             }
             "--help" | "-h" => {
                 println!(
-                    "Usage: mediaforge dupes [PATH] [--json] [--include-hidden] [--min-size SIZE]\n\nFind byte-for-byte duplicate files. Files are compared in fixed-size chunks to keep memory use low."
+                    "Usage: mediaforge dupes [PATH] [--json] [--include-hidden] [--min-size SIZE]\n\nFind byte-for-byte duplicate files. Files are compared in fixed-size chunks to keep memory use low. Fractional size thresholds round up to the next byte."
                 );
                 return Ok(());
             }
@@ -738,7 +738,7 @@ fn run_scan(args: &[String]) -> Result<(), String> {
             }
             "--help" | "-h" => {
                 println!(
-                    "Usage: mediaforge scan [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE]\n\nSummarize media and game assets in a folder. Defaults to the current directory.\n\nTypes: video, audio, image, model, texture, project, other\nSizes: bytes, KiB/MiB/GiB, or K/M/G (for example 500M)"
+                    "Usage: mediaforge scan [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE]\n\nSummarize media and game assets in a folder. Defaults to the current directory.\n\nTypes: video, audio, image, model, texture, project, other\nSizes: bytes, KiB/MiB/GiB, or K/M/G (for example 500M); fractional values round up to the next byte"
                 );
                 return Ok(());
             }
