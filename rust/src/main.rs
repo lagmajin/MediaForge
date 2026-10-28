@@ -215,36 +215,7 @@ fn natural_name_cmp(left: &str, right: &str) -> std::cmp::Ordering {
         .then_with(|| left.cmp(right))
 }
 
-fn walk(
-    root: &Path,
-    current: &Path,
-    include_hidden: bool,
-    ignored: &[IgnoreRule],
-    records: &mut Vec<FileRecord>,
-) -> Result<(), String> {
-    walk_with_skip_dirs(root, current, include_hidden, SKIP_DIRS, ignored, records)
-}
-
-fn walk_with_skip_dirs(
-    root: &Path,
-    current: &Path,
-    include_hidden: bool,
-    skip_dirs: &[&str],
-    ignored: &[IgnoreRule],
-    records: &mut Vec<FileRecord>,
-) -> Result<(), String> {
-    walk_with_skip_dirs_mode(
-        root,
-        current,
-        include_hidden,
-        skip_dirs,
-        ignored,
-        records,
-        false,
-    )
-}
-
-fn walk_with_skip_dirs_mode(
+fn walk_with_skip_dirs_mode_counted(
     root: &Path,
     current: &Path,
     include_hidden: bool,
@@ -252,12 +223,16 @@ fn walk_with_skip_dirs_mode(
     ignored: &[IgnoreRule],
     records: &mut Vec<FileRecord>,
     strict: bool,
+    skipped_paths: &mut usize,
 ) -> Result<(), String> {
     let mut pending = vec![(current.to_path_buf(), Arc::<[IgnoreRule]>::from(ignored))];
     while let Some((directory, active_ignored)) = pending.pop() {
         let entries = match fs::read_dir(&directory) {
             Ok(entries) => entries,
-            Err(_) if !strict => continue,
+            Err(_) if !strict => {
+                *skipped_paths = skipped_paths.saturating_add(1);
+                continue;
+            }
             Err(error) => {
                 return Err(format!(
                     "cannot read directory {}: {error}",
@@ -268,7 +243,10 @@ fn walk_with_skip_dirs_mode(
         let mut entries = entries
             .map(|entry| match entry {
                 Ok(entry) => Ok(entry),
-                Err(_) if !strict => Err(None),
+                Err(_) if !strict => {
+                    *skipped_paths = skipped_paths.saturating_add(1);
+                    Err(None)
+                }
                 Err(error) => Err(Some(error)),
             })
             .filter_map(|entry| match entry {
@@ -284,7 +262,10 @@ fn walk_with_skip_dirs_mode(
             let name = entry.file_name().to_string_lossy().into_owned();
             let file_type = match entry.file_type() {
                 Ok(file_type) => file_type,
-                Err(_) if !strict => continue,
+                Err(_) if !strict => {
+                    *skipped_paths = skipped_paths.saturating_add(1);
+                    continue;
+                }
                 Err(error) => return Err(format!("cannot inspect {}: {error}", path.display())),
             };
             if file_type.is_symlink() {
@@ -314,7 +295,10 @@ fn walk_with_skip_dirs_mode(
             {
                 let metadata = match entry.metadata() {
                     Ok(metadata) => metadata,
-                    Err(_) if !strict => continue,
+                    Err(_) if !strict => {
+                        *skipped_paths = skipped_paths.saturating_add(1);
+                        continue;
+                    }
                     Err(error) => {
                         return Err(format!("cannot inspect {}: {error}", path.display()));
                     }
@@ -773,7 +757,7 @@ fn json_string(value: &str) -> String {
     out
 }
 
-fn print_json(root: &Path, records: &[FileRecord], largest_limit: usize) {
+fn print_json(root: &Path, records: &[FileRecord], largest_limit: usize, skipped_paths: usize) {
     let mut by_type: BTreeMap<&str, (u64, u128)> = BTreeMap::new();
     let mut extensions: BTreeMap<&str, usize> = BTreeMap::new();
     let mut extension_bytes: BTreeMap<&str, u128> = BTreeMap::new();
@@ -804,6 +788,8 @@ fn print_json(root: &Path, records: &[FileRecord], largest_limit: usize) {
     println!("{{");
     println!("  \"root\": {},", json_string(&root.to_string_lossy()));
     println!("  \"files\": {},", records.len());
+    println!("  \"incomplete\": {},", skipped_paths > 0);
+    println!("  \"skipped_paths\": {skipped_paths},");
     println!("  \"largest_limit\": {largest_limit},");
     println!("  \"total_bytes\": {},", total_bytes);
     println!(
@@ -878,7 +864,7 @@ fn print_json(root: &Path, records: &[FileRecord], largest_limit: usize) {
     );
 }
 
-fn print_report(root: &Path, records: &[FileRecord], largest_limit: usize) {
+fn print_report(root: &Path, records: &[FileRecord], largest_limit: usize, skipped_paths: usize) {
     let total_bytes: u128 = records.iter().map(|record| u128::from(record.size)).sum();
     let mut by_type: BTreeMap<&str, (u64, u128)> = BTreeMap::new();
     let mut by_size: HashMap<u64, usize> = HashMap::new();
@@ -897,6 +883,9 @@ fn print_report(root: &Path, records: &[FileRecord], largest_limit: usize) {
     let candidate_groups = by_size.values().filter(|count| **count > 1).count();
     println!("MediaForge scan: {}", root.display());
     println!("{} files · {}", records.len(), human_size_wide(total_bytes));
+    if skipped_paths > 0 {
+        println!("Warning: incomplete scan; skipped {skipped_paths} unreadable path(s).");
+    }
     println!("\nBy type");
     if by_type.is_empty() {
         println!("  No files found.");
@@ -1259,7 +1248,7 @@ fn run_scan(args: &[String]) -> Result<(), String> {
             }
             "--help" | "-h" => {
                 println!(
-                    "Usage: mediaforge scan [PATH] [--json|--csv] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS] [--largest N]\n\nSummarize media and game assets in a folder. --csv emits one row per matched file with path, type, extension, byte size, and modification time in Unix seconds; it always includes all matches. --largest controls how many biggest files are shown (default: 10 in text, 20 in JSON). Defaults to the current directory.\n\nTypes: video, audio, image, model, texture, project, other\nExtensions: comma-separated, case-insensitive (for example exr,tif); use none for files without an extension\nSizes: bytes, KiB/MiB/GiB, or K/M/G (for example 500M); fractional values round up to the next byte"
+                    "Usage: mediaforge scan [PATH] [--json|--csv] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS] [--largest N]\n\nSummarize media and game assets in a folder. Permission and file-system errors are skipped; text/JSON report an incomplete-scan warning and CSV writes it to stderr. JSON includes incomplete and skipped_paths fields. --csv emits one row per matched file with path, type, extension, byte size, and modification time in Unix seconds; it always includes all matches. --largest controls how many biggest files are shown (default: 10 in text, 20 in JSON). Defaults to the current directory.\n\nTypes: video, audio, image, model, texture, project, other\nExtensions: comma-separated, case-insensitive (for example exr,tif); use none for files without an extension\nSizes: bytes, KiB/MiB/GiB, or K/M/G (for example 500M); fractional values round up to the next byte"
                 );
                 return Ok(());
             }
@@ -1283,7 +1272,17 @@ fn run_scan(args: &[String]) -> Result<(), String> {
     }
     let ignored = ignored_by_git(&root)?;
     let mut records = Vec::new();
-    walk(&root, &root, include_hidden, &ignored, &mut records)?;
+    let mut skipped_paths = 0_usize;
+    walk_with_skip_dirs_mode_counted(
+        &root,
+        &root,
+        include_hidden,
+        SKIP_DIRS,
+        &ignored,
+        &mut records,
+        false,
+        &mut skipped_paths,
+    )?;
     if let Some(kind) = kind_filter {
         records.retain(|record| record.kind == kind);
     }
@@ -1295,11 +1294,14 @@ fn run_scan(args: &[String]) -> Result<(), String> {
     }
     let largest_limit = largest_limit.unwrap_or(if json { 20 } else { 10 });
     if csv {
+        if skipped_paths > 0 {
+            eprintln!("Warning: incomplete scan; skipped {skipped_paths} unreadable path(s).");
+        }
         print_csv(&records)?;
     } else if json {
-        print_json(&root, &records, largest_limit);
+        print_json(&root, &records, largest_limit, skipped_paths);
     } else {
-        print_report(&root, &records, largest_limit);
+        print_report(&root, &records, largest_limit, skipped_paths);
     }
     Ok(())
 }
