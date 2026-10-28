@@ -324,6 +324,7 @@ fn has_hidden_attribute(path: &Path) -> bool {
     }
     #[cfg(not(windows))]
     {
+        let _ = path;
         false
     }
 }
