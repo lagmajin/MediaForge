@@ -5373,6 +5373,7 @@ fn run_storyboard(args: &[String]) -> Result<(), String> {
         .arg(&input)
         .args(["-vf", &filter, "-frames:v", "1"])
         .arg(&temporary)
+        .stdout(Stdio::null())
         .output()
         .map_err(|error| {
             if error.kind() == std::io::ErrorKind::NotFound {
@@ -6579,6 +6580,7 @@ fn run_proxy_with_options(
             "+faststart",
         ])
         .arg(&temporary)
+        .stdout(Stdio::null())
         .output()
         .map_err(|error| {
             if error.kind() == std::io::ErrorKind::NotFound {
@@ -7146,13 +7148,17 @@ fn run_extract_audio_with_options(
         }
         _ => unreachable!(),
     }
-    let result = command.arg(&temporary).output().map_err(|error| {
-        if error.kind() == std::io::ErrorKind::NotFound {
-            "ffmpeg was not found on PATH. Install FFmpeg to extract audio.".to_owned()
-        } else {
-            format!("could not start ffmpeg: {error}")
-        }
-    })?;
+    let result = command
+        .arg(&temporary)
+        .stdout(Stdio::null())
+        .output()
+        .map_err(|error| {
+            if error.kind() == std::io::ErrorKind::NotFound {
+                "ffmpeg was not found on PATH. Install FFmpeg to extract audio.".to_owned()
+            } else {
+                format!("could not start ffmpeg: {error}")
+            }
+        })?;
     if !result.status.success() {
         let detail = String::from_utf8_lossy(&result.stderr).trim().to_owned();
         let _ = fs::remove_file(&temporary);
