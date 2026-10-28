@@ -1277,7 +1277,7 @@ fn fraction_ceil_scaled(fraction: &str, multiplier: u128) -> u128 {
 
 fn print_help() {
     println!(
-        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS] [--largest N]\n  mediaforge dupes [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--top-groups N]\n  mediaforge probe <FILE> [--compact]\n  mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--jobs N] [--summary]\n  mediaforge storyboard <VIDEO> --output <IMAGE> [--interval SECONDS] [--columns N] [--rows N] [--width PIXELS]\n  mediaforge proxy <VIDEO> --output <FILE.mp4> [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge extract-audio <VIDEO> --output <FILE> [--format mp3|wav|flac] [--bitrate RATE] [--stream N]\n  mediaforge project [PATH] [--json]\n  mediaforge gitignore [PATH] [--apply]\n  mediaforge organize [PATH] [--by type|extension] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--apply]\n  mediaforge sequence [PATH] [--prefix NAME] [--start N] [--padding N] [--extension EXTENSIONS] [--include-hidden] [--json] [--apply]\n  mediaforge undo [PATH] [--json]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--include-hidden] [--include-generated] [--dry-run] [--json] [--list]\n  mediaforge --version\n  mediaforge --help"
+        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS] [--largest N]\n  mediaforge dupes [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--top-groups N]\n  mediaforge probe <FILE> [--compact]\n  mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--jobs N] [--summary]\n  mediaforge storyboard <VIDEO> --output <IMAGE> [--interval SECONDS] [--columns N] [--rows N] [--width PIXELS]\n  mediaforge proxy <VIDEO> --output <FILE.mp4> [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge proxy-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge extract-audio <VIDEO> --output <FILE> [--format mp3|wav|flac] [--bitrate RATE] [--stream N]\n  mediaforge project [PATH] [--json]\n  mediaforge gitignore [PATH] [--apply]\n  mediaforge organize [PATH] [--by type|extension] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--apply]\n  mediaforge sequence [PATH] [--prefix NAME] [--start N] [--padding N] [--extension EXTENSIONS] [--include-hidden] [--json] [--apply]\n  mediaforge undo [PATH] [--json]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--include-hidden] [--include-generated] [--dry-run] [--json] [--list]\n  mediaforge --version\n  mediaforge --help"
     );
 }
 
@@ -1879,6 +1879,223 @@ fn run_proxy(args: &[String]) -> Result<(), String> {
         output.display(),
         human_size(temporary_size)
     );
+    Ok(())
+}
+
+fn run_proxy_dir(args: &[String]) -> Result<(), String> {
+    let mut path = None;
+    let mut output_root = None;
+    let mut extensions = None;
+    let mut include_hidden = false;
+    let mut max_width = 1280_u32;
+    let mut crf = 28_u8;
+    let mut preset = "veryfast".to_owned();
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--output-dir" => {
+                output_root =
+                    Some(PathBuf::from(iter.next().ok_or_else(|| {
+                        "--output-dir requires a directory".to_owned()
+                    })?));
+            }
+            "--extension" => {
+                let value = iter.next().ok_or_else(|| {
+                    "--extension requires a comma-separated extension list".to_owned()
+                })?;
+                extensions = Some(parse_extensions(value)?);
+            }
+            "--include-hidden" => include_hidden = true,
+            "--max-width" => {
+                let value = iter
+                    .next()
+                    .ok_or_else(|| "--max-width requires pixels".to_owned())?;
+                max_width = value
+                    .parse::<u32>()
+                    .map_err(|_| format!("invalid maximum width '{value}'"))?;
+            }
+            "--crf" => {
+                let value = iter
+                    .next()
+                    .ok_or_else(|| "--crf requires a value from 0 to 51".to_owned())?;
+                crf = value
+                    .parse::<u8>()
+                    .map_err(|_| format!("invalid CRF '{value}'; use a value from 0 to 51"))?;
+            }
+            "--preset" => {
+                preset = iter
+                    .next()
+                    .ok_or_else(|| "--preset requires an x264 preset".to_owned())?
+                    .clone();
+            }
+            "--help" | "-h" => {
+                println!(
+                    "Usage: mediaforge proxy-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--max-width PIXELS] [--crf N] [--preset PRESET]\n\nCreate H.264/AAC proxies for video assets while preserving their relative folders. Existing outputs are never overwritten. Failed files are reported after the remaining videos are processed. The output directory must already exist."
+                );
+                return Ok(());
+            }
+            value if value.starts_with('-') => return Err(format!("unknown option: {value}")),
+            value => {
+                if path.is_some() {
+                    return Err("proxy-dir accepts one input directory".into());
+                }
+                path = Some(PathBuf::from(value));
+            }
+        }
+    }
+    let path = path.ok_or_else(|| "proxy-dir requires an input directory".to_owned())?;
+    let output_root =
+        output_root.ok_or_else(|| "proxy-dir requires --output-dir <DIR>".to_owned())?;
+    if !(16..=7680).contains(&max_width) {
+        return Err("--max-width must be between 16 and 7680 pixels".to_owned());
+    }
+    if crf > 51 {
+        return Err("--crf must be between 0 and 51".to_owned());
+    }
+    const PRESETS: &[&str] = &[
+        "ultrafast",
+        "superfast",
+        "veryfast",
+        "faster",
+        "fast",
+        "medium",
+        "slow",
+        "slower",
+        "veryslow",
+    ];
+    if !PRESETS.contains(&preset.as_str()) {
+        return Err(format!(
+            "unsupported x264 preset '{preset}'; choose one of {}",
+            PRESETS.join(", ")
+        ));
+    }
+    let root = fs::canonicalize(&path)
+        .map_err(|error| format!("cannot access {}: {error}", path.display()))?;
+    if !is_real_directory(&root) {
+        return Err(format!("expected a real directory: {}", root.display()));
+    }
+    let output_root = fs::canonicalize(&output_root).map_err(|error| {
+        format!(
+            "cannot access output directory {}: {error}",
+            output_root.display()
+        )
+    })?;
+    if !is_real_directory(&output_root) {
+        return Err(format!(
+            "expected a real output directory: {}",
+            output_root.display()
+        ));
+    }
+    if root == output_root {
+        return Err("output directory must differ from the input directory".to_owned());
+    }
+    if root.starts_with(&output_root) {
+        return Err("output directory must not contain the input directory".to_owned());
+    }
+    let output_inside_root = output_root.starts_with(&root);
+    let ignored = ignored_by_git(&root)?;
+    let mut records = Vec::new();
+    walk_strict(
+        &root,
+        &root,
+        include_hidden,
+        SKIP_DIRS,
+        &ignored,
+        &mut records,
+    )?;
+    records.retain(|record| record.kind == Kind::Video);
+    if let Some(extensions) = extensions {
+        records.retain(|record| extensions.contains(&record.extension));
+    }
+    records.sort_by(|left, right| left.relative.cmp(&right.relative));
+    if records.is_empty() {
+        println!("No video assets found.");
+        return Ok(());
+    }
+
+    let mut targets = HashSet::new();
+    let mut succeeded = 0_usize;
+    let mut failed = 0_usize;
+    for record in records {
+        if output_inside_root && record.path.starts_with(&output_root) {
+            continue;
+        }
+        let Some(relative) = record.path.strip_prefix(&root).ok() else {
+            failed += 1;
+            eprintln!(
+                "mediaforge: cannot relativize input {}",
+                record.path.display()
+            );
+            continue;
+        };
+        let Some(stem) = relative.file_stem().and_then(|value| value.to_str()) else {
+            failed += 1;
+            eprintln!(
+                "mediaforge: cannot create proxy name for {}",
+                record.path.display()
+            );
+            continue;
+        };
+        let mut relative_output = relative.to_path_buf();
+        relative_output.set_file_name(format!("{stem}-proxy.mp4"));
+        let output = output_root.join(&relative_output);
+        if !targets.insert(output.clone()) {
+            failed += 1;
+            eprintln!(
+                "mediaforge: multiple source files map to the same proxy path: {}",
+                output.display()
+            );
+            continue;
+        }
+        if let Some(parent) = output.parent() {
+            if let Err(error) = fs::create_dir_all(parent) {
+                failed += 1;
+                eprintln!(
+                    "mediaforge: could not create proxy directory {}: {error}",
+                    parent.display()
+                );
+                continue;
+            }
+        }
+        let Some(source_text) = record.path.to_str() else {
+            failed += 1;
+            eprintln!(
+                "mediaforge: input path is not valid Unicode: {}",
+                record.path.display()
+            );
+            continue;
+        };
+        let Some(output_text) = output.to_str() else {
+            failed += 1;
+            eprintln!(
+                "mediaforge: output path is not valid Unicode: {}",
+                output.display()
+            );
+            continue;
+        };
+        let proxy_args = vec![
+            source_text.to_owned(),
+            "--output".to_owned(),
+            output_text.to_owned(),
+            "--max-width".to_owned(),
+            max_width.to_string(),
+            "--crf".to_owned(),
+            crf.to_string(),
+            "--preset".to_owned(),
+            preset.clone(),
+        ];
+        match run_proxy(&proxy_args) {
+            Ok(()) => succeeded += 1,
+            Err(error) => {
+                failed += 1;
+                eprintln!("mediaforge: {}: {error}", record.relative);
+            }
+        }
+    }
+    println!("Proxy batch finished: {succeeded} succeeded, {failed} failed.");
+    if failed > 0 {
+        return Err(format!("proxy generation failed for {failed} file(s)"));
+    }
     Ok(())
 }
 
@@ -4773,6 +4990,7 @@ fn run() -> Result<(), String> {
         Some("probe-dir") => run_probe_dir(&args[1..]),
         Some("storyboard") => run_storyboard(&args[1..]),
         Some("proxy") => run_proxy(&args[1..]),
+        Some("proxy-dir") => run_proxy_dir(&args[1..]),
         Some("extract-audio") => run_extract_audio(&args[1..]),
         Some("project") => run_project(&args[1..]),
         Some("gitignore") => run_gitignore(&args[1..]),
