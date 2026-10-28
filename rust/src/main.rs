@@ -479,29 +479,35 @@ fn walk_with_skip_dirs_mode_counted(config: ScanWalkConfig<'_>) -> Result<ScanWa
         };
         let mut skipped_entries = Vec::new();
         let mut process_entry = |entry: fs::DirEntry| -> Result<(), String> {
-            let path = entry.path();
-            if !include_hidden && is_dot_hidden(&path) {
+            let name = entry.file_name();
+            if !include_hidden && is_dot_hidden_name(&name) {
                 return Ok(());
             }
             let file_type = match entry.file_type() {
                 Ok(file_type) => file_type,
                 Err(_) if !strict => {
-                    skipped_entries.push(path.clone());
+                    skipped_entries.push(directory.join(&name));
                     return Ok(());
                 }
-                Err(error) => return Err(format!("cannot inspect {}: {error}", path.display())),
+                Err(error) => {
+                    return Err(format!(
+                        "cannot inspect {}: {error}",
+                        directory.join(&name).display()
+                    ));
+                }
             };
             if file_type.is_symlink() {
                 return Ok(());
             }
             if file_type.is_dir() {
-                let name = entry.file_name();
                 let name = name.to_string_lossy();
-                if directory_name_matches(&name, skip_dirs)
-                    || (!include_hidden && has_hidden_attribute(&path))
-                {
+                if directory_name_matches(&name, skip_dirs) {
                     return Ok(());
                 }
+            }
+            let path = directory.join(&name);
+            if file_type.is_dir() && !include_hidden && has_hidden_attribute(&path) {
+                return Ok(());
             }
             let needs_relative_lower = !filters.exclude_path_contains_lower.is_empty()
                 || (!path_filter_satisfied && !filters.path_contains_lower.is_empty());
@@ -827,18 +833,23 @@ where
             if file_type.is_symlink() {
                 return Ok(());
             }
-            let path = directory.join(&name);
             let mut relative = None;
             if file_type.is_dir() {
                 let name = name.to_string_lossy();
-                if directory_name_matches(&name, skip_dirs)
-                    || (!include_hidden && has_hidden_attribute(&path))
-                    || filters
-                        .excluded_subtree
-                        .is_some_and(|excluded| path.starts_with(excluded))
-                {
+                if directory_name_matches(&name, skip_dirs) {
                     return Ok(());
                 }
+            }
+            let path = directory.join(&name);
+            if file_type.is_dir()
+                && ((!include_hidden && has_hidden_attribute(&path))
+                    || filters
+                        .excluded_subtree
+                        .is_some_and(|excluded| path.starts_with(excluded)))
+            {
+                return Ok(());
+            }
+            if file_type.is_dir() {
                 let has_path_filter = filters
                     .exclude_path_contains_lower
                     .is_some_and(|values| !values.is_empty());
