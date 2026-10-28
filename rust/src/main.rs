@@ -3273,7 +3273,9 @@ impl Sha256 {
 }
 
 fn hash_snapshot_file(record: &FileRecord) -> Result<[u8; 32], String> {
-    let before = fs::metadata(&record.path).map_err(|error| {
+    let mut file = File::open(&record.path)
+        .map_err(|error| format!("cannot read {} for hashing: {error}", record.path.display()))?;
+    let before = file.metadata().map_err(|error| {
         format!(
             "cannot inspect {} before hashing: {error}",
             record.path.display()
@@ -3285,8 +3287,6 @@ fn hash_snapshot_file(record: &FileRecord) -> Result<[u8; 32], String> {
             record.path.display()
         ));
     }
-    let mut file = File::open(&record.path)
-        .map_err(|error| format!("cannot read {} for hashing: {error}", record.path.display()))?;
     let mut hasher = Sha256::new();
     let mut buffer = [0_u8; 256 * 1024];
     loop {
@@ -3298,7 +3298,7 @@ fn hash_snapshot_file(record: &FileRecord) -> Result<[u8; 32], String> {
         }
         hasher.update(&buffer[..count]);
     }
-    let after = fs::metadata(&record.path).map_err(|error| {
+    let after = file.metadata().map_err(|error| {
         format!(
             "cannot inspect {} after hashing: {error}",
             record.path.display()
