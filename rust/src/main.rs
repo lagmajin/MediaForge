@@ -6389,6 +6389,17 @@ fn run_proxy(args: &[String]) -> Result<(), String> {
     let (max_width, crf, preset) =
         resolve_proxy_settings(settings, profile.as_deref(), max_width, crf, preset)?;
 
+    run_proxy_with_options(input, output, max_width, crf, &preset, quiet)
+}
+
+fn run_proxy_with_options(
+    input: PathBuf,
+    output: PathBuf,
+    max_width: u32,
+    crf: u8,
+    preset: &str,
+    quiet: bool,
+) -> Result<(), String> {
     let input = fs::canonicalize(&input)
         .map_err(|error| format!("cannot access video {}: {error}", input.display()))?;
     if !fs::metadata(&input)
@@ -6450,7 +6461,7 @@ fn run_proxy(args: &[String]) -> Result<(), String> {
         .args(["-map", "0:v:0", "-map", "0:a?", "-sn", "-dn", "-vf"])
         .arg(filter)
         .args(["-c:v", "libx264", "-preset"])
-        .arg(&preset)
+        .arg(preset)
         .args(["-crf"])
         .arg(crf.to_string())
         .args([
@@ -6778,26 +6789,15 @@ fn run_proxy_dir(args: &[String]) -> Result<(), String> {
                                 )
                             })?;
                         }
-                        let source_text = record
-                            .path
-                            .to_str()
-                            .ok_or_else(|| "input path is not valid Unicode".to_owned())?;
-                        let output_text = output
-                            .to_str()
-                            .ok_or_else(|| "output path is not valid Unicode".to_owned())?;
-                        let proxy_args = vec![
-                            source_text.to_owned(),
-                            "--output".to_owned(),
-                            output_text.to_owned(),
-                            "--max-width".to_owned(),
-                            max_width.to_string(),
-                            "--crf".to_owned(),
-                            crf.to_string(),
-                            "--preset".to_owned(),
-                            preset.clone(),
-                            "--quiet".to_owned(),
-                        ];
-                        run_proxy(&proxy_args).map(|()| true)
+                        run_proxy_with_options(
+                            record.path.clone(),
+                            output.clone(),
+                            max_width,
+                            crf,
+                            &preset,
+                            true,
+                        )
+                        .map(|()| true)
                     });
                     if json {
                         let _guard = progress_output
@@ -6957,6 +6957,17 @@ fn run_extract_audio(args: &[String]) -> Result<(), String> {
         ));
     }
 
+    run_extract_audio_with_options(input, output, &format, &bitrate, stream, quiet)
+}
+
+fn run_extract_audio_with_options(
+    input: PathBuf,
+    output: PathBuf,
+    format: &str,
+    bitrate: &str,
+    stream: u32,
+    quiet: bool,
+) -> Result<(), String> {
     let input = fs::canonicalize(&input)
         .map_err(|error| format!("cannot access media file {}: {error}", input.display()))?;
     if !fs::metadata(&input)
@@ -6971,7 +6982,7 @@ fn run_extract_audio(args: &[String]) -> Result<(), String> {
     if output
         .extension()
         .and_then(|value| value.to_str())
-        .is_none_or(|value| !value.eq_ignore_ascii_case(&format))
+        .is_none_or(|value| !value.eq_ignore_ascii_case(format))
     {
         return Err(format!("output extension must match --format {format}"));
     }
@@ -7018,9 +7029,9 @@ fn run_extract_audio(args: &[String]) -> Result<(), String> {
         .args(["-map"])
         .arg(format!("0:a:{stream}"))
         .args(["-vn", "-sn", "-dn", "-c:a"]);
-    match format.as_str() {
+    match format {
         "mp3" => {
-            command.arg("libmp3lame").args(["-b:a", bitrate.as_str()]);
+            command.arg("libmp3lame").args(["-b:a", bitrate]);
         }
         "wav" => {
             command.arg("pcm_s16le");
@@ -7311,28 +7322,15 @@ fn run_extract_audio_dir(args: &[String]) -> Result<(), String> {
                                 )
                             })?;
                         }
-                        let source_text = record
-                            .path
-                            .to_str()
-                            .ok_or_else(|| "input path is not valid Unicode".to_owned())?;
-                        let output_text = output
-                            .to_str()
-                            .ok_or_else(|| "output path is not valid Unicode".to_owned())?;
-                        let mut audio_args = vec![
-                            source_text.to_owned(),
-                            "--output".to_owned(),
-                            output_text.to_owned(),
-                            "--format".to_owned(),
-                            format.clone(),
-                            "--stream".to_owned(),
-                            stream.to_string(),
-                            "--quiet".to_owned(),
-                        ];
-                        if format == "mp3" {
-                            audio_args.push("--bitrate".to_owned());
-                            audio_args.push(bitrate.clone());
-                        }
-                        run_extract_audio(&audio_args).map(|()| true)
+                        run_extract_audio_with_options(
+                            record.path.clone(),
+                            output.clone(),
+                            &format,
+                            &bitrate,
+                            stream,
+                            true,
+                        )
+                        .map(|()| true)
                     });
                     if json {
                         let _guard = progress_output
