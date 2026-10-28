@@ -65,6 +65,7 @@ struct FileRecord {
     relative: String,
     path: PathBuf,
     size: u64,
+    modified: Option<std::time::SystemTime>,
     kind: Kind,
     extension: String,
 }
@@ -158,6 +159,7 @@ fn walk_with_skip_dirs(
                 relative,
                 path,
                 size: metadata.len(),
+                modified: metadata.modified().ok(),
                 kind,
                 extension,
             });
@@ -224,6 +226,7 @@ fn walk_strict(
                 relative,
                 path: path.clone(),
                 size: metadata.len(),
+                modified: metadata.modified().ok(),
                 kind: classify(&path),
                 extension,
             });
@@ -1508,16 +1511,15 @@ fn pack_file(
             record.path.display()
         ));
     }
-    if source_metadata.len() != record.size {
+    let source_modified = source_metadata.modified().ok();
+    if source_metadata.len() != record.size || source_modified != record.modified {
         return Err(format!(
-            "source size changed since scan: {}",
+            "source changed since scan: {}",
             record.path.display()
         ));
     }
     let mode = archive_mode(&source_metadata);
-    let modified = source_metadata
-        .modified()
-        .ok()
+    let modified = source_modified
         .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
         .map_or(0, |duration| duration.as_secs());
     let pax_size = record.size > TAR_OCTAL_MAX;
@@ -1584,6 +1586,15 @@ fn pack_file(
     {
         return Err(format!(
             "source grew while packing: {}",
+            record.path.display()
+        ));
+    }
+    let final_metadata = input
+        .metadata()
+        .map_err(|error| format!("could not verify {}: {error}", record.path.display()))?;
+    if final_metadata.len() != record.size || final_metadata.modified().ok() != record.modified {
+        return Err(format!(
+            "source changed while packing: {}",
             record.path.display()
         ));
     }
@@ -1757,7 +1768,9 @@ fn run_pack(args: &[String]) -> Result<(), String> {
             return Err(format!("archive path is too long: {archive_name}"));
         }
         entries.push((record, archive_name));
-        total_bytes = total_bytes.saturating_add(record.size);
+        total_bytes = total_bytes
+            .checked_add(record.size)
+            .ok_or_else(|| "total input size exceeds the supported range".to_owned())?;
     }
     println!(
         "Pack plan: {} file(s), {} uncompressed",
