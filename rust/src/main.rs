@@ -1925,50 +1925,50 @@ fn sample_signature(path: &Path, size: u64) -> io::Result<u64> {
     Ok(hasher.finish())
 }
 
+fn sample_signature_for_path(root: &Path, relative: &str, size: u64) -> Result<u64, String> {
+    let path = root.join(relative);
+    sample_signature(&path, size)
+        .map_err(|error| format!("could not sample {}: {error}", path.display()))
+}
+
 fn sample_signatures(
     root: &Path,
     paths: &[Option<String>],
     size: u64,
     jobs: usize,
-) -> Vec<(usize, Result<u64, String>)> {
+) -> Vec<Result<u64, String>> {
     if jobs == 1 || paths.len() < 8 {
         return paths
             .iter()
-            .enumerate()
-            .map(|(index, relative)| {
+            .map(|relative| {
                 let relative = relative
                     .as_ref()
                     .expect("duplicate paths are present before sampling");
-                let path = root.join(relative);
-                (
-                    index,
-                    sample_signature(&path, size)
-                        .map_err(|error| format!("could not sample {}: {error}", path.display())),
-                )
+                sample_signature_for_path(root, relative, size)
             })
             .collect();
     }
-    let next = std::sync::atomic::AtomicUsize::new(0);
     let worker_count = jobs.min(paths.len());
-    let mut results = std::thread::scope(|scope| {
+    std::thread::scope(|scope| {
         let handles = (0..worker_count)
-            .map(|_| {
-                scope.spawn(|| {
-                    let mut results = Vec::new();
-                    loop {
-                        let index = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        let Some(relative) = paths.get(index).and_then(Option::as_ref) else {
-                            break;
-                        };
-                        let path = root.join(relative);
-                        results.push((
-                            index,
-                            sample_signature(&path, size).map_err(|error| {
-                                format!("could not sample {}: {error}", path.display())
-                            }),
-                        ));
-                    }
-                    results
+            .map(|worker_index| {
+                let base_size = paths.len() / worker_count;
+                let remainder = paths.len() % worker_count;
+                let start = worker_index * base_size + worker_index.min(remainder);
+                let end = start + base_size + usize::from(worker_index < remainder);
+                scope.spawn(move || {
+                    paths[start..end]
+                        .iter()
+                        .map(|relative| {
+                            sample_signature_for_path(
+                                root,
+                                relative
+                                    .as_deref()
+                                    .expect("duplicate paths are present before sampling"),
+                                size,
+                            )
+                        })
+                        .collect::<Vec<_>>()
                 })
             })
             .collect::<Vec<_>>();
@@ -1976,9 +1976,7 @@ fn sample_signatures(
             .into_iter()
             .flat_map(|handle| handle.join().expect("duplicate sampling worker panicked"))
             .collect::<Vec<_>>()
-    });
-    results.sort_unstable_by_key(|(index, _)| *index);
-    results
+    })
 }
 
 struct VerifiedDuplicateGroup {
@@ -2167,7 +2165,7 @@ fn run_dupes(args: &[String]) -> Result<(), String> {
     for (size, mut paths) in by_size.into_iter().filter(|(_, paths)| paths.len() > 1) {
         let mut by_sample: HashMap<u64, Vec<VerifiedDuplicateGroup>> = HashMap::new();
         let signatures = sample_signatures(&root, &paths, size, jobs);
-        for (index, signature) in signatures {
+        for (index, signature) in signatures.into_iter().enumerate() {
             let relative = paths[index]
                 .as_ref()
                 .expect("duplicate paths are present until their group is finalized");
