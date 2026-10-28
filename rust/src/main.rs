@@ -4264,7 +4264,7 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
     let change_count = added + removed + modified;
     if csv {
         let stdout = io::stdout();
-        let mut stdout = stdout.lock();
+        let mut stdout = io::BufWriter::with_capacity(64 * 1024, stdout.lock());
         write_snapshot_csv_row(
             &mut stdout,
             &[
@@ -4336,6 +4336,9 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
             size_summary[15] = (**bucket).to_owned();
             write_snapshot_csv_row(&mut stdout, &size_summary)?;
         }
+        stdout
+            .flush()
+            .map_err(|error| format!("could not write snapshot CSV: {error}"))?;
     } else if json {
         let stdout = io::stdout();
         let mut output = io::BufWriter::with_capacity(64 * 1024, stdout.lock());
