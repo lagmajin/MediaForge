@@ -7929,7 +7929,7 @@ fn run_project(args: &[String]) -> Result<(), String> {
         Some(root_entries),
     )];
     while let Some((directory, active_ignored, preloaded_entries)) = pending.pop() {
-        let mut entries = if let Some(entries) = preloaded_entries {
+        let entries = if let Some(entries) = preloaded_entries {
             entries
         } else {
             fs::read_dir(&directory)
@@ -7946,7 +7946,6 @@ fn run_project(args: &[String]) -> Result<(), String> {
                 })
                 .collect::<Result<Vec<_>, _>>()?
         };
-        sort_entries(&mut entries);
         for entry in entries {
             let path = entry.path();
             let file_type = entry.file_type().map_err(|error| {
