@@ -914,7 +914,7 @@ where
 #[derive(Clone, Debug)]
 struct IgnoreRule {
     pattern: Vec<GlobToken>,
-    base: String,
+    base: Arc<str>,
     negated: bool,
     anchored: bool,
     directory_only: bool,
@@ -972,9 +972,10 @@ fn extend_ignore_rules<'a>(
         .map_err(|error| format!("cannot relativize {}: {error}", directory.display()))?
         .to_string_lossy()
         .replace('\\', "/");
+    let base: Arc<str> = Arc::from(base);
     let mut local_rules = Vec::new();
     for mut rule in text.lines().filter_map(parse_ignore_rule) {
-        rule.base = base.clone();
+        rule.base = Arc::clone(&base);
         local_rules.push(rule);
     }
     if local_rules.is_empty() {
@@ -1014,7 +1015,7 @@ fn parse_ignore_rule(line: &str) -> Option<IgnoreRule> {
         .any(|token| matches!(token, GlobToken::Literal('/') | GlobToken::AnyDirectories));
     Some(IgnoreRule {
         pattern,
-        base: String::new(),
+        base: Arc::from(""),
         negated,
         anchored,
         directory_only,
@@ -1303,7 +1304,7 @@ fn rule_matches_path(
     let relative = if rule.base.is_empty() {
         relative
     } else if let Some(relative) = relative
-        .strip_prefix(&rule.base)
+        .strip_prefix(rule.base.as_ref())
         .and_then(|relative| relative.strip_prefix('/'))
     {
         relative
