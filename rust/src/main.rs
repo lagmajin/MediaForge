@@ -556,6 +556,7 @@ fn walk_strict(
 struct StrictWalkFilters<'a> {
     kinds: Option<&'a [Kind]>,
     extensions: Option<&'a HashSet<String>>,
+    sort_entries_per_directory: bool,
     min_size: Option<u64>,
     max_size: Option<u64>,
     excluded_subtree: Option<&'a Path>,
@@ -611,7 +612,9 @@ where
                 })
             })
             .collect::<Result<Vec<_>, _>>()?;
-        sort_entries(&mut entries);
+        if filters.sort_entries_per_directory {
+            sort_entries(&mut entries);
+        }
         for entry in entries {
             let path = entry.path();
             if !include_hidden && is_dot_hidden(&path) {
@@ -2293,6 +2296,7 @@ fn run_dupes(args: &[String]) -> Result<(), String> {
     let filters = StrictWalkFilters {
         kinds: kinds.as_ref().map(|values| values.as_slice()),
         extensions: extension_filter.as_ref(),
+        sort_entries_per_directory: true,
         min_size: Some(min_size),
         max_size,
         excluded_subtree: None,
@@ -4638,6 +4642,7 @@ fn run_probe_dir(args: &[String]) -> Result<(), String> {
     let filters = StrictWalkFilters {
         kinds: Some(&selected_kinds),
         extensions: extensions.as_ref(),
+        sort_entries_per_directory: false,
         min_size: Some(min_size),
         max_size,
         excluded_subtree: None,
@@ -10325,6 +10330,7 @@ fn run_pack(args: &[String]) -> Result<(), String> {
     let filters = StrictWalkFilters {
         kinds: kinds.as_deref(),
         extensions: selected_extensions.as_ref(),
+        sort_entries_per_directory: false,
         min_size: Some(min_size),
         max_size,
         excluded_subtree: None,
@@ -10374,6 +10380,7 @@ fn run_pack(args: &[String]) -> Result<(), String> {
             .checked_add(record.size)
             .ok_or_else(|| "total input size exceeds the supported range".to_owned())?;
     }
+    entries.sort_unstable_by(|left, right| left.1.cmp(&right.1));
     let estimated_archive_bytes = estimate_tar_size(&entries)?;
     if !json {
         println!(
