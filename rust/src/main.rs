@@ -1678,17 +1678,7 @@ fn print_json(
     include_same_size: bool,
     skipped_paths: usize,
     skipped_examples: &[String],
-    kind_filter: Option<Kind>,
-    min_size: Option<u64>,
-    max_size: Option<u64>,
-    modified_since: Option<u64>,
-    modified_until: Option<u64>,
-    modified_within: Option<u64>,
-    path_contains: &[String],
-    exclude_path_contains: &[String],
-    extension_filter: Option<&HashSet<String>>,
-    include_hidden: bool,
-    strict: bool,
+    filters: ScanFilterOptions<'_>,
 ) -> Result<(), String> {
     let mut by_type: BTreeMap<&str, (u64, u128)> = BTreeMap::new();
     let mut extensions: BTreeMap<&str, (usize, u128)> = BTreeMap::new();
@@ -1765,22 +1755,7 @@ fn print_json(
             .collect::<Vec<_>>()
             .join(",")
     );
-    write_scan_json_line!(
-        "  \"filters\": {},",
-        scan_filters_json(ScanFilterOptions {
-            kind: kind_filter,
-            min_size,
-            max_size,
-            modified_since,
-            modified_until,
-            modified_within,
-            path_contains,
-            exclude_path_contains,
-            extensions: extension_filter,
-            include_hidden,
-            strict,
-        })
-    );
+    write_scan_json_line!("  \"filters\": {},", scan_filters_json(filters));
     write_scan_json_line!("  \"largest_limit\": {largest_limit},");
     write_scan_json_line!("  \"same_size_candidates_included\": {include_same_size},");
     write_scan_json_line!("  \"total_bytes\": {},", total_bytes);
@@ -1969,17 +1944,7 @@ fn print_scan_csv_info(
     files: usize,
     skipped_paths: usize,
     skipped_examples: &[String],
-    kind_filter: Option<Kind>,
-    min_size: Option<u64>,
-    max_size: Option<u64>,
-    modified_since: Option<u64>,
-    modified_until: Option<u64>,
-    modified_within: Option<u64>,
-    path_contains: &[String],
-    exclude_path_contains: &[String],
-    extension_filter: Option<&HashSet<String>>,
-    include_hidden: bool,
-    strict: bool,
+    filters: ScanFilterOptions<'_>,
     csv_sort: Option<ScanCsvSort>,
 ) {
     let examples = skipped_examples
@@ -1998,19 +1963,7 @@ fn print_scan_csv_info(
         json_string(&root.to_string_lossy()),
         skipped_paths > 0,
         skipped_paths > skipped_examples.len(),
-        scan_filters_json(ScanFilterOptions {
-            kind: kind_filter,
-            min_size,
-            max_size,
-            modified_since,
-            modified_until,
-            modified_within,
-            path_contains,
-            exclude_path_contains,
-            extensions: extension_filter,
-            include_hidden,
-            strict,
-        }),
+        scan_filters_json(filters),
         json_string(order),
     );
 }
@@ -3348,17 +3301,19 @@ fn run_scan(args: &[String]) -> Result<(), String> {
                 records.len(),
                 skipped_paths,
                 &skipped_examples,
-                kind_filter,
-                min_size,
-                max_size,
-                modified_since,
-                modified_until,
-                modified_within,
-                &path_contains,
-                &exclude_path_contains,
-                extension_filter.as_ref(),
-                include_hidden,
-                strict,
+                ScanFilterOptions {
+                    kind: kind_filter,
+                    min_size,
+                    max_size,
+                    modified_since,
+                    modified_until,
+                    modified_within,
+                    path_contains: &path_contains,
+                    exclude_path_contains: &exclude_path_contains,
+                    extensions: extension_filter.as_ref(),
+                    include_hidden,
+                    strict,
+                },
                 csv_sort,
             );
         } else if skipped_paths > 0 {
@@ -3379,17 +3334,19 @@ fn run_scan(args: &[String]) -> Result<(), String> {
             include_same_size,
             skipped_paths,
             &skipped_examples,
-            kind_filter,
-            min_size,
-            max_size,
-            modified_since,
-            modified_until,
-            modified_within,
-            &path_contains,
-            &exclude_path_contains,
-            extension_filter.as_ref(),
-            include_hidden,
-            strict,
+            ScanFilterOptions {
+                kind: kind_filter,
+                min_size,
+                max_size,
+                modified_since,
+                modified_until,
+                modified_within,
+                path_contains: &path_contains,
+                exclude_path_contains: &exclude_path_contains,
+                extensions: extension_filter.as_ref(),
+                include_hidden,
+                strict,
+            },
         )?;
     } else {
         print_report(
@@ -11388,22 +11345,40 @@ fn estimate_tar_size(entries: &[(&FileRecord, &str)]) -> Result<u64, String> {
     Ok(total)
 }
 
-fn print_pack_json(
-    root: &Path,
-    output: &Path,
-    status: &str,
+struct PackJsonOptions<'a> {
+    root: &'a Path,
+    output: &'a Path,
+    status: &'a str,
     dry_run: bool,
     output_exists: bool,
     min_size: u64,
     max_size: Option<u64>,
-    exclude_path_contains: &[String],
+    exclude_path_contains: &'a [String],
     files: usize,
     input_bytes: u64,
     estimated_archive_bytes: u64,
     list_entries: bool,
-    entries: &[(&FileRecord, &str)],
+    entries: &'a [(&'a FileRecord, &'a str)],
     archive_bytes: Option<u64>,
-) -> Result<(), String> {
+}
+
+fn print_pack_json(options: PackJsonOptions<'_>) -> Result<(), String> {
+    let PackJsonOptions {
+        root,
+        output,
+        status,
+        dry_run,
+        output_exists,
+        min_size,
+        max_size,
+        exclude_path_contains,
+        files,
+        input_bytes,
+        estimated_archive_bytes,
+        list_entries,
+        entries,
+        archive_bytes,
+    } = options;
     let stdout = io::stdout();
     let mut writer = io::BufWriter::with_capacity(64 * 1024, stdout.lock());
     let result = (|| -> io::Result<()> {
@@ -11670,26 +11645,26 @@ fn run_pack(args: &[String]) -> Result<(), String> {
     }
     if dry_run {
         if json {
-            print_pack_json(
-                &root,
-                &output_path,
-                if output_exists {
+            print_pack_json(PackJsonOptions {
+                root: &root,
+                output: &output_path,
+                status: if output_exists {
                     "output_exists"
                 } else {
                     "planned"
                 },
-                true,
+                dry_run: true,
                 output_exists,
                 min_size,
                 max_size,
-                &exclude_path_contains,
-                entries.len(),
-                total_bytes,
+                exclude_path_contains: &exclude_path_contains,
+                files: entries.len(),
+                input_bytes: total_bytes,
                 estimated_archive_bytes,
                 list_entries,
-                &entries,
-                None,
-            )?;
+                entries: &entries,
+                archive_bytes: None,
+            })?;
             return Ok(());
         }
         if output_exists {
@@ -11794,22 +11769,22 @@ fn run_pack(args: &[String]) -> Result<(), String> {
     }
     let archive_size = archive_bytes;
     if json {
-        print_pack_json(
-            &root,
-            &output_path,
-            "created",
-            false,
-            true,
+        print_pack_json(PackJsonOptions {
+            root: &root,
+            output: &output_path,
+            status: "created",
+            dry_run: false,
+            output_exists: true,
             min_size,
             max_size,
-            &exclude_path_contains,
-            entries.len(),
-            total_bytes,
+            exclude_path_contains: &exclude_path_contains,
+            files: entries.len(),
+            input_bytes: total_bytes,
             estimated_archive_bytes,
             list_entries,
-            &entries,
-            Some(archive_size),
-        )?;
+            entries: &entries,
+            archive_bytes: Some(archive_size),
+        })?;
     } else {
         println!(
             "Created {} ({})",
