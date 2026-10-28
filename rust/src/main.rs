@@ -772,6 +772,12 @@ fn print_json(
     largest_limit: usize,
     skipped_paths: usize,
     skipped_examples: &[String],
+    kind_filter: Option<Kind>,
+    min_size: Option<u64>,
+    max_size: Option<u64>,
+    extension_filter: Option<&HashSet<String>>,
+    include_hidden: bool,
+    strict: bool,
 ) {
     let mut by_type: BTreeMap<&str, (u64, u128)> = BTreeMap::new();
     let mut extensions: BTreeMap<&str, usize> = BTreeMap::new();
@@ -816,6 +822,24 @@ fn print_json(
             .map(|path| json_string(path))
             .collect::<Vec<_>>()
             .join(",")
+    );
+    let filter_extensions_json = extension_filter
+        .map(|extensions| {
+            let mut extensions = extensions.iter().collect::<Vec<_>>();
+            extensions.sort();
+            extensions
+                .into_iter()
+                .map(|extension| json_string(extension))
+                .collect::<Vec<_>>()
+                .join(",")
+        })
+        .unwrap_or_default();
+    println!(
+        "  \"filters\": {{\"type\":{},\"min_size_bytes\":{},\"max_size_bytes\":{},\"extensions\":{},\"include_hidden\":{include_hidden},\"strict\":{strict}}},",
+        kind_filter.map_or("null".to_owned(), |kind| json_string(kind.as_str())),
+        min_size.map_or("null".to_owned(), |size| size.to_string()),
+        max_size.map_or("null".to_owned(), |size| size.to_string()),
+        extension_filter.map_or("null".to_owned(), |_| format!("[{filter_extensions_json}]")),
     );
     println!("  \"largest_limit\": {largest_limit},");
     println!("  \"total_bytes\": {},", total_bytes);
@@ -1296,7 +1320,7 @@ fn run_scan(args: &[String]) -> Result<(), String> {
             }
             "--help" | "-h" => {
                 println!(
-                    "Usage: mediaforge scan [PATH] [--json|--csv] [--include-hidden] [--strict] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--largest N]\n\nSummarize media and game assets in a folder. --min-size and --max-size select an inclusive size range. Permission and file-system errors are skipped by default; text/JSON report incomplete scans and CSV writes warnings to stderr. JSON includes incomplete, skipped_paths, up to 100 skipped_path_examples, and skipped_paths_truncated fields. Use --strict to fail on the first traversal error instead. --csv emits one row per matched file with path, type, extension, byte size, and modification time in Unix seconds; it always includes all matches. --largest controls how many biggest files are shown (default: 10 in text, 20 in JSON). Defaults to the current directory.\n\nTypes: video, audio, image, model, texture, project, other\nExtensions: comma-separated, case-insensitive (for example exr,tif); use none to select files without an extension\nSizes: bytes, KiB/MiB/GiB, or K/M/G (for example 500M); fractional values round up to the next byte"
+                    "Usage: mediaforge scan [PATH] [--json|--csv] [--include-hidden] [--strict] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--largest N]\n\nSummarize media and game assets in a folder. --min-size and --max-size select an inclusive size range. Permission and file-system errors are skipped by default; text/JSON report incomplete scans and CSV writes warnings to stderr. JSON includes incomplete, skipped_paths, up to 100 skipped_path_examples, skipped_paths_truncated, and the applied filters. Use --strict to fail on the first traversal error instead. --csv emits one row per matched file with path, type, extension, byte size, and modification time in Unix seconds; it always includes all matches. --largest controls how many biggest files are shown (default: 10 in text, 20 in JSON). Defaults to the current directory.\n\nTypes: video, audio, image, model, texture, project, other\nExtensions: comma-separated, case-insensitive (for example exr,tif); use none to select files without an extension\nSizes: bytes, KiB/MiB/GiB, or K/M/G (for example 500M); fractional values round up to the next byte"
                 );
                 return Ok(());
             }
@@ -1339,7 +1363,7 @@ fn run_scan(args: &[String]) -> Result<(), String> {
     if let Some(kind) = kind_filter {
         records.retain(|record| record.kind == kind);
     }
-    if let Some(extensions) = extension_filter {
+    if let Some(extensions) = &extension_filter {
         records.retain(|record| extensions.contains(&record.extension));
     }
     if let Some(size) = min_size {
@@ -1367,6 +1391,12 @@ fn run_scan(args: &[String]) -> Result<(), String> {
             largest_limit,
             skipped_paths,
             &skipped_examples,
+            kind_filter,
+            min_size,
+            max_size,
+            extension_filter.as_ref(),
+            include_hidden,
+            strict,
         );
     } else {
         print_report(
