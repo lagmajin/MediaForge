@@ -7923,21 +7923,29 @@ fn run_project(args: &[String]) -> Result<(), String> {
 
     let mut project_files = Vec::<(String, &'static str)>::new();
     let ignored = ignored_by_git(&root)?;
-    let mut pending = vec![(root.clone(), Arc::<[IgnoreRule]>::from(ignored))];
-    while let Some((directory, active_ignored)) = pending.pop() {
-        let mut entries = fs::read_dir(&directory)
-            .map_err(|error| {
-                format!(
-                    "cannot read project directory {}: {error}",
-                    directory.display()
-                )
-            })?
-            .map(|entry| {
-                entry.map_err(|error| {
-                    format!("cannot read entry in {}: {error}", directory.display())
+    let mut pending = vec![(
+        root.clone(),
+        Arc::<[IgnoreRule]>::from(ignored),
+        Some(root_entries),
+    )];
+    while let Some((directory, active_ignored, preloaded_entries)) = pending.pop() {
+        let mut entries = if let Some(entries) = preloaded_entries {
+            entries
+        } else {
+            fs::read_dir(&directory)
+                .map_err(|error| {
+                    format!(
+                        "cannot read project directory {}: {error}",
+                        directory.display()
+                    )
+                })?
+                .map(|entry| {
+                    entry.map_err(|error| {
+                        format!("cannot read entry in {}: {error}", directory.display())
+                    })
                 })
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+                .collect::<Result<Vec<_>, _>>()?
+        };
         sort_entries(&mut entries);
         for entry in entries {
             let path = entry.path();
@@ -7964,7 +7972,7 @@ fn run_project(args: &[String]) -> Result<(), String> {
                         Cow::Borrowed(_) => Arc::clone(&active_ignored),
                         Cow::Owned(rules) => Arc::from(rules),
                     };
-                    pending.push((path, child_ignored));
+                    pending.push((path, child_ignored, None));
                 }
             } else if file_type.is_file() {
                 let relative = path
