@@ -144,18 +144,37 @@ fn human_size_wide(size: u128) -> String {
     format!("{size} B")
 }
 
-fn is_hidden(path: &Path) -> bool {
+fn is_dot_hidden(path: &Path) -> bool {
     if path
         .file_name()
         .is_some_and(|name| name.to_string_lossy().starts_with('.'))
     {
         return true;
     }
+    false
+}
+
+fn metadata_has_hidden_attribute(metadata: &fs::Metadata) -> bool {
     #[cfg(windows)]
     {
         use std::os::windows::fs::MetadataExt;
+        return metadata.file_attributes() & 0x2 != 0;
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = metadata;
+        false
+    }
+}
+
+fn is_hidden(path: &Path) -> bool {
+    if is_dot_hidden(path) {
+        return true;
+    }
+    #[cfg(windows)]
+    {
         return fs::symlink_metadata(path)
-            .is_ok_and(|metadata| metadata.file_attributes() & 0x2 != 0);
+            .is_ok_and(|metadata| metadata_has_hidden_attribute(&metadata));
     }
     #[cfg(not(windows))]
     {
@@ -314,10 +333,10 @@ fn walk_with_skip_dirs_mode_counted(
                     Cow::Owned(rules) => Arc::from(rules),
                 };
                 pending.push((path, child_ignored));
-            } else if file_type.is_file()
-                && (include_hidden || !is_hidden(&path))
-                && !is_ignored(&relative, &active_ignored)
-            {
+            } else if file_type.is_file() && !is_ignored(&relative, &active_ignored) {
+                if !include_hidden && is_dot_hidden(&path) {
+                    continue;
+                }
                 let metadata = match entry.metadata() {
                     Ok(metadata) => metadata,
                     Err(_) if !strict => {
@@ -328,6 +347,9 @@ fn walk_with_skip_dirs_mode_counted(
                         return Err(format!("cannot inspect {}: {error}", path.display()));
                     }
                 };
+                if !include_hidden && metadata_has_hidden_attribute(&metadata) {
+                    continue;
+                }
                 let extension = path
                     .extension()
                     .and_then(|s| s.to_str())
@@ -402,13 +424,16 @@ fn walk_strict(
                     Cow::Owned(rules) => Arc::from(rules),
                 };
                 pending.push((path, child_ignored));
-            } else if file_type.is_file()
-                && (include_hidden || !is_hidden(&path))
-                && !is_ignored(&relative, &active_ignored)
-            {
+            } else if file_type.is_file() && !is_ignored(&relative, &active_ignored) {
+                if !include_hidden && is_dot_hidden(&path) {
+                    continue;
+                }
                 let metadata = entry
                     .metadata()
                     .map_err(|error| format!("cannot inspect {}: {error}", path.display()))?;
+                if !include_hidden && metadata_has_hidden_attribute(&metadata) {
+                    continue;
+                }
                 let extension = path
                     .extension()
                     .and_then(|value| value.to_str())
@@ -8243,7 +8268,7 @@ fn run_sequence(args: &[String]) -> Result<(), String> {
             skipped += 1;
             continue;
         };
-        if (!include_hidden && is_hidden(&source))
+        if (!include_hidden && is_dot_hidden(&source))
             || is_ignored(name_text, &ignored)
             || matches!(
                 name_text,
@@ -8258,6 +8283,10 @@ fn run_sequence(args: &[String]) -> Result<(), String> {
         }
         let metadata = fs::symlink_metadata(&source)
             .map_err(|error| format!("cannot inspect {}: {error}", source.display()))?;
+        if !include_hidden && metadata_has_hidden_attribute(&metadata) {
+            skipped += 1;
+            continue;
+        }
         if !metadata.is_file() || metadata.file_type().is_symlink() {
             skipped += 1;
             continue;
