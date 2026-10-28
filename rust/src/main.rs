@@ -93,8 +93,9 @@ fn classify(path: &Path) -> Kind {
         | "stl" | "ply" | "3ds" | "dae" => Kind::Model,
         "sbsar" | "psd" | "psb" | "ktx" | "ktx2" | "dds" | "material" | "basis" | "pvr"
         | "astc" => Kind::Texture,
-        "uproject" | "unity" | "unitypackage" | "godot" | "umap" | "drp" | "prproj" | "aep"
-        | "fcpxml" | "blend" | "sbs" | "spp" => Kind::Project,
+        "uproject" | "uasset" | "umap" | "unity" | "unitypackage" | "asset" | "prefab"
+        | "godot" | "tscn" | "tres" | "scn" | "res" | "drp" | "prproj" | "aep" | "fcpxml"
+        | "blend" | "sbs" | "spp" => Kind::Project,
         _ => Kind::Other,
     }
 }
