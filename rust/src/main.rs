@@ -1329,6 +1329,17 @@ struct SnapshotEntry {
     modified_ns: Option<i128>,
 }
 
+#[derive(Default)]
+struct SnapshotTypeStats {
+    added: usize,
+    removed: usize,
+    modified: usize,
+    unchanged: usize,
+    added_bytes: u128,
+    removed_bytes: u128,
+    modified_size_delta_bytes: i128,
+}
+
 fn snapshot_entry(record: &FileRecord) -> SnapshotEntry {
     let modified_ns =
         record.modified.map(
@@ -1811,16 +1822,41 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
     let mut removed = 0_usize;
     let mut modified = 0_usize;
     let mut unchanged = 0_usize;
+    let mut added_bytes = 0_u128;
+    let mut removed_bytes = 0_u128;
+    let mut modified_size_delta_bytes = 0_i128;
+    let mut by_type = BTreeMap::<&'static str, SnapshotTypeStats>::new();
     for (relative, current) in &current_entries {
+        let asset_type = classify(Path::new(relative)).as_str();
+        let stats = by_type.entry(asset_type).or_default();
         match old_entries.get(relative) {
-            None => added += 1,
-            Some(previous) if previous == current => unchanged += 1,
-            Some(_) => modified += 1,
+            None => {
+                added += 1;
+                stats.added += 1;
+                added_bytes += u128::from(current.size);
+                stats.added_bytes += u128::from(current.size);
+            }
+            Some(previous) if previous == current => {
+                unchanged += 1;
+                stats.unchanged += 1;
+            }
+            Some(previous) => {
+                modified += 1;
+                stats.modified += 1;
+                let size_delta = i128::from(current.size) - i128::from(previous.size);
+                modified_size_delta_bytes += size_delta;
+                stats.modified_size_delta_bytes += size_delta;
+            }
         }
     }
-    for relative in old_entries.keys() {
+    for (relative, previous) in &old_entries {
         if !current_entries.contains_key(relative) {
             removed += 1;
+            removed_bytes += u128::from(previous.size);
+            let asset_type = classify(Path::new(relative)).as_str();
+            let stats = by_type.entry(asset_type).or_default();
+            stats.removed += 1;
+            stats.removed_bytes += u128::from(previous.size);
         }
     }
     let change_count = added + removed + modified;
@@ -1833,10 +1869,15 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
                 Some(_) => continue,
             };
             println!(
-                "{{\"type\":{kind:?},\"path\":{},\"old_size_bytes\":{},\"new_size_bytes\":{},\"old_modified_unix_ns\":{},\"new_modified_unix_ns\":{}}}",
+                "{{\"type\":{kind:?},\"asset_type\":{},\"path\":{},\"old_size_bytes\":{},\"new_size_bytes\":{},\"size_delta_bytes\":{},\"old_modified_unix_ns\":{},\"new_modified_unix_ns\":{}}}",
+                json_string(classify(Path::new(relative)).as_str()),
                 json_string(relative),
                 old.map_or("null".to_owned(), |value| value.size.to_string()),
                 current.size,
+                old.map_or_else(
+                    || current.size.to_string(),
+                    |value| (i128::from(current.size) - i128::from(value.size)).to_string()
+                ),
                 read_json_timestamp(old.and_then(|value| value.modified_ns)),
                 read_json_timestamp(current.modified_ns)
             );
@@ -1846,26 +1887,58 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
                 continue;
             }
             println!(
-                "{{\"type\":\"removed\",\"path\":{},\"old_size_bytes\":{},\"new_size_bytes\":null,\"old_modified_unix_ns\":{},\"new_modified_unix_ns\":null}}",
+                "{{\"type\":\"removed\",\"asset_type\":{},\"path\":{},\"old_size_bytes\":{},\"new_size_bytes\":null,\"size_delta_bytes\":{},\"old_modified_unix_ns\":{},\"new_modified_unix_ns\":null}}",
+                json_string(classify(Path::new(relative)).as_str()),
                 json_string(relative),
                 old.size,
+                -i128::from(old.size),
                 read_json_timestamp(old.modified_ns)
             );
         }
+        let type_summary = by_type
+            .iter()
+            .map(|(asset_type, stats)| {
+                format!(
+                    "{{\"asset_type\":{},\"added\":{},\"removed\":{},\"modified\":{},\"unchanged\":{},\"added_bytes\":{},\"removed_bytes\":{},\"modified_size_delta_bytes\":{}}}",
+                    json_string(asset_type),
+                    stats.added,
+                    stats.removed,
+                    stats.modified,
+                    stats.unchanged,
+                    stats.added_bytes,
+                    stats.removed_bytes,
+                    stats.modified_size_delta_bytes
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",");
         println!(
-            "{{\"type\":\"summary\",\"files\":{},\"added\":{added},\"removed\":{removed},\"modified\":{modified},\"unchanged\":{unchanged}}}",
+            "{{\"type\":\"summary\",\"files\":{},\"added\":{added},\"removed\":{removed},\"modified\":{modified},\"unchanged\":{unchanged},\"added_bytes\":{added_bytes},\"removed_bytes\":{removed_bytes},\"modified_size_delta_bytes\":{modified_size_delta_bytes},\"by_asset_type\":[{type_summary}]}}",
             records.len()
         );
     } else {
         println!("Snapshot diff: {}", root.display());
         println!(
-            "Added: {added} · Removed: {removed} · Modified: {modified} · Unchanged: {unchanged}"
+            "Added: {added} ({}) · Removed: {removed} ({}) · Modified: {modified} · Unchanged: {unchanged}",
+            human_size_wide(added_bytes),
+            human_size_wide(removed_bytes)
         );
+        println!("Net modified size: {modified_size_delta_bytes} bytes");
+        for (asset_type, stats) in &by_type {
+            println!(
+                "  {asset_type:<9} +{} -{} ~{} ={}",
+                stats.added, stats.removed, stats.modified, stats.unchanged
+            );
+        }
         for (relative, current) in &current_entries {
+            let asset_type = classify(Path::new(relative)).as_str();
             match old_entries.get(relative) {
-                None => println!("  added    {:>10}  {relative}", human_size(current.size)),
+                None => println!(
+                    "  added    {asset_type:<9} {:>10}  {relative}",
+                    human_size(current.size)
+                ),
                 Some(previous) if previous != current => println!(
-                    "  modified {:>10} -> {:<10} {relative}",
+                    "  modified {asset_type:<9} {:>10} -> {:<10} {relative}",
                     human_size(previous.size),
                     human_size(current.size)
                 ),
@@ -1874,7 +1947,11 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
         }
         for (relative, previous) in &old_entries {
             if !current_entries.contains_key(relative) {
-                println!("  removed  {:>10}  {relative}", human_size(previous.size));
+                println!(
+                    "  removed  {:<9} {:>10}  {relative}",
+                    classify(Path::new(relative)).as_str(),
+                    human_size(previous.size)
+                );
             }
         }
     }
