@@ -118,8 +118,8 @@ fn classify(path: &Path) -> Kind {
         | "astc" => Kind::Texture,
         "uproject" | "uasset" | "umap" | "unity" | "unitypackage" | "asset" | "prefab"
         | "godot" | "tscn" | "tres" | "scn" | "res" | "pak" | "utoc" | "ucas" | "pck" | "wproj"
-        | "wwu" | "drp" | "dra" | "prproj" | "aep" | "aepx" | "aaf" | "edl" | "mlt" | "fcpxml"
-        | "blend" | "sbs" | "spp" => Kind::Project,
+        | "wwu" | "fspro" | "drp" | "dra" | "prproj" | "aep" | "aepx" | "aaf" | "edl" | "mlt"
+        | "fcpxml" | "blend" | "sbs" | "spp" => Kind::Project,
         _ => Kind::Other,
     }
 }
@@ -6233,6 +6233,9 @@ fn project_file_kind(path: &str) -> Option<&'static str> {
         "edl" => Some("Edit Decision List"),
         "mlt" => Some("MLT project"),
         "fcpxml" => Some("Final Cut Pro XML"),
+        "wproj" => Some("Wwise Project"),
+        "wwu" => Some("Wwise Work Unit"),
+        "fspro" => Some("FMOD Studio Project"),
         _ => None,
     }
 }
