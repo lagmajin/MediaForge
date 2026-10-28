@@ -12015,7 +12015,7 @@ fn run_pack(args: &[String]) -> Result<(), String> {
             }
             "--help" | "-h" => {
                 println!(
-                    "Usage: mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--exclude-path-contains TEXT ...] [--include-hidden] [--include-generated] [--dry-run] [--json] [--list]\n\nCreate an uncompressed, stream-written tar archive. --type accepts comma-separated scan types: video, audio, image, model, texture, project, other. --extension accepts comma-separated extensions such as mov,mxf; use none for files without an extension. Matching Unity .meta sidecars are included with selected assets. --min-size and --max-size accept bytes or K/M/G/T binary units. Repeat --exclude-path-contains to omit matching relative paths; matching directory names prune their subtrees. Git-ignored and hidden files are skipped by default. Common Unity, Unreal, and Godot generated folders are excluded unless --include-generated is used. PAX extensions support long paths and files larger than 8 GiB. --json emits a machine-readable result summary; --list includes per-file paths, sizes, and types in text or JSON output."
+                    "Usage: mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--exclude-path-contains TEXT ...] [--include-hidden] [--include-generated] [--dry-run] [--json] [--list]\n\nCreate an uncompressed, stream-written tar archive. --type accepts comma-separated scan types: video, audio, image, model, texture, project, other. --extension accepts comma-separated extensions such as mov,mxf; use none for files without an extension. Matching Unity .meta sidecars are included with selected assets unless ignored, hidden, or explicitly excluded. --min-size and --max-size accept bytes or K/M/G/T binary units. Repeat --exclude-path-contains to omit matching relative paths; matching directory names prune their subtrees. Git-ignored and hidden files are skipped by default. Common Unity, Unreal, and Godot generated folders are excluded unless --include-generated is used. PAX extensions support long paths and files larger than 8 GiB. --json emits a machine-readable result summary; --list includes per-file paths, sizes, and types in text or JSON output."
                 );
                 return Ok(());
             }
@@ -12119,6 +12119,8 @@ fn run_pack(args: &[String]) -> Result<(), String> {
         .map(|record| output_path_collision_key(&record.path))
         .collect::<HashSet<_>>();
     let mut sidecars_by_directory = HashMap::<PathBuf, HashMap<String, Option<String>>>::new();
+    let mut ignore_rules_by_directory =
+        HashMap::<PathBuf, Vec<IgnoreRule>>::from([(PathBuf::new(), ignored.clone())]);
     let mut unity_sidecars = Vec::<PackFileRecord>::new();
     for record in &records {
         let Some(asset_name) = record.path.file_name().and_then(|name| name.to_str()) else {
@@ -12164,10 +12166,31 @@ fn run_pack(args: &[String]) -> Result<(), String> {
         {
             continue;
         }
+        let mut active_ignored = ignored.clone();
+        let mut walked_parent = PathBuf::new();
+        for component in parent.components() {
+            let std::path::Component::Normal(name) = component else {
+                continue;
+            };
+            walked_parent.push(name);
+            if let Some(rules) = ignore_rules_by_directory.get(&walked_parent) {
+                active_ignored.clone_from(rules);
+                continue;
+            }
+            let directory = root.join(&walked_parent);
+            active_ignored = extend_ignore_rules(&root, &directory, &active_ignored)?.into_owned();
+            ignore_rules_by_directory.insert(walked_parent.clone(), active_ignored.clone());
+        }
+        if is_ignored(&relative, &active_ignored) {
+            continue;
+        }
         let sidecar_path = root.join(&relative_path);
         let metadata = fs::symlink_metadata(&sidecar_path)
             .map_err(|error| format!("cannot inspect {}: {error}", sidecar_path.display()))?;
-        if !metadata.is_file() || metadata.file_type().is_symlink() {
+        if !metadata.is_file()
+            || metadata.file_type().is_symlink()
+            || (!include_hidden && metadata_has_hidden_attribute(&metadata))
+        {
             continue;
         }
         unity_sidecars.push(PackFileRecord {
