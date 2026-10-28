@@ -5827,6 +5827,18 @@ fn scene_timecode(seconds: f64) -> String {
     format!("{hours:02}:{minutes:02}:{seconds:02}.{millis:03}")
 }
 
+fn write_scene_timecode_json(output: &mut impl Write, seconds: f64) -> io::Result<()> {
+    let milliseconds = (seconds * 1000.0).round() as u64;
+    write!(
+        output,
+        "\"{:02}:{:02}:{:02}.{:03}\"",
+        milliseconds / 3_600_000,
+        (milliseconds / 60_000) % 60,
+        (milliseconds / 1000) % 60,
+        milliseconds % 1000
+    )
+}
+
 fn parse_frame_rate(value: &str) -> Option<f64> {
     let (numerator, denominator) = if let Some((numerator, denominator)) = value.split_once('/') {
         (
@@ -6119,10 +6131,14 @@ fn write_scene_detection_json(
         )?;
     } else {
         for cut in &detection.cuts {
+            write!(
+                output,
+                "{{\"type\":\"scene\",\"path\":{source},\"timecode\":"
+            )?;
+            write_scene_timecode_json(output, cut.seconds)?;
             writeln!(
                 output,
-                "{{\"type\":\"scene\",\"path\":{source},\"timecode\":{},\"time_seconds\":{:.6},\"frame\":{},\"fps\":{:.6},\"nominal_fps\":{},\"score\":{:.6}}}",
-                json_string(&scene_timecode(cut.seconds)),
+                ",\"time_seconds\":{:.6},\"frame\":{},\"fps\":{:.6},\"nominal_fps\":{},\"score\":{:.6}}}",
                 cut.seconds,
                 (cut.seconds * detection.fps).round() as u64,
                 detection.fps,
@@ -6148,12 +6164,20 @@ fn write_scene_segment_json(
     fps: f64,
     nominal_fps: u32,
 ) -> io::Result<()> {
+    write!(
+        output,
+        "{{\"type\":\"segment\",\"path\":{source},\"segment\":{index},\"start_timecode\":"
+    )?;
+    write_scene_timecode_json(output, start)?;
+    write!(
+        output,
+        ",\"start_seconds\":{start:.6},\"start_frame\":{},\"end_timecode\":",
+        (start * fps).round() as u64
+    )?;
+    write_scene_timecode_json(output, end)?;
     writeln!(
         output,
-        "{{\"type\":\"segment\",\"path\":{source},\"segment\":{index},\"start_timecode\":{},\"start_seconds\":{start:.6},\"start_frame\":{},\"end_timecode\":{},\"end_seconds\":{end:.6},\"end_frame\":{},\"duration_seconds\":{:.6},\"fps\":{fps:.6},\"nominal_fps\":{nominal_fps}}}",
-        json_string(&scene_timecode(start)),
-        (start * fps).round() as u64,
-        json_string(&scene_timecode(end)),
+        ",\"end_seconds\":{end:.6},\"end_frame\":{},\"duration_seconds\":{:.6},\"fps\":{fps:.6},\"nominal_fps\":{nominal_fps}}}",
         (end * fps).round() as u64,
         end - start
     )
@@ -6447,7 +6471,7 @@ fn run_scene_detect_dir(args: &[String]) -> Result<(), String> {
                         let current = completed.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
                             + 1;
                         let stdout = io::stdout();
-                        let mut stdout = stdout.lock();
+                        let mut stdout = io::BufWriter::with_capacity(64 * 1024, stdout.lock());
                         let write_result = (|| -> io::Result<()> {
                             if !summary_only {
                                 writeln!(
@@ -6471,7 +6495,8 @@ fn run_scene_detect_dir(args: &[String]) -> Result<(), String> {
                                     json_string(&source_path.to_string_lossy()),
                                     json_string(&format!("mediaforge: {error}"))
                                 ),
-                            }
+                            }?;
+                            stdout.flush()
                         })();
                         write_result.err().map(|error| error.to_string())
                     };
