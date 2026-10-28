@@ -7,7 +7,7 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use std::io::{self, BufRead, BufReader, BufWriter, Cursor, Read, Seek, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
-use std::sync::{Arc, LazyLock};
+use std::sync::{Arc, LazyLock, OnceLock};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const SKIP_DIRS: &[&str] = &[
@@ -3090,52 +3090,56 @@ fn collect_snapshot_entries(
     if jobs == 0 {
         return Err("snapshot worker count must be greater than zero".to_owned());
     }
-    let mut hashes = if hash_content {
-        vec![None; records.len()]
+    let mut hash_results = if hash_content {
+        Some(
+            (0..records.len())
+                .map(|_| OnceLock::<Result<[u8; 32], String>>::new())
+                .collect::<Vec<_>>(),
+        )
     } else {
-        Vec::new()
+        None
     };
-    let mut errors = Vec::new();
     if hash_content && !records.is_empty() {
         let next = std::sync::atomic::AtomicUsize::new(0);
         let worker_count = jobs.min(records.len());
-        let worker_results = std::thread::scope(|scope| {
+        std::thread::scope(|scope| {
             let handles = (0..worker_count)
                 .map(|_| {
                     scope.spawn(|| {
-                        let mut results = Vec::new();
                         loop {
                             let index = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                             let Some(record) = records.get(index) else {
                                 break;
                             };
-                            results.push((index, hash_snapshot_file(record)));
+                            hash_results
+                                .as_ref()
+                                .expect("hash slots exist when hashing")[index]
+                                .set(hash_snapshot_file(record))
+                                .expect("each snapshot hash slot is written once");
                         }
-                        results
                     })
                 })
                 .collect::<Vec<_>>();
-            handles
-                .into_iter()
-                .map(|handle| handle.join().expect("snapshot hashing worker panicked"))
-                .collect::<Vec<_>>()
-        });
-        for (index, result) in worker_results.into_iter().flatten() {
-            match result {
-                Ok(hash) => hashes[index] = Some(hash),
-                Err(error) => errors.push((index, error)),
+            for handle in handles {
+                handle.join().expect("snapshot hashing worker panicked");
             }
-        }
-    }
-    if let Some((_, error)) = errors.into_iter().min_by_key(|(index, _)| *index) {
-        return Err(error);
+        });
     }
     let mut entries = BTreeMap::new();
     for (index, record) in records.iter().enumerate() {
+        let content_hash = if let Some(hash_results) = &mut hash_results {
+            Some(
+                hash_results[index]
+                    .take()
+                    .expect("every snapshot file has a hash result")?,
+            )
+        } else {
+            None
+        };
         if entries
             .insert(
                 record.relative.clone(),
-                snapshot_entry(record, hashes.get(index).copied().flatten()),
+                snapshot_entry(record, content_hash),
             )
             .is_some()
         {
