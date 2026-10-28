@@ -3459,6 +3459,8 @@ struct SnapshotEntry {
     content_hash: [u8; 32],
 }
 
+type SnapshotEntries = Vec<(String, SnapshotEntry)>;
+
 const _: () = assert!(std::mem::size_of::<SnapshotEntry>() <= 64);
 
 impl SnapshotEntry {
@@ -3753,6 +3755,16 @@ fn snapshot_records_contain_path(records: &[SnapshotFileRecord], relative: &str)
         .is_ok()
 }
 
+fn snapshot_entries_find<'a>(
+    entries: &'a SnapshotEntries,
+    relative: &str,
+) -> Option<&'a SnapshotEntry> {
+    entries
+        .binary_search_by(|(path, _)| path.as_str().cmp(relative))
+        .ok()
+        .map(|index| &entries[index].1)
+}
+
 fn snapshot_path_is_valid(path: &str) -> bool {
     !path.is_empty()
         && !path.contains('\0')
@@ -3767,9 +3779,7 @@ fn snapshot_path_is_valid(path: &str) -> bool {
             .all(|component| !component.is_empty() && component != "." && component != "..")
 }
 
-fn read_snapshot_manifest(
-    path: &Path,
-) -> Result<(bool, bool, bool, BTreeMap<String, SnapshotEntry>), String> {
+fn read_snapshot_manifest(path: &Path) -> Result<(bool, bool, bool, SnapshotEntries), String> {
     const MAX_ENTRIES: u64 = 10_000_000;
     const MAX_PATH_BYTES: usize = 1024 * 1024;
     let file = File::open(path)
@@ -3798,7 +3808,7 @@ fn read_snapshot_manifest(
     if count > MAX_ENTRIES {
         return Err(format!("snapshot contains too many entries ({count})"));
     }
-    let mut entries = BTreeMap::new();
+    let mut entries = Vec::with_capacity(count as usize);
     for _ in 0..count {
         let mut length_bytes = [0; 4];
         reader
@@ -3853,17 +3863,14 @@ fn read_snapshot_manifest(
             modified_ns: modified_ns.unwrap_or_default(),
             content_hash: content_hash.unwrap_or_default(),
         };
-        match entries.entry(relative) {
-            std::collections::btree_map::Entry::Occupied(entry) => {
-                return Err(format!(
-                    "snapshot contains a duplicate path: {}",
-                    entry.key()
-                ));
-            }
-            std::collections::btree_map::Entry::Vacant(entry) => {
-                entry.insert(snapshot_entry);
-            }
-        }
+        entries.push((relative, snapshot_entry));
+    }
+    entries.sort_unstable_by(|(left, _), (right, _)| left.cmp(right));
+    if let Some(duplicate) = entries.windows(2).find(|pair| pair[0].0 == pair[1].0) {
+        return Err(format!(
+            "snapshot contains a duplicate path: {}",
+            duplicate[0].0
+        ));
     }
     let mut trailing = [0];
     if reader
@@ -4333,7 +4340,7 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
         return Err(format!("expected a directory: {}", root.display()));
     }
 
-    let mut old_entries = BTreeMap::new();
+    let mut old_entries = Vec::new();
     let mut excluded = None;
     let mut baseline_path = None;
     let (use_hidden, use_generated, use_hash) = if let Some(baseline) = &baseline {
@@ -4468,7 +4475,7 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
         let relative = record.relative.as_str();
         let asset_type = classify(Path::new(relative)).as_str();
         let stats = by_type.entry(asset_type).or_default();
-        match old_entries.get(relative) {
+        match snapshot_entries_find(&old_entries, relative) {
             None => {
                 let size_stats = by_size.entry(size_category(current.size)).or_default();
                 added += 1;
@@ -4551,7 +4558,7 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
         if !summary_only {
             for (record, current) in records.iter().zip(&current_entries) {
                 let relative = record.relative.as_str();
-                let old = old_entries.get(relative).copied();
+                let old = snapshot_entries_find(&old_entries, relative).copied();
                 let change = match old {
                     None => "added",
                     Some(previous) if !snapshot_entries_equal(previous, *current, use_hash) => {
@@ -4608,7 +4615,7 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
         if !summary_only {
             for (record, current) in records.iter().zip(&current_entries) {
                 let relative = record.relative.as_str();
-                let old = old_entries.get(relative);
+                let old = snapshot_entries_find(&old_entries, relative);
                 let kind = match old {
                     None => "added",
                     Some(previous) if !snapshot_entries_equal(*previous, *current, use_hash) => {
@@ -4702,7 +4709,7 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
             for (record, current) in records.iter().zip(&current_entries) {
                 let relative = record.relative.as_str();
                 let asset_type = classify(Path::new(relative)).as_str();
-                match old_entries.get(relative) {
+                match snapshot_entries_find(&old_entries, relative) {
                     None => println!(
                         "  added    {asset_type:<9} {:>10}  {relative}",
                         human_size(current.size)
