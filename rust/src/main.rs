@@ -1291,7 +1291,7 @@ fn run_probe(args: &[String]) -> Result<(), String> {
             "--summary" => summary = true,
             "--help" | "-h" => {
                 println!(
-                    "Usage: mediaforge probe <FILE> [--compact] [--summary] [--summary]\n\nRead media metadata with ffprobe. --summary selects compact fields for size, duration, bitrate, codecs, dimensions, pixel/aspect formats, frame rates, and audio layout. --compact removes JSON whitespace."
+                    "Usage: mediaforge probe <FILE> [--compact] [--summary]\n\nRead media metadata with ffprobe. --summary selects compact fields for size, duration, bitrate, codecs, dimensions, pixel/aspect formats, frame rates, and audio layout. --compact removes JSON whitespace."
                 );
                 return Ok(());
             }
