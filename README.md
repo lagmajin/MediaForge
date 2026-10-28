@@ -26,7 +26,7 @@ cargo build --release
 ./target/release/mediaforge scan ./Media
 ```
 
-On Windows, run `target\release\mediaforge.exe scan .\Media`. The Python reference currently covers `scan` and uses the same syntax and report fields for that command; the Rust CLI provides the additional project workflows. Rust scans are fully offline once the toolchain is installed. Both skip Git-ignored path entries without glob syntax, plus built-in generated/dependency directories. Full Git ignore glob and negation semantics are not implemented yet.
+On Windows, run `target\release\mediaforge.exe scan .\Media`. The Python reference covers the basic `scan` command and mirrors its JSON report fields; Rust adds asset-type and size filters plus the project workflows. Rust scans are fully offline once the toolchain is installed. Both skip Git-ignored path entries without glob syntax, plus built-in generated/dependency directories. Full Git ignore glob and negation semantics are not implemented yet.
 
 ## Inspect media metadata
 

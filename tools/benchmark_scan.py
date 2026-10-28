@@ -68,7 +68,15 @@ def main() -> int:
                 reports[name] = report
                 durations[name].append(elapsed)
 
-        compared_fields = ("files", "total_bytes", "by_type", "extensions", "largest", "same_size_candidate_groups")
+        compared_fields = (
+            "files",
+            "total_bytes",
+            "by_type",
+            "extensions",
+            "extension_bytes",
+            "largest",
+            "same_size_candidate_groups",
+        )
         for field in compared_fields:
             if reports["Rust"][field] != reports["Python"][field]:
                 raise SystemExit(f"Implementations disagree on {field}")

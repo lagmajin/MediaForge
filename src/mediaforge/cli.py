@@ -11,12 +11,33 @@ from typing import Iterable
 __version__ = "0.1.0"
 
 MEDIA_TYPES = {
-    "video": {".mp4", ".mov", ".mxf", ".mkv", ".avi", ".webm", ".m4v"},
-    "audio": {".wav", ".aiff", ".aif", ".flac", ".mp3", ".ogg", ".m4a", ".aac"},
-    "image": {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".exr", ".hdr", ".tga", ".bmp", ".webp"},
-    "model": {".fbx", ".obj", ".gltf", ".glb", ".usd", ".usda", ".usdc", ".blend", ".abc", ".ma", ".mb"},
-    "texture": {".sbsar", ".psd", ".psb", ".ktx", ".ktx2", ".dds", ".material"},
-    "project": {".uproject", ".unity", ".godot", ".blend", ".drp", ".prproj", ".aep", ".fcpxml"},
+    "video": {
+        ".mp4", ".mov", ".mxf", ".mkv", ".avi", ".webm", ".m4v", ".mpg", ".mpeg",
+        ".mpe", ".mpv", ".m2v", ".ts", ".mts", ".m2ts", ".vob", ".ogv", ".3gp",
+        ".3g2", ".wmv", ".flv", ".f4v", ".asf", ".divx", ".r3d", ".braw", ".crm",
+    },
+    "audio": {
+        ".wav", ".aiff", ".aif", ".flac", ".mp3", ".ogg", ".m4a", ".aac", ".caf",
+        ".ac3", ".eac3", ".alac", ".opus", ".wma", ".amr", ".mid", ".midi",
+    },
+    "image": {
+        ".png", ".jpg", ".jpeg", ".tif", ".tiff", ".exr", ".hdr", ".tga", ".bmp",
+        ".webp", ".gif", ".heic", ".heif", ".jp2", ".j2k", ".dpx", ".cin", ".dng",
+        ".cr2", ".cr3", ".nef", ".arw", ".raf", ".orf", ".rw2", ".ari",
+    },
+    "model": {
+        ".fbx", ".obj", ".gltf", ".glb", ".usd", ".usda", ".usdc", ".usdz", ".abc",
+        ".ma", ".mb", ".stl", ".ply", ".3ds", ".dae",
+    },
+    "texture": {
+        ".sbsar", ".psd", ".psb", ".ktx", ".ktx2", ".dds", ".material", ".basis",
+        ".pvr", ".astc",
+    },
+    "project": {
+        ".uproject", ".uasset", ".umap", ".unity", ".unitypackage", ".asset",
+        ".prefab", ".godot", ".tscn", ".tres", ".scn", ".res", ".drp", ".prproj",
+        ".aep", ".fcpxml", ".blend", ".sbs", ".spp",
+    },
 }
 SKIP_DIRS = {".git", ".hg", ".svn", "node_modules", "__pycache__", ".venv", "venv"}
 
@@ -64,8 +85,9 @@ def iter_files(root: Path, include_hidden: bool = False) -> Iterable[Path]:
 
 def human_size(size: int) -> str:
     value = float(size)
-    for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
-        if value < 1024 or unit == "TiB":
+    units = ("B", "KiB", "MiB", "GiB", "TiB", "PiB", "EiB", "ZiB", "YiB")
+    for index, unit in enumerate(units):
+        if value < 1024 or index + 1 == len(units):
             return f"{value:.1f} {unit}" if unit != "B" else f"{size} B"
         value /= 1024
     return f"{size} B"
@@ -81,6 +103,7 @@ def scan(root: Path, include_hidden: bool = False) -> dict:
     counts: Counter[str] = Counter()
     bytes_by_type: Counter[str] = Counter()
     extensions: Counter[str] = Counter()
+    extension_bytes: Counter[str] = Counter()
     largest: list[dict] = []
     by_size: dict[int, list[str]] = defaultdict(list)
     total_bytes = 0
@@ -100,7 +123,9 @@ def scan(root: Path, include_hidden: bool = False) -> dict:
         total_bytes += size
         counts[kind] += 1
         bytes_by_type[kind] += size
-        extensions[path.suffix.lower() or "[no extension]"] += 1
+        extension = path.suffix.lower() or "[no extension]"
+        extensions[extension] += 1
+        extension_bytes[extension] += size
         by_size[size].append(rel)
         largest.append({"path": rel, "size_bytes": size, "size": human_size(size), "type": kind})
 
@@ -119,6 +144,7 @@ def scan(root: Path, include_hidden: bool = False) -> dict:
             for kind in sorted(counts)
         },
         "extensions": dict(sorted(extensions.items(), key=lambda item: (-item[1], item[0]))),
+        "extension_bytes": dict(sorted(extension_bytes.items())),
         "largest": largest[:20],
         "same_size_candidates": duplicate_groups,
         "same_size_candidate_groups": len(duplicate_groups),
