@@ -112,6 +112,7 @@ mediaforge scan-config show --json
 mediaforge scan ./Game/Content --settings ./.mediaforge-scan --show-filters
 mediaforge scan ./Game/Content --settings ./.mediaforge-scan --json
 mediaforge scan ./Game/Content --settings ./.mediaforge-scan --json --compact
+mediaforge scan ./Game/Content --json --summary
 mediaforge scan ./Media --type video --csv
 mediaforge scan . --include-hidden
 mediaforge scan ./Media --type video --min-size 500M
