@@ -983,6 +983,16 @@ fn json_top_level_string_field(contents: &str, field: &str) -> Option<String> {
     None
 }
 
+fn read_godot_hex_escape(chars: &mut std::str::Chars<'_>, digits: usize) -> Option<u32> {
+    let mut value = 0_u32;
+    for _ in 0..digits {
+        value = value
+            .checked_mul(16)?
+            .checked_add(chars.next()?.to_digit(16)?)?;
+    }
+    Some(value)
+}
+
 fn parse_godot_string_array(value: &str) -> Vec<String> {
     let value = value.trim();
     let array = value
@@ -993,9 +1003,13 @@ fn parse_godot_string_array(value: &str) -> Vec<String> {
     };
     let mut chars = array.chars();
     let mut values = Vec::new();
+    let mut closed_array = false;
     while let Some(character) = chars.next() {
         match character {
-            ')' => break,
+            ')' => {
+                closed_array = true;
+                break;
+            }
             ',' | ' ' | '\t' | '\r' | '\n' => {}
             '"' => {
                 let mut value = String::new();
@@ -1010,8 +1024,33 @@ fn parse_godot_string_array(value: &str) -> Vec<String> {
                             Some('n') => value.push('\n'),
                             Some('r') => value.push('\r'),
                             Some('t') => value.push('\t'),
+                            Some('b') => value.push('\u{0008}'),
+                            Some('f') => value.push('\u{000c}'),
                             Some('"') => value.push('"'),
                             Some('\\') => value.push('\\'),
+                            Some('u') => {
+                                let Some(codepoint) = read_godot_hex_escape(&mut chars, 4) else {
+                                    return Vec::new();
+                                };
+                                let codepoint = if (0xd800..=0xdbff).contains(&codepoint) {
+                                    if chars.next() != Some('\\') || chars.next() != Some('u') {
+                                        return Vec::new();
+                                    }
+                                    let Some(low) = read_godot_hex_escape(&mut chars, 4) else {
+                                        return Vec::new();
+                                    };
+                                    if !(0xdc00..=0xdfff).contains(&low) {
+                                        return Vec::new();
+                                    }
+                                    0x10000 + ((codepoint - 0xd800) << 10) + (low - 0xdc00)
+                                } else {
+                                    codepoint
+                                };
+                                let Some(character) = char::from_u32(codepoint) else {
+                                    return Vec::new();
+                                };
+                                value.push(character);
+                            }
                             Some(other) => {
                                 value.push('\\');
                                 value.push(other);
@@ -1028,6 +1067,9 @@ fn parse_godot_string_array(value: &str) -> Vec<String> {
             }
             _ => return Vec::new(),
         }
+    }
+    if !closed_array || chars.any(|character| !character.is_whitespace()) {
+        return Vec::new();
     }
     values
 }
