@@ -1304,7 +1304,8 @@ fn run_scan(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-const SNAPSHOT_MAGIC: &[u8; 8] = b"MFSP\x01\0\0\0";
+const SNAPSHOT_MAGIC_V1: &[u8; 8] = b"MFSP\x01\0\0\0";
+const SNAPSHOT_MAGIC: &[u8; 8] = b"MFSP\x02\0\0\0";
 const SNAPSHOT_SKIP_DIRS: &[&str] = &[
     ".git",
     ".hg",
@@ -1327,6 +1328,7 @@ const SNAPSHOT_SKIP_DIRS: &[&str] = &[
 struct SnapshotEntry {
     size: u64,
     modified_ns: Option<i128>,
+    content_hash: Option<[u8; 32]>,
 }
 
 #[derive(Default)]
@@ -1340,7 +1342,7 @@ struct SnapshotTypeStats {
     modified_size_delta_bytes: i128,
 }
 
-fn snapshot_entry(record: &FileRecord) -> SnapshotEntry {
+fn snapshot_entry(record: &FileRecord, content_hash: Option<[u8; 32]>) -> SnapshotEntry {
     let modified_ns =
         record.modified.map(
             |modified| match modified.duration_since(std::time::UNIX_EPOCH) {
@@ -1351,6 +1353,191 @@ fn snapshot_entry(record: &FileRecord) -> SnapshotEntry {
     SnapshotEntry {
         size: record.size,
         modified_ns,
+        content_hash,
+    }
+}
+
+struct Sha256 {
+    state: [u32; 8],
+    buffer: [u8; 64],
+    buffered: usize,
+    length: u64,
+}
+
+impl Sha256 {
+    fn new() -> Self {
+        Self {
+            state: [
+                0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab,
+                0x5be0cd19,
+            ],
+            buffer: [0; 64],
+            buffered: 0,
+            length: 0,
+        }
+    }
+
+    fn update(&mut self, mut input: &[u8]) {
+        self.length = self.length.wrapping_add(input.len() as u64);
+        if self.buffered != 0 {
+            let take = (64 - self.buffered).min(input.len());
+            self.buffer[self.buffered..self.buffered + take].copy_from_slice(&input[..take]);
+            self.buffered += take;
+            input = &input[take..];
+            if self.buffered == 64 {
+                let block = self.buffer;
+                self.compress(&block);
+                self.buffered = 0;
+            }
+        }
+        while input.len() >= 64 {
+            let block: &[u8; 64] = input[..64].try_into().expect("fixed-size block");
+            self.compress(block);
+            input = &input[64..];
+        }
+        self.buffer[..input.len()].copy_from_slice(input);
+        self.buffered = input.len();
+    }
+
+    fn compress(&mut self, block: &[u8; 64]) {
+        const K: [u32; 64] = [
+            0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4,
+            0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe,
+            0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f,
+            0x4a7484aa, 0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7,
+            0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc,
+            0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b,
+            0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070, 0x19a4c116,
+            0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+            0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7,
+            0xc67178f2,
+        ];
+        let mut words = [0_u32; 64];
+        for (index, chunk) in block.chunks_exact(4).enumerate() {
+            words[index] = u32::from_be_bytes(chunk.try_into().expect("four-byte word"));
+        }
+        for index in 16..64 {
+            let x = words[index - 15];
+            let y = words[index - 2];
+            let s0 = x.rotate_right(7) ^ x.rotate_right(18) ^ (x >> 3);
+            let s1 = y.rotate_right(17) ^ y.rotate_right(19) ^ (y >> 10);
+            words[index] = words[index - 16]
+                .wrapping_add(s0)
+                .wrapping_add(words[index - 7])
+                .wrapping_add(s1);
+        }
+        let [mut a, mut b, mut c, mut d, mut e, mut f, mut g, mut h] = self.state;
+        for index in 0..64 {
+            let sum1 = e.rotate_right(6) ^ e.rotate_right(11) ^ e.rotate_right(25);
+            let choose = (e & f) ^ (!e & g);
+            let t1 = h
+                .wrapping_add(sum1)
+                .wrapping_add(choose)
+                .wrapping_add(K[index])
+                .wrapping_add(words[index]);
+            let sum0 = a.rotate_right(2) ^ a.rotate_right(13) ^ a.rotate_right(22);
+            let majority = (a & b) ^ (a & c) ^ (b & c);
+            let t2 = sum0.wrapping_add(majority);
+            [a, b, c, d, e, f, g, h] = [t1.wrapping_add(t2), a, b, c, d.wrapping_add(t1), e, f, g];
+        }
+        for (slot, value) in self.state.iter_mut().zip([a, b, c, d, e, f, g, h]) {
+            *slot = slot.wrapping_add(value);
+        }
+    }
+
+    fn finish(mut self) -> [u8; 32] {
+        let bit_length = self.length.wrapping_mul(8);
+        self.buffer[self.buffered] = 0x80;
+        self.buffered += 1;
+        if self.buffered > 56 {
+            self.buffer[self.buffered..].fill(0);
+            let block = self.buffer;
+            self.compress(&block);
+            self.buffer = [0; 64];
+        } else {
+            self.buffer[self.buffered..56].fill(0);
+        }
+        self.buffer[56..].copy_from_slice(&bit_length.to_be_bytes());
+        let block = self.buffer;
+        self.compress(&block);
+        let mut digest = [0; 32];
+        for (chunk, word) in digest.chunks_exact_mut(4).zip(self.state) {
+            chunk.copy_from_slice(&word.to_be_bytes());
+        }
+        digest
+    }
+}
+
+fn hash_snapshot_file(record: &FileRecord) -> Result<[u8; 32], String> {
+    let before = fs::metadata(&record.path).map_err(|error| {
+        format!(
+            "cannot inspect {} before hashing: {error}",
+            record.path.display()
+        )
+    })?;
+    if before.len() != record.size || before.modified().ok() != record.modified {
+        return Err(format!(
+            "file changed during snapshot scan: {}",
+            record.path.display()
+        ));
+    }
+    let mut file = File::open(&record.path)
+        .map_err(|error| format!("cannot read {} for hashing: {error}", record.path.display()))?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0_u8; 256 * 1024];
+    loop {
+        let count = file
+            .read(&mut buffer)
+            .map_err(|error| format!("could not hash {}: {error}", record.path.display()))?;
+        if count == 0 {
+            break;
+        }
+        hasher.update(&buffer[..count]);
+    }
+    let after = fs::metadata(&record.path).map_err(|error| {
+        format!(
+            "cannot inspect {} after hashing: {error}",
+            record.path.display()
+        )
+    })?;
+    if after.len() != record.size || after.modified().ok() != record.modified {
+        return Err(format!(
+            "file changed while hashing snapshot: {}",
+            record.path.display()
+        ));
+    }
+    Ok(hasher.finish())
+}
+
+fn collect_snapshot_entries(
+    records: &[FileRecord],
+    hash_content: bool,
+) -> Result<BTreeMap<String, SnapshotEntry>, String> {
+    let mut entries = BTreeMap::new();
+    for record in records {
+        let hash = if hash_content {
+            Some(hash_snapshot_file(record)?)
+        } else {
+            None
+        };
+        if entries
+            .insert(record.relative.clone(), snapshot_entry(record, hash))
+            .is_some()
+        {
+            return Err(format!(
+                "multiple files resolve to the same portable path: {}",
+                record.relative
+            ));
+        }
+    }
+    Ok(entries)
+}
+
+fn snapshot_entries_equal(old: SnapshotEntry, new: SnapshotEntry, hash_content: bool) -> bool {
+    if hash_content {
+        old.content_hash.is_some() && old.content_hash == new.content_hash
+    } else {
+        old.size == new.size && old.modified_ns == new.modified_ns
     }
 }
 
@@ -1370,7 +1557,7 @@ fn snapshot_path_is_valid(path: &str) -> bool {
 
 fn read_snapshot_manifest(
     path: &Path,
-) -> Result<(bool, bool, BTreeMap<String, SnapshotEntry>), String> {
+) -> Result<(bool, bool, bool, BTreeMap<String, SnapshotEntry>), String> {
     const MAX_ENTRIES: u64 = 10_000_000;
     const MAX_PATH_BYTES: usize = 1024 * 1024;
     let file = File::open(path)
@@ -1380,14 +1567,15 @@ fn read_snapshot_manifest(
     reader
         .read_exact(&mut magic)
         .map_err(|error| format!("cannot read snapshot header: {error}"))?;
-    if &magic != SNAPSHOT_MAGIC {
+    if &magic != SNAPSHOT_MAGIC && &magic != SNAPSHOT_MAGIC_V1 {
         return Err("unrecognized or unsupported snapshot format".to_owned());
     }
     let mut flags = [0];
     reader
         .read_exact(&mut flags)
         .map_err(|error| format!("truncated snapshot options: {error}"))?;
-    if flags[0] & !0b11 != 0 {
+    let version = if &magic == SNAPSHOT_MAGIC { 2 } else { 1 };
+    if flags[0] & if version == 2 { !0b111 } else { !0b11 } != 0 {
         return Err("snapshot contains unsupported option flags".to_owned());
     }
     let mut count_bytes = [0; 8];
@@ -1438,12 +1626,22 @@ fn read_snapshot_manifest(
             }
             _ => return Err("snapshot contains an invalid timestamp flag".to_owned()),
         };
+        let content_hash = if version == 2 && flags[0] & 4 != 0 {
+            let mut hash = [0; 32];
+            reader
+                .read_exact(&mut hash)
+                .map_err(|error| format!("truncated snapshot content hash: {error}"))?;
+            Some(hash)
+        } else {
+            None
+        };
         if entries
             .insert(
                 relative.clone(),
                 SnapshotEntry {
                     size: u64::from_le_bytes(size_bytes),
                     modified_ns,
+                    content_hash,
                 },
             )
             .is_some()
@@ -1459,7 +1657,12 @@ fn read_snapshot_manifest(
     {
         return Err("snapshot contains trailing data".to_owned());
     }
-    Ok((flags[0] & 1 != 0, flags[0] & 2 != 0, entries))
+    Ok((
+        flags[0] & 1 != 0,
+        flags[0] & 2 != 0,
+        version == 2 && flags[0] & 4 != 0,
+        entries,
+    ))
 }
 
 fn snapshot_temp_file(parent: &Path) -> Result<(PathBuf, File), String> {
@@ -1496,8 +1699,10 @@ fn snapshot_temp_file(parent: &Path) -> Result<(PathBuf, File), String> {
 fn write_snapshot_manifest(
     output: &Path,
     records: &[FileRecord],
+    entries: &BTreeMap<String, SnapshotEntry>,
     include_hidden: bool,
     include_generated: bool,
+    hash_content: bool,
     overwrite: bool,
 ) -> Result<(), String> {
     const MAX_ENTRIES: usize = 10_000_000;
@@ -1562,7 +1767,9 @@ fn write_snapshot_manifest(
         writer
             .write_all(SNAPSHOT_MAGIC)
             .map_err(|error| format!("could not write snapshot header: {error}"))?;
-        let flags = u8::from(include_hidden) | (u8::from(include_generated) << 1);
+        let flags = u8::from(include_hidden)
+            | (u8::from(include_generated) << 1)
+            | (u8::from(hash_content) << 2);
         writer
             .write_all(&[flags])
             .and_then(|()| writer.write_all(&(records.len() as u64).to_le_bytes()))
@@ -1576,13 +1783,25 @@ fn write_snapshot_manifest(
                 .and_then(|()| writer.write_all(path))
                 .and_then(|()| writer.write_all(&record.size.to_le_bytes()))
                 .map_err(|error| format!("could not write snapshot entry: {error}"))?;
-            match snapshot_entry(record).modified_ns {
+            match entries
+                .get(&record.relative)
+                .and_then(|entry| entry.modified_ns)
+            {
                 Some(value) => writer
                     .write_all(&[1])
                     .and_then(|()| writer.write_all(&value.to_le_bytes())),
                 None => writer.write_all(&[0]),
             }
             .map_err(|error| format!("could not write snapshot timestamp: {error}"))?;
+            if hash_content {
+                writer
+                    .write_all(
+                        &entries[&record.relative]
+                            .content_hash
+                            .expect("hash mode entries have hashes"),
+                    )
+                    .map_err(|error| format!("could not write snapshot content hash: {error}"))?;
+            }
         }
         writer
             .flush()
@@ -1721,6 +1940,7 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
     let mut fail_on_change = false;
     let mut include_hidden = None;
     let mut include_generated = None;
+    let mut hash_content = None;
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
         match arg.as_str() {
@@ -1742,9 +1962,10 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
             "--fail-on-change" => fail_on_change = true,
             "--include-hidden" => include_hidden = Some(true),
             "--include-generated" => include_generated = Some(true),
+            "--hash" => hash_content = Some(true),
             "--help" | "-h" => {
                 println!(
-                    "Usage: mediaforge snapshot [PATH] (--output FILE [--overwrite] | --diff FILE) [--json|--csv] [--include-hidden] [--include-generated] [--fail-on-change]\n\nSave or compare a fast project snapshot using relative paths, file sizes, and modification times without hashing file contents. Unity/Unreal/Godot generated cache directories and hidden files are skipped by default. Snapshot files store inclusion settings and can be compared on another supported OS. --csv and --json select diff output formats. --fail-on-change applies only to --diff."
+                    "Usage: mediaforge snapshot [PATH] (--output FILE [--overwrite] | --diff FILE) [--json|--csv] [--include-hidden] [--include-generated] [--hash] [--fail-on-change]\n\nSave or compare project snapshots using relative paths, sizes, and modification times. By default this is a fast metadata-only scan; --hash stores SHA-256 file fingerprints and compares contents, ignoring timestamp-only changes. Unity/Unreal/Godot generated cache directories and hidden files are skipped by default. Snapshot files store inclusion settings and can be compared on another supported OS. --csv and --json select diff output formats. --fail-on-change applies only to --diff."
                 );
                 return Ok(());
             }
@@ -1781,7 +2002,7 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
 
     let mut old_entries = BTreeMap::new();
     let mut excluded = None;
-    let (use_hidden, use_generated) = if let Some(baseline) = &baseline {
+    let (use_hidden, use_generated, use_hash) = if let Some(baseline) = &baseline {
         let baseline = fs::canonicalize(baseline)
             .map_err(|error| format!("cannot access snapshot {}: {error}", baseline.display()))?;
         if !is_real_file(&baseline) {
@@ -1790,9 +2011,11 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
                 baseline.display()
             ));
         }
-        let (saved_hidden, saved_generated, entries) = read_snapshot_manifest(&baseline)?;
+        let (saved_hidden, saved_generated, saved_hash, entries) =
+            read_snapshot_manifest(&baseline)?;
         if include_hidden.is_some_and(|value| value != saved_hidden)
             || include_generated.is_some_and(|value| value != saved_generated)
+            || hash_content.is_some_and(|value| value != saved_hash)
         {
             return Err(
                 "snapshot options differ from the baseline; rerun without inclusion overrides or create a matching baseline".to_owned(),
@@ -1800,11 +2023,12 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
         }
         excluded = Some(baseline);
         old_entries = entries;
-        (saved_hidden, saved_generated)
+        (saved_hidden, saved_generated, saved_hash)
     } else {
         (
             include_hidden.unwrap_or(false),
             include_generated.unwrap_or(false),
+            hash_content.unwrap_or(false),
         )
     };
     let output_abs = if let Some(output) = &output {
@@ -1840,15 +2064,24 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
         records.retain(|record| record.path != excluded);
     }
     records.sort_by(|left, right| left.relative.cmp(&right.relative));
+    let current_entries = collect_snapshot_entries(&records, use_hash)?;
     if let Some(output) = output_abs {
-        write_snapshot_manifest(&output, &records, use_hidden, use_generated, overwrite)?;
+        write_snapshot_manifest(
+            &output,
+            &records,
+            &current_entries,
+            use_hidden,
+            use_generated,
+            use_hash,
+            overwrite,
+        )?;
         let total_bytes = records
             .iter()
             .map(|record| u128::from(record.size))
             .sum::<u128>();
         if json {
             println!(
-                "{{\"type\":\"snapshot\",\"root\":{},\"output\":{},\"files\":{},\"bytes\":{total_bytes},\"include_hidden\":{use_hidden},\"include_generated\":{use_generated}}}",
+                "{{\"type\":\"snapshot\",\"root\":{},\"output\":{},\"files\":{},\"bytes\":{total_bytes},\"include_hidden\":{use_hidden},\"include_generated\":{use_generated},\"hash\":{use_hash}}}",
                 json_string(&root.to_string_lossy()),
                 json_string(&output.to_string_lossy()),
                 records.len()
@@ -1864,10 +2097,6 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
         return Ok(());
     }
 
-    let mut current_entries = BTreeMap::new();
-    for record in &records {
-        current_entries.insert(record.relative.clone(), snapshot_entry(record));
-    }
     let mut added = 0_usize;
     let mut removed = 0_usize;
     let mut modified = 0_usize;
@@ -1886,7 +2115,7 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
                 added_bytes += u128::from(current.size);
                 stats.added_bytes += u128::from(current.size);
             }
-            Some(previous) if previous == current => {
+            Some(previous) if snapshot_entries_equal(*previous, *current, use_hash) => {
                 unchanged += 1;
                 stats.unchanged += 1;
             }
@@ -1937,7 +2166,9 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
             let old = old_entries.get(relative).copied();
             let change = match old {
                 None => "added",
-                Some(previous) if previous != *current => "modified",
+                Some(previous) if !snapshot_entries_equal(previous, *current, use_hash) => {
+                    "modified"
+                }
                 Some(_) => continue,
             };
             write_snapshot_csv_row(
@@ -1979,7 +2210,9 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
             let old = old_entries.get(relative);
             let kind = match old {
                 None => "added",
-                Some(previous) if previous != current => "modified",
+                Some(previous) if !snapshot_entries_equal(*previous, *current, use_hash) => {
+                    "modified"
+                }
                 Some(_) => continue,
             };
             println!(
@@ -2151,7 +2384,7 @@ fn fraction_ceil_scaled(fraction: &str, multiplier: u128) -> u128 {
 
 fn print_help() {
     println!(
-        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json|--csv] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS] [--largest N]\n  mediaforge dupes [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--top-groups N]\n  mediaforge probe <FILE> [--compact] [--summary]\n  mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--type video|audio] [--min-size SIZE] [--max-size SIZE] [--jobs N] [--summary] [--compare] [--csv]\n  mediaforge storyboard <VIDEO> --output <IMAGE> [--interval SECONDS] [--columns N] [--rows N] [--width PIXELS]\n  mediaforge scene-detect-dir <PATH> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--fps RATE] [--extension EXTENSIONS] [--include-hidden] [--jobs N]\n  mediaforge scene-detect <VIDEO> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--format jsonl|csv] [--fps RATE]\n  mediaforge proxy <VIDEO> --output <FILE.mp4> [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge proxy-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET] [--jobs N] [--skip-existing] [--json]\n  mediaforge proxy-config init [FILE] [--profile fast|balanced|quality] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge extract-audio <VIDEO> --output <FILE> [--format mp3|wav|flac] [--bitrate RATE] [--stream N]\n  mediaforge extract-audio-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--format mp3|wav|flac] [--bitrate RATE] [--stream N] [--jobs N] [--skip-existing] [--json]\n  mediaforge snapshot [PATH] (--output FILE [--overwrite] | --diff FILE) [--json|--csv] [--include-hidden] [--include-generated] [--fail-on-change]\n  mediaforge project [PATH] [--json]\n  mediaforge unity-meta [PROJECT_PATH] [--json] [--include-hidden]\n  mediaforge gitignore [PATH] [--apply]\n  mediaforge organize [PATH] [--by type|extension|size] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--apply]\n  mediaforge sequence [PATH] [--prefix NAME] [--start N] [--padding N] [--extension EXTENSIONS] [--include-hidden] [--natural] [--json] [--apply]\n  mediaforge undo [PATH] [--json]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--include-hidden] [--include-generated] [--dry-run] [--json] [--list]\n  mediaforge --version\n  mediaforge --help"
+        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json|--csv] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS] [--largest N]\n  mediaforge dupes [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--top-groups N]\n  mediaforge probe <FILE> [--compact] [--summary]\n  mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--type video|audio] [--min-size SIZE] [--max-size SIZE] [--jobs N] [--summary] [--compare] [--csv]\n  mediaforge storyboard <VIDEO> --output <IMAGE> [--interval SECONDS] [--columns N] [--rows N] [--width PIXELS]\n  mediaforge scene-detect-dir <PATH> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--fps RATE] [--extension EXTENSIONS] [--include-hidden] [--jobs N]\n  mediaforge scene-detect <VIDEO> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--format jsonl|csv] [--fps RATE]\n  mediaforge proxy <VIDEO> --output <FILE.mp4> [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge proxy-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET] [--jobs N] [--skip-existing] [--json]\n  mediaforge proxy-config init [FILE] [--profile fast|balanced|quality] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge extract-audio <VIDEO> --output <FILE> [--format mp3|wav|flac] [--bitrate RATE] [--stream N]\n  mediaforge extract-audio-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--format mp3|wav|flac] [--bitrate RATE] [--stream N] [--jobs N] [--skip-existing] [--json]\n  mediaforge snapshot [PATH] (--output FILE [--overwrite] | --diff FILE) [--json|--csv] [--include-hidden] [--include-generated] [--hash] [--fail-on-change]\n  mediaforge project [PATH] [--json]\n  mediaforge unity-meta [PROJECT_PATH] [--json] [--include-hidden]\n  mediaforge gitignore [PATH] [--apply]\n  mediaforge organize [PATH] [--by type|extension|size] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--apply]\n  mediaforge sequence [PATH] [--prefix NAME] [--start N] [--padding N] [--extension EXTENSIONS] [--include-hidden] [--natural] [--json] [--apply]\n  mediaforge undo [PATH] [--json]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--include-hidden] [--include-generated] [--dry-run] [--json] [--list]\n  mediaforge --version\n  mediaforge --help"
     );
 }
 

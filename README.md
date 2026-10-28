@@ -133,6 +133,7 @@ mediaforge project ./Game
 mediaforge project ./Game --json
 mediaforge unity-meta ./Game --json
 mediaforge snapshot ./Game --output ./Game.mfs
+mediaforge snapshot ./Game --output ./Game-content.mfs --hash
 mediaforge snapshot ./Game --diff ./Game.mfs --json --fail-on-change
 mediaforge snapshot ./Game --diff ./Game.mfs --csv
 ```
@@ -141,7 +142,7 @@ The read-only inspector recognizes Unity, Unreal Engine, and Godot project marke
 
 `unity-meta` checks every included file and folder under Unity's `Assets` directory for its matching `.meta` sidecar, reports orphaned metadata, and validates each metadata file's GUID for missing, malformed, or duplicate values. It honors `.gitignore` rules and skips hidden entries by default; `--include-hidden` includes them. The command is read-only, emits JSON with `--json`, and exits with an error status when it finds issues, so it can be used as a local pre-commit check.
 
-`snapshot` stores portable relative paths, file sizes, and modification times in a compact binary manifest, then compares a later scan to report added, removed, and changed files. JSON Lines mark each change with an `asset_type` inferred from its extension and include old/new sizes, size deltas, and modification times; the final summary includes added/removed bytes and per-type counts. `--csv` writes the same change rows and final/type summaries as spreadsheet-ready records. It skips common Unity/Unreal/Godot generated caches by default, honors `.gitignore`, and records its inclusion settings in the manifest. The baseline can live inside the scanned directory; MediaForge excludes that manifest automatically. Metadata comparison does not hash file contents, so a rewrite that preserves both size and modification time is not detected. Use `--overwrite` to atomically replace a previous baseline after reviewing differences, and `--fail-on-change` to return a nonzero status when a diff contains changes.
+`snapshot` stores portable relative paths, file sizes, and modification times in a compact binary manifest, then compares a later scan to report added, removed, and changed files. JSON Lines mark each change with an `asset_type` inferred from its extension and include old/new sizes, size deltas, and modification times; the final summary includes added/removed bytes and per-type counts. `--csv` writes the same change rows and final/type summaries as spreadsheet-ready records. It skips common Unity/Unreal/Godot generated caches by default, honors `.gitignore`, and records its inclusion settings in the manifest. The baseline can live inside the scanned directory; MediaForge excludes that manifest automatically. Metadata-only mode is the default and does not read file contents, so a rewrite that preserves both size and modification time is not detected. Add `--hash` when creating a baseline to store SHA-256 fingerprints; diffs against that baseline stream file contents and detect same-size/same-time rewrites while ignoring timestamp-only changes. Hash mode is stored in the manifest and inherited by `--diff`; use `--overwrite` to atomically replace a previous baseline after reviewing differences, and `--fail-on-change` to return a nonzero status when a diff contains changes.
 
 ## Generate engine-specific Git ignore patterns
 
