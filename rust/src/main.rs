@@ -159,6 +159,61 @@ fn sort_entries(entries: &mut [fs::DirEntry]) {
     });
 }
 
+fn natural_name_cmp(left: &str, right: &str) -> std::cmp::Ordering {
+    let left_bytes = left.as_bytes();
+    let right_bytes = right.as_bytes();
+    let (mut left_index, mut right_index) = (0, 0);
+    while left_index < left_bytes.len() && right_index < right_bytes.len() {
+        if left_bytes[left_index].is_ascii_digit() && right_bytes[right_index].is_ascii_digit() {
+            let (left_start, right_start) = (left_index, right_index);
+            while left_index < left_bytes.len() && left_bytes[left_index].is_ascii_digit() {
+                left_index += 1;
+            }
+            while right_index < right_bytes.len() && right_bytes[right_index].is_ascii_digit() {
+                right_index += 1;
+            }
+            let left_run = &left_bytes[left_start..left_index];
+            let right_run = &right_bytes[right_start..right_index];
+            let left_significant = left_run
+                .iter()
+                .position(|byte| *byte != b'0')
+                .map_or(&left_run[left_run.len()..], |offset| &left_run[offset..]);
+            let right_significant = right_run
+                .iter()
+                .position(|byte| *byte != b'0')
+                .map_or(&right_run[right_run.len()..], |offset| &right_run[offset..]);
+            let numeric_order = left_significant
+                .len()
+                .cmp(&right_significant.len())
+                .then_with(|| left_significant.cmp(right_significant));
+            if numeric_order != std::cmp::Ordering::Equal {
+                return numeric_order;
+            }
+            continue;
+        }
+        let order = left_bytes[left_index]
+            .to_ascii_lowercase()
+            .cmp(&right_bytes[right_index].to_ascii_lowercase());
+        if order != std::cmp::Ordering::Equal {
+            return order;
+        }
+        left_index += 1;
+        right_index += 1;
+    }
+    let left_tail = &left_bytes[left_index..];
+    let right_tail = &right_bytes[right_index..];
+    left_tail
+        .len()
+        .cmp(&right_tail.len())
+        .then_with(|| {
+            left_tail
+                .iter()
+                .map(u8::to_ascii_lowercase)
+                .cmp(right_tail.iter().map(u8::to_ascii_lowercase))
+        })
+        .then_with(|| left.cmp(right))
+}
+
 fn walk(
     root: &Path,
     current: &Path,
@@ -1277,7 +1332,7 @@ fn fraction_ceil_scaled(fraction: &str, multiplier: u128) -> u128 {
 
 fn print_help() {
     println!(
-        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS] [--largest N]\n  mediaforge dupes [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--top-groups N]\n  mediaforge probe <FILE> [--compact] [--summary]\n  mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--jobs N] [--summary]\n  mediaforge storyboard <VIDEO> --output <IMAGE> [--interval SECONDS] [--columns N] [--rows N] [--width PIXELS]\n  mediaforge proxy <VIDEO> --output <FILE.mp4> [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge proxy-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET] [--jobs N] [--skip-existing] [--json]\n  mediaforge proxy-config init [FILE] [--profile fast|balanced|quality] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge extract-audio <VIDEO> --output <FILE> [--format mp3|wav|flac] [--bitrate RATE] [--stream N]\n  mediaforge extract-audio-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--format mp3|wav|flac] [--bitrate RATE] [--stream N] [--jobs N] [--json]\n  mediaforge project [PATH] [--json]\n  mediaforge gitignore [PATH] [--apply]\n  mediaforge organize [PATH] [--by type|extension] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--apply]\n  mediaforge sequence [PATH] [--prefix NAME] [--start N] [--padding N] [--extension EXTENSIONS] [--include-hidden] [--json] [--apply]\n  mediaforge undo [PATH] [--json]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--include-hidden] [--include-generated] [--dry-run] [--json] [--list]\n  mediaforge --version\n  mediaforge --help"
+        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS] [--largest N]\n  mediaforge dupes [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--top-groups N]\n  mediaforge probe <FILE> [--compact] [--summary]\n  mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--jobs N] [--summary]\n  mediaforge storyboard <VIDEO> --output <IMAGE> [--interval SECONDS] [--columns N] [--rows N] [--width PIXELS]\n  mediaforge proxy <VIDEO> --output <FILE.mp4> [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge proxy-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET] [--jobs N] [--skip-existing] [--json]\n  mediaforge proxy-config init [FILE] [--profile fast|balanced|quality] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge extract-audio <VIDEO> --output <FILE> [--format mp3|wav|flac] [--bitrate RATE] [--stream N]\n  mediaforge extract-audio-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--format mp3|wav|flac] [--bitrate RATE] [--stream N] [--jobs N] [--json]\n  mediaforge project [PATH] [--json]\n  mediaforge gitignore [PATH] [--apply]\n  mediaforge organize [PATH] [--by type|extension] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--apply]\n  mediaforge sequence [PATH] [--prefix NAME] [--start N] [--padding N] [--extension EXTENSIONS] [--include-hidden] [--natural] [--json] [--apply]\n  mediaforge undo [PATH] [--json]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--include-hidden] [--include-generated] [--dry-run] [--json] [--list]\n  mediaforge --version\n  mediaforge --help"
     );
 }
 
@@ -4696,6 +4751,7 @@ fn run_sequence(args: &[String]) -> Result<(), String> {
     let mut padding = 4_usize;
     let mut extension_filter = None;
     let mut include_hidden = false;
+    let mut natural = false;
     let mut apply = false;
     let mut json = false;
     let mut iter = args.iter();
@@ -4730,11 +4786,12 @@ fn run_sequence(args: &[String]) -> Result<(), String> {
                 extension_filter = Some(parse_extensions(value)?);
             }
             "--include-hidden" => include_hidden = true,
+            "--natural" => natural = true,
             "--apply" => apply = true,
             "--json" => json = true,
             "--help" | "-h" => {
                 println!(
-                    "Usage: mediaforge sequence [PATH] [--prefix NAME] [--start N] [--padding N] [--extension EXTENSIONS] [--include-hidden] [--json] [--apply]\n\nPreview a stable, alphabetical renumbering of files directly inside PATH. Extensions are preserved. The operation skips destination collisions and can be undone with 'mediaforge undo PATH'."
+                    "Usage: mediaforge sequence [PATH] [--prefix NAME] [--start N] [--padding N] [--extension EXTENSIONS] [--include-hidden] [--natural] [--json] [--apply]\n\nPreview a stable renumbering of files directly inside PATH. Alphabetical order is the default; --natural sorts digit runs by numeric value (for example frame2 before frame10). Extensions are preserved. The operation skips destination collisions and can be undone with 'mediaforge undo PATH'."
                 );
                 return Ok(());
             }
@@ -4778,7 +4835,15 @@ fn run_sequence(args: &[String]) -> Result<(), String> {
         .map_err(|error| format!("cannot list {}: {error}", root.display()))?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| format!("cannot read directory entry: {error}"))?;
-    sort_entries(&mut entries);
+    if natural {
+        entries.sort_by(|left, right| {
+            let left_name = left.file_name().to_string_lossy().into_owned();
+            let right_name = right.file_name().to_string_lossy().into_owned();
+            natural_name_cmp(&left_name, &right_name)
+        });
+    } else {
+        sort_entries(&mut entries);
+    }
     let mut moves = Vec::<PlannedMove>::new();
     let mut skipped = 0_usize;
     let mut index = 0_u64;
