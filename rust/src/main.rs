@@ -704,7 +704,7 @@ where
                     path: if filters.omit_absolute_path {
                         PathBuf::new()
                     } else {
-                        path.clone()
+                        path
                     },
                     size,
                     modified: if filters.omit_modified_time {
