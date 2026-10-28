@@ -5314,7 +5314,7 @@ fn fraction_ceil_scaled(fraction: &str, multiplier: u128) -> u128 {
 
 fn print_help() {
     println!(
-        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge doctor [--json] [--strict]\n  mediaforge scan-config <init|validate|show> [FILE] [--json]\n  mediaforge scan [PATH] [--json|--csv] [--csv-info] [--show-filters] [--include-hidden] [--strict] [--no-same-size] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--modified-since UNIX_SECONDS] [--modified-until UNIX_SECONDS] [--modified-within DURATION] [--path-contains TEXT ...] [--exclude-path-contains TEXT ...] [--extension EXTENSIONS ...] [--largest N] [--sort path|size|modified] [--settings FILE]\n  mediaforge dupes [PATH] [--json] [--summary] [--include-hidden] [--exclude-path-contains TEXT ...] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--top-groups N] [--jobs N]\n  mediaforge probe <FILE> [--compact] [--summary]\n  mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--type video|audio] [--min-size SIZE] [--max-size SIZE] [--jobs N] [--summary] [--compare] [--csv]\n  mediaforge storyboard <VIDEO> --output <IMAGE> [--interval SECONDS] [--columns N] [--rows N] [--width PIXELS]\n  mediaforge scene-detect-dir <PATH> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--summary] [--fps RATE] [--extension EXTENSIONS] [--include-hidden] [--jobs N]\n  mediaforge scene-detect <VIDEO> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--format jsonl|csv] [--fps RATE]\n  mediaforge proxy <VIDEO> --output <FILE.mp4> [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge proxy-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET] [--jobs N] [--skip-existing] [--json]\n  mediaforge proxy-config init [FILE] [--profile fast|balanced|quality] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge extract-audio <VIDEO> --output <FILE> [--format mp3|wav|flac] [--bitrate RATE] [--stream N]\n  mediaforge extract-audio-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--format mp3|wav|flac] [--bitrate RATE] [--stream N] [--jobs N] [--skip-existing] [--json]\n  mediaforge snapshot [PATH] (--output FILE [--overwrite] | --diff FILE [--update]) [--json|--csv] [--summary] [--include-hidden] [--include-generated] [--hash] [--jobs N] [--fail-on-change]\n  mediaforge project [PATH] [--json] [--no-cache-sizes] [--no-editor-files]\n  mediaforge unity-meta [PROJECT_PATH] [--json] [--summary] [--include-hidden]\n  mediaforge gitignore [PATH] [--apply] [--json]\n  mediaforge organize [PATH] [--by type|extension|size] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--apply]\n  mediaforge rename [PATH] [--replace OLD NEW] [--prefix TEXT] [--suffix TEXT] [--extension-case keep|lower|upper] [--extension EXTENSIONS] [--include-hidden] [--json] [--apply]
+        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge doctor [--json] [--strict]\n  mediaforge scan-config <init|validate|show> [FILE] [--json]\n  mediaforge scan [PATH] [--json|--csv] [--csv-info] [--show-filters] [--include-hidden] [--strict] [--no-same-size] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--modified-since UNIX_SECONDS] [--modified-until UNIX_SECONDS] [--modified-within DURATION] [--path-contains TEXT ...] [--exclude-path-contains TEXT ...] [--extension EXTENSIONS ...] [--largest N] [--sort path|size|modified] [--settings FILE]\n  mediaforge dupes [PATH] [--json] [--summary] [--include-hidden] [--exclude-path-contains TEXT ...] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--top-groups N] [--jobs N]\n  mediaforge probe <FILE> [--compact] [--summary]\n  mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--type video|audio] [--min-size SIZE] [--max-size SIZE] [--jobs N] [--summary] [--compare] [--csv]\n  mediaforge storyboard <VIDEO> --output <IMAGE> [--interval SECONDS] [--columns N] [--rows N] [--width PIXELS]\n  mediaforge scene-detect-dir <PATH> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--summary] [--fps RATE] [--extension EXTENSIONS] [--include-hidden] [--jobs N]\n  mediaforge scene-detect <VIDEO> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--format jsonl|csv] [--fps RATE]\n  mediaforge proxy <VIDEO> --output <FILE.mp4> [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge proxy-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET] [--jobs N] [--skip-existing] [--json]\n  mediaforge proxy-config init [FILE] [--profile fast|balanced|quality] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge extract-audio <VIDEO> --output <FILE> [--format mp3|wav|flac] [--bitrate RATE] [--stream N]\n  mediaforge extract-audio-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--format mp3|wav|flac] [--bitrate RATE] [--stream N] [--jobs N] [--skip-existing] [--json]\n  mediaforge snapshot [PATH] (--output FILE [--overwrite] | --diff FILE [--update]) [--json|--csv] [--summary] [--include-hidden] [--include-generated] [--hash] [--jobs N] [--fail-on-change]\n  mediaforge project [PATH] [--json] [--no-cache-sizes] [--no-editor-files]\n  mediaforge unity-meta [PROJECT_PATH] [--json] [--summary] [--sidecars-only] [--include-hidden]\n  mediaforge gitignore [PATH] [--apply] [--json]\n  mediaforge organize [PATH] [--by type|extension|size] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--apply]\n  mediaforge rename [PATH] [--replace OLD NEW] [--prefix TEXT] [--suffix TEXT] [--extension-case keep|lower|upper] [--extension EXTENSIONS] [--include-hidden] [--json] [--apply]
   mediaforge sequence [PATH] [--prefix NAME] [--start N] [--padding N] [--extension EXTENSIONS] [--include-hidden] [--natural] [--json] [--apply]\n  mediaforge undo [PATH] [--json]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--exclude-path-contains TEXT ...] [--include-hidden] [--include-generated] [--dry-run] [--json] [--list]\n  mediaforge --version\n  mediaforge --help"
     );
 }
@@ -9291,16 +9291,18 @@ fn unity_guid_string(guid: [u8; 16]) -> String {
 fn run_unity_meta(args: &[String]) -> Result<(), String> {
     let mut json = false;
     let mut summary = false;
+    let mut sidecars_only = false;
     let mut include_hidden = false;
     let mut path = None;
     for arg in args {
         match arg.as_str() {
             "--json" => json = true,
             "--summary" => summary = true,
+            "--sidecars-only" => sidecars_only = true,
             "--include-hidden" => include_hidden = true,
             "--help" | "-h" => {
                 println!(
-                    "Usage: mediaforge unity-meta [PROJECT_PATH] [--json] [--summary] [--include-hidden]\n\nCheck Unity Assets for missing or orphaned .meta files, missing or malformed GUIDs, and duplicate GUID collisions. --summary verifies all assets but omits issue path lists and duplicate GUID details. Honors .gitignore by default, follows no symlinks, and never changes files. Exits with an error status when issues are found."
+                    "Usage: mediaforge unity-meta [PROJECT_PATH] [--json] [--summary] [--sidecars-only] [--include-hidden]\n\nCheck Unity Assets for missing or orphaned .meta files, missing or malformed GUIDs, and duplicate GUID collisions. --summary verifies all assets but omits issue path lists and duplicate GUID details. --sidecars-only checks missing/orphaned .meta files without opening sidecars to inspect GUIDs. Honors .gitignore by default, follows no symlinks, and never changes files. Exits with an error status when checked issues are found."
                 );
                 return Ok(());
             }
@@ -9349,24 +9351,26 @@ fn run_unity_meta(args: &[String]) -> Result<(), String> {
         }
     } else {
         checked = checked.saturating_add(1);
-        match read_unity_meta_guid(&assets_meta)? {
-            Ok(Some(guid)) => {
-                if summary {
-                    summary_guids.insert(guid);
-                } else {
-                    guid_paths.insert(guid, ("Assets.meta".to_owned(), None));
+        if !sidecars_only {
+            match read_unity_meta_guid(&assets_meta)? {
+                Ok(Some(guid)) => {
+                    if summary {
+                        summary_guids.insert(guid);
+                    } else {
+                        guid_paths.insert(guid, ("Assets.meta".to_owned(), None));
+                    }
                 }
-            }
-            Ok(None) => {
-                missing_guid_count += 1;
-                if !summary {
-                    missing_guid.push("Assets.meta".to_owned());
+                Ok(None) => {
+                    missing_guid_count += 1;
+                    if !summary {
+                        missing_guid.push("Assets.meta".to_owned());
+                    }
                 }
-            }
-            Err(()) => {
-                invalid_guid_count += 1;
-                if !summary {
-                    invalid_guid.push("Assets.meta".to_owned());
+                Err(()) => {
+                    invalid_guid_count += 1;
+                    if !summary {
+                        invalid_guid.push("Assets.meta".to_owned());
+                    }
                 }
             }
         }
@@ -9469,7 +9473,7 @@ fn run_unity_meta(args: &[String]) -> Result<(), String> {
                         if !summary {
                             orphan_meta.push(relative);
                         }
-                    } else {
+                    } else if !sidecars_only {
                         match read_unity_meta_guid(&entry_path)? {
                             Ok(Some(guid)) => {
                                 if summary {
@@ -9552,8 +9556,9 @@ fn run_unity_meta(args: &[String]) -> Result<(), String> {
             write_json_string(&mut output, &root.to_string_lossy())?;
             write!(
                 output,
-                ",\"checked\":{checked},\"details_included\":{},\"missing_meta_count\":{},\"orphan_meta_count\":{},\"missing_guid_count\":{},\"invalid_guid_count\":{},\"duplicate_guid_count\":{duplicate_guid_count},\"missing_meta\":[",
+                ",\"checked\":{checked},\"details_included\":{},\"guid_checks_included\":{},\"missing_meta_count\":{},\"orphan_meta_count\":{},\"missing_guid_count\":{},\"invalid_guid_count\":{},\"duplicate_guid_count\":{duplicate_guid_count},\"missing_meta\":[",
                 !summary,
+                !sidecars_only,
                 missing_meta_count,
                 orphan_meta_count,
                 missing_guid_count,
@@ -9664,8 +9669,15 @@ fn run_unity_meta(args: &[String]) -> Result<(), String> {
         {
             println!("  {}: {}", unity_guid_string(*guid), paths.join(", "));
         }
+        if sidecars_only {
+            println!("GUID checks skipped; only .meta sidecar presence was checked.");
+        }
         if issue_count == 0 {
-            println!("Unity asset metadata and GUIDs are consistent.");
+            if sidecars_only {
+                println!("Unity .meta sidecars are present.");
+            } else {
+                println!("Unity asset metadata and GUIDs are consistent.");
+            }
         }
     }
     if issue_count > 0 {
