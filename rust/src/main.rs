@@ -7872,6 +7872,44 @@ fn move_file_no_replace(from: &Path, to: &Path) -> io::Result<()> {
     }
 }
 
+fn move_file_case_only(from: &Path, to: &Path) -> io::Result<()> {
+    let parent = from
+        .parent()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "source has no parent"))?;
+    let mut temporary = None;
+    for attempt in 0..1000_u32 {
+        let candidate = parent.join(format!(
+            ".mediaforge-rename-{}-{attempt}.tmp",
+            std::process::id()
+        ));
+        if entry_state(&candidate)? == EntryState::Missing {
+            temporary = Some(candidate);
+            break;
+        }
+    }
+    let temporary = temporary.ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            "could not find a free temporary name for case-only rename",
+        )
+    })?;
+    move_file_no_replace(from, &temporary)?;
+    if let Err(error) = move_file_no_replace(&temporary, to) {
+        return match move_file_no_replace(&temporary, from) {
+            Ok(()) => Err(error),
+            Err(rollback_error) => Err(io::Error::other(format!(
+                "case-only rename failed ({error}) and source rollback failed ({rollback_error}); file remains at {}",
+                temporary.display()
+            ))),
+        };
+    }
+    Ok(())
+}
+
+fn paths_resolve_same_file(left: &Path, right: &Path) -> io::Result<bool> {
+    Ok(fs::canonicalize(left)? == fs::canonicalize(right)?)
+}
+
 #[cfg(target_os = "macos")]
 fn move_file_no_replace(from: &Path, to: &Path) -> io::Result<()> {
     use std::os::unix::ffi::OsStrExt;
@@ -8304,6 +8342,23 @@ fn run_undo(args: &[String]) -> Result<(), String> {
             } else {
                 restored += 1;
             }
+        } else if from_state == EntryState::File
+            && to_state == EntryState::File
+            && movement.from.to_lowercase() == movement.to.to_lowercase()
+            && paths_resolve_same_file(&from, &to).map_err(|error| {
+                format!(
+                    "cannot compare {} and {}: {error}",
+                    from.display(),
+                    to.display()
+                )
+            })?
+        {
+            if let Err(error) = move_file_case_only(&to, &from) {
+                eprintln!("mediaforge: could not restore {}: {error}", movement.from);
+                conflicts += 1;
+            } else {
+                restored += 1;
+            }
         } else if from_state == EntryState::File && to_state == EntryState::File {
             eprintln!(
                 "mediaforge: conflict; both source and organized file exist: {}",
@@ -8552,7 +8607,16 @@ fn run_rename(args: &[String]) -> Result<(), String> {
         let target = root.join(&target_name);
         let state = entry_state(&target)
             .map_err(|error| format!("cannot inspect target {}: {error}", target.display()))?;
-        if state != EntryState::Missing {
+        let case_only_rename = state == EntryState::File
+            && from_text.to_lowercase() == to_text.to_lowercase()
+            && paths_resolve_same_file(&source, &target).map_err(|error| {
+                format!(
+                    "cannot compare {} and {}: {error}",
+                    source.display(),
+                    target.display()
+                )
+            })?;
+        if state != EntryState::Missing && !case_only_rename {
             skipped += 1;
             collision_count += 1;
             if collision_examples.len() < 100 {
@@ -8637,12 +8701,23 @@ fn run_rename(args: &[String]) -> Result<(), String> {
         let to = validate_relative_path(&movement.to)?;
         reject_symlink_components(&root, &from)?;
         reject_symlink_components(&root, &to)?;
-        if entry_state(&root.join(&from))
-            .map_err(|error| format!("cannot inspect source {}: {error}", from.display()))?
-            != EntryState::File
-            || entry_state(&root.join(&to))
-                .map_err(|error| format!("cannot inspect target {}: {error}", to.display()))?
-                != EntryState::Missing
+        let source_path = root.join(&from);
+        let target_path = root.join(&to);
+        let source_state = entry_state(&source_path)
+            .map_err(|error| format!("cannot inspect source {}: {error}", from.display()))?;
+        let target_state = entry_state(&target_path)
+            .map_err(|error| format!("cannot inspect target {}: {error}", to.display()))?;
+        let case_only_rename = target_state == EntryState::File
+            && movement.from.to_lowercase() == movement.to.to_lowercase()
+            && paths_resolve_same_file(&source_path, &target_path).map_err(|error| {
+                format!(
+                    "cannot compare {} and {}: {error}",
+                    source_path.display(),
+                    target_path.display()
+                )
+            })?;
+        if source_state != EntryState::File
+            || (target_state != EntryState::Missing && !case_only_rename)
         {
             return Err(format!(
                 "file plan changed since preview; refusing to apply: {}",
@@ -8655,7 +8730,22 @@ fn run_rename(args: &[String]) -> Result<(), String> {
     for movement in &moves {
         let from = root.join(validate_relative_path(&movement.from)?);
         let to = root.join(validate_relative_path(&movement.to)?);
-        if let Err(error) = move_file_no_replace(&from, &to) {
+        let case_only_rename = entry_state(&to)
+            .map_err(|error| format!("cannot inspect target {}: {error}", to.display()))?
+            == EntryState::File
+            && paths_resolve_same_file(&from, &to).map_err(|error| {
+                format!(
+                    "cannot compare {} and {}: {error}",
+                    from.display(),
+                    to.display()
+                )
+            })?;
+        let move_result = if case_only_rename {
+            move_file_case_only(&from, &to)
+        } else {
+            move_file_no_replace(&from, &to)
+        };
+        if let Err(error) = move_result {
             return Err(format!(
                 "renamed {renamed} file(s) before failure: {error}; recovery manifest remains at {}",
                 root.join(ORGANIZE_MANIFEST).display()
