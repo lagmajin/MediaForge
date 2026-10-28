@@ -148,18 +148,59 @@ fn walk_with_skip_dirs(
     ignored: &[IgnoreRule],
     records: &mut Vec<FileRecord>,
 ) -> Result<(), String> {
+    walk_with_skip_dirs_mode(
+        root,
+        current,
+        include_hidden,
+        skip_dirs,
+        ignored,
+        records,
+        false,
+    )
+}
+
+fn walk_with_skip_dirs_mode(
+    root: &Path,
+    current: &Path,
+    include_hidden: bool,
+    skip_dirs: &[&str],
+    ignored: &[IgnoreRule],
+    records: &mut Vec<FileRecord>,
+    strict: bool,
+) -> Result<(), String> {
     let mut pending = vec![(current.to_path_buf(), Arc::<[IgnoreRule]>::from(ignored))];
     while let Some((directory, active_ignored)) = pending.pop() {
-        let Ok(entries) = fs::read_dir(&directory) else {
-            continue;
+        let entries = match fs::read_dir(&directory) {
+            Ok(entries) => entries,
+            Err(_) if !strict => continue,
+            Err(error) => {
+                return Err(format!(
+                    "cannot read directory {}: {error}",
+                    directory.display()
+                ));
+            }
         };
-        let mut entries: Vec<_> = entries.filter_map(Result::ok).collect();
+        let mut entries = entries
+            .map(|entry| match entry {
+                Ok(entry) => Ok(entry),
+                Err(_) if !strict => Err(None),
+                Err(error) => Err(Some(error)),
+            })
+            .filter_map(|entry| match entry {
+                Ok(entry) => Some(Ok(entry)),
+                Err(None) => None,
+                Err(Some(error)) => Some(Err(error)),
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("cannot read entry in {}: {error}", directory.display()))?;
         sort_entries(&mut entries);
         for entry in entries {
             let path = entry.path();
             let name = entry.file_name().to_string_lossy().into_owned();
-            let Ok(file_type) = entry.file_type() else {
-                continue;
+            let file_type = match entry.file_type() {
+                Ok(file_type) => file_type,
+                Err(_) if !strict => continue,
+                Err(error) => return Err(format!("cannot inspect {}: {error}", path.display())),
             };
             if file_type.is_symlink() {
                 continue;
@@ -186,8 +227,12 @@ fn walk_with_skip_dirs(
                 && (include_hidden || !is_hidden(&name))
                 && !is_ignored(&relative, &active_ignored)
             {
-                let Ok(metadata) = entry.metadata() else {
-                    continue;
+                let metadata = match entry.metadata() {
+                    Ok(metadata) => metadata,
+                    Err(_) if !strict => continue,
+                    Err(error) => {
+                        return Err(format!("cannot inspect {}: {error}", path.display()));
+                    }
                 };
                 let extension = path
                     .extension()
@@ -212,72 +257,70 @@ fn walk_strict(
     root: &Path,
     current: &Path,
     include_hidden: bool,
-    include_generated: bool,
     skip_dirs: &[&str],
     ignored: &[IgnoreRule],
     records: &mut Vec<FileRecord>,
 ) -> Result<(), String> {
-    let entries = fs::read_dir(current)
-        .map_err(|error| format!("cannot read directory {}: {error}", current.display()))?;
-    let mut entries = entries
-        .map(|entry| {
-            entry.map_err(|error| format!("cannot read entry in {}: {error}", current.display()))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    sort_entries(&mut entries);
-    for entry in entries {
-        let path = entry.path();
-        let name = entry.file_name().to_string_lossy().into_owned();
-        let file_type = entry
-            .file_type()
-            .map_err(|error| format!("cannot inspect {}: {error}", path.display()))?;
-        if file_type.is_symlink() {
-            continue;
-        }
-        let relative = path
-            .strip_prefix(root)
-            .map_err(|error| format!("cannot relativize {}: {error}", path.display()))?
-            .to_string_lossy()
-            .replace('\\', "/");
-        if file_type.is_dir() {
-            let generated_hidden =
-                include_generated && PACK_GENERATED_DIRS.contains(&name.as_str());
-            if skip_dirs.contains(&name.as_str())
-                || (!include_hidden && is_hidden(&name) && !generated_hidden)
-                || is_ignored_directory(&relative, ignored)
-            {
+    let mut pending = vec![(current.to_path_buf(), Arc::<[IgnoreRule]>::from(ignored))];
+    while let Some((directory, active_ignored)) = pending.pop() {
+        let entries = fs::read_dir(&directory)
+            .map_err(|error| format!("cannot read directory {}: {error}", directory.display()))?;
+        let mut entries = entries
+            .map(|entry| {
+                entry.map_err(|error| {
+                    format!("cannot read entry in {}: {error}", directory.display())
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        sort_entries(&mut entries);
+        for entry in entries {
+            let path = entry.path();
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let file_type = entry
+                .file_type()
+                .map_err(|error| format!("cannot inspect {}: {error}", path.display()))?;
+            if file_type.is_symlink() {
                 continue;
             }
-            let child_ignored = extend_ignore_rules(root, &path, ignored)?;
-            walk_strict(
-                root,
-                &path,
-                include_hidden,
-                include_generated,
-                skip_dirs,
-                child_ignored.as_ref(),
-                records,
-            )?;
-        } else if file_type.is_file()
-            && (include_hidden || !is_hidden(&name))
-            && !is_ignored(&relative, ignored)
-        {
-            let metadata = entry
-                .metadata()
-                .map_err(|error| format!("cannot inspect {}: {error}", path.display()))?;
-            let extension = path
-                .extension()
-                .and_then(|value| value.to_str())
-                .map(|value| format!(".{}", value.to_ascii_lowercase()))
-                .unwrap_or_else(|| "[no extension]".to_owned());
-            records.push(FileRecord {
-                relative,
-                path: path.clone(),
-                size: metadata.len(),
-                modified: metadata.modified().ok(),
-                kind: classify(&path),
-                extension,
-            });
+            let relative = path
+                .strip_prefix(root)
+                .map_err(|error| format!("cannot relativize {}: {error}", path.display()))?
+                .to_string_lossy()
+                .replace('\\', "/");
+            if file_type.is_dir() {
+                if skip_dirs.contains(&name.as_str())
+                    || (!include_hidden && is_hidden(&name))
+                    || is_ignored_directory(&relative, &active_ignored)
+                {
+                    continue;
+                }
+                let child_rules = extend_ignore_rules(root, &path, active_ignored.as_ref())?;
+                let child_ignored = match child_rules {
+                    Cow::Borrowed(_) => Arc::clone(&active_ignored),
+                    Cow::Owned(rules) => Arc::from(rules),
+                };
+                pending.push((path, child_ignored));
+            } else if file_type.is_file()
+                && (include_hidden || !is_hidden(&name))
+                && !is_ignored(&relative, &active_ignored)
+            {
+                let metadata = entry
+                    .metadata()
+                    .map_err(|error| format!("cannot inspect {}: {error}", path.display()))?;
+                let extension = path
+                    .extension()
+                    .and_then(|value| value.to_str())
+                    .map(|value| format!(".{}", value.to_ascii_lowercase()))
+                    .unwrap_or_else(|| "[no extension]".to_owned());
+                records.push(FileRecord {
+                    relative,
+                    path: path.clone(),
+                    size: metadata.len(),
+                    modified: metadata.modified().ok(),
+                    kind: classify(&path),
+                    extension,
+                });
+            }
         }
     }
     Ok(())
@@ -865,7 +908,14 @@ fn run_dupes(args: &[String]) -> Result<(), String> {
     }
     let ignored = ignored_by_git(&root)?;
     let mut records = Vec::new();
-    walk(&root, &root, include_hidden, &ignored, &mut records)?;
+    walk_strict(
+        &root,
+        &root,
+        include_hidden,
+        SKIP_DIRS,
+        &ignored,
+        &mut records,
+    )?;
     let mut by_size: BTreeMap<u64, Vec<String>> = BTreeMap::new();
     for record in records.into_iter().filter(|record| record.size >= min_size) {
         by_size
@@ -2454,7 +2504,7 @@ fn run_organize(args: &[String]) -> Result<(), String> {
 
     let ignored = ignored_by_git(&root)?;
     let mut records = Vec::new();
-    walk(&root, &root, false, &ignored, &mut records)?;
+    walk_strict(&root, &root, false, SKIP_DIRS, &ignored, &mut records)?;
     records.sort_by(|left, right| left.relative.cmp(&right.relative));
     let mut moves = Vec::<PlannedMove>::new();
     let mut skipped = 0usize;
@@ -3060,7 +3110,6 @@ fn run_pack(args: &[String]) -> Result<(), String> {
         &root,
         &root,
         include_hidden,
-        include_generated,
         &skip_dirs,
         &ignored,
         &mut records,
