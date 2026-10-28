@@ -1227,7 +1227,7 @@ fn fraction_ceil_scaled(fraction: &str, multiplier: u128) -> u128 {
 
 fn print_help() {
     println!(
-        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS]\n  mediaforge dupes [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS]\n  mediaforge probe <FILE> [--compact]\n  mediaforge project [PATH] [--json]\n  mediaforge gitignore [PATH] [--apply]\n  mediaforge organize [PATH] [--by type|extension] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--apply]\n  mediaforge undo [PATH] [--json]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--include-hidden] [--include-generated] [--dry-run] [--json]\n  mediaforge --version\n  mediaforge --help"
+        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS]\n  mediaforge dupes [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS]\n  mediaforge probe <FILE> [--compact]\n  mediaforge project [PATH] [--json]\n  mediaforge gitignore [PATH] [--apply]\n  mediaforge organize [PATH] [--by type|extension] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--apply]\n  mediaforge undo [PATH] [--json]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--include-hidden] [--include-generated] [--dry-run] [--json] [--list]\n  mediaforge --version\n  mediaforge --help"
     );
 }
 
@@ -3333,6 +3333,8 @@ fn print_pack_json(
     files: usize,
     input_bytes: u64,
     estimated_archive_bytes: u64,
+    list_entries: bool,
+    entries: &[(&FileRecord, String)],
     archive_bytes: Option<u64>,
 ) {
     println!("{{");
@@ -3356,9 +3358,25 @@ fn print_pack_json(
     match archive_bytes {
         Some(bytes) => {
             println!("  \"archive_bytes\": {bytes},");
-            println!("  \"archive_size\": {}", json_string(&human_size(bytes)));
+            println!("  \"archive_size\": {},", json_string(&human_size(bytes)));
         }
-        None => println!("  \"archive_bytes\": null,\n  \"archive_size\": null"),
+        None => println!("  \"archive_bytes\": null,\n  \"archive_size\": null,"),
+    }
+    if list_entries {
+        println!("  \"entries\": [");
+        for (index, (record, name)) in entries.iter().enumerate() {
+            let comma = if index + 1 == entries.len() { "" } else { "," };
+            println!(
+                "    {{\"path\": {}, \"size_bytes\": {}, \"type\": {}}}{}",
+                json_string(name),
+                record.size,
+                json_string(record.kind.as_str()),
+                comma
+            );
+        }
+        println!("  ]");
+    } else {
+        println!("  \"entries\": null");
     }
     println!("}}");
 }
@@ -3370,6 +3388,7 @@ fn run_pack(args: &[String]) -> Result<(), String> {
     let mut include_generated = false;
     let mut dry_run = false;
     let mut json = false;
+    let mut list_entries = false;
     let mut selected_types: Option<HashSet<Kind>> = None;
     let mut selected_extensions: Option<HashSet<String>> = None;
     let mut min_size = 0_u64;
@@ -3387,6 +3406,7 @@ fn run_pack(args: &[String]) -> Result<(), String> {
             "--include-generated" => include_generated = true,
             "--dry-run" => dry_run = true,
             "--json" => json = true,
+            "--list" => list_entries = true,
             "--type" => {
                 let value = iter
                     .next()
@@ -3413,7 +3433,7 @@ fn run_pack(args: &[String]) -> Result<(), String> {
             }
             "--help" | "-h" => {
                 println!(
-                    "Usage: mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--include-hidden] [--include-generated] [--dry-run] [--json]\n\nCreate an uncompressed, stream-written tar archive. --type accepts comma-separated scan types: video, audio, image, model, texture, project, other. --extension accepts comma-separated extensions such as mov,mxf; use none for files without an extension. --min-size and --max-size accept bytes or K/M/G/T binary units. Git-ignored and hidden files are skipped by default. Common Unity, Unreal, and Godot generated folders are excluded unless --include-generated is used. PAX extensions support long paths and files larger than 8 GiB. --json emits a machine-readable result summary."
+                    "Usage: mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--include-hidden] [--include-generated] [--dry-run] [--json] [--list]\n\nCreate an uncompressed, stream-written tar archive. --type accepts comma-separated scan types: video, audio, image, model, texture, project, other. --extension accepts comma-separated extensions such as mov,mxf; use none for files without an extension. --min-size and --max-size accept bytes or K/M/G/T binary units. Git-ignored and hidden files are skipped by default. Common Unity, Unreal, and Godot generated folders are excluded unless --include-generated is used. PAX extensions support long paths and files larger than 8 GiB. --json emits a machine-readable result summary; --list includes per-file paths, sizes, and types in text or JSON output."
                 );
                 return Ok(());
             }
@@ -3532,11 +3552,16 @@ fn run_pack(args: &[String]) -> Result<(), String> {
             human_size(total_bytes),
             human_size(estimated_archive_bytes)
         );
-        for (record, name) in entries.iter().take(30) {
+        let displayed_entries = if list_entries {
+            entries.len()
+        } else {
+            entries.len().min(30)
+        };
+        for (record, name) in entries.iter().take(displayed_entries) {
             println!("  {}  {name}", human_size(record.size));
         }
-        if entries.len() > 30 {
-            println!("  ... and {} more", entries.len() - 30);
+        if entries.len() > displayed_entries {
+            println!("  ... and {} more", entries.len() - displayed_entries);
         }
     }
     if dry_run {
@@ -3556,6 +3581,8 @@ fn run_pack(args: &[String]) -> Result<(), String> {
                 entries.len(),
                 total_bytes,
                 estimated_archive_bytes,
+                list_entries,
+                &entries,
                 None,
             );
             return Ok(());
@@ -3663,6 +3690,8 @@ fn run_pack(args: &[String]) -> Result<(), String> {
             entries.len(),
             total_bytes,
             estimated_archive_bytes,
+            list_entries,
+            &entries,
             Some(archive_size),
         );
     } else {
