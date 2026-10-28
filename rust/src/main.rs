@@ -2408,7 +2408,9 @@ where
     P: AsRef<str> + Sync,
     F: FnMut(usize, Result<u64, String>) -> Result<(), String>,
 {
-    if jobs == 1 || paths.len() < 8 {
+    const CHUNK_SIZE: usize = 256;
+    type SampleChunk = (usize, Vec<Result<u64, String>>);
+    if jobs == 1 || paths.len() < 8 || paths.len() <= CHUNK_SIZE {
         for (index, relative) in paths.iter().enumerate() {
             visit(
                 index,
@@ -2417,44 +2419,82 @@ where
         }
         return Ok(());
     }
-    let worker_count = jobs.min(paths.len());
-    let next = std::sync::atomic::AtomicUsize::new(0);
-    let (sender, receiver) = std::sync::mpsc::sync_channel(worker_count.saturating_mul(2));
-    let first_error = std::thread::scope(|scope| {
+    let chunk_count = paths.len().div_ceil(CHUNK_SIZE);
+    let worker_count = jobs.min(chunk_count);
+    let (result_sender, result_receiver) =
+        std::sync::mpsc::sync_channel::<SampleChunk>(worker_count);
+    let mut task_senders = Vec::with_capacity(worker_count);
+    let mut task_receivers = Vec::with_capacity(worker_count);
+    for _ in 0..worker_count {
+        let (sender, receiver) = std::sync::mpsc::sync_channel::<usize>(1);
+        task_senders.push(sender);
+        task_receivers.push(receiver);
+    }
+    std::thread::scope(move |scope| {
         let mut handles = Vec::with_capacity(worker_count);
-        for _ in 0..worker_count {
-            let sender = sender.clone();
-            let next = &next;
+        for receiver in task_receivers {
+            let sender = result_sender.clone();
             handles.push(scope.spawn(move || {
-                loop {
-                    let index = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    let Some(relative) = paths.get(index) else {
-                        break;
-                    };
-                    let result = sample_signature_for_path(root, relative.as_ref(), size);
-                    if sender.send((index, result)).is_err() {
+                while let Ok(chunk_index) = receiver.recv() {
+                    let start = chunk_index * CHUNK_SIZE;
+                    let end = (start + CHUNK_SIZE).min(paths.len());
+                    let results = paths[start..end]
+                        .iter()
+                        .map(|relative| sample_signature_for_path(root, relative.as_ref(), size))
+                        .collect();
+                    if sender.send((chunk_index, results)).is_err() {
                         break;
                     }
                 }
             }));
         }
-        drop(sender);
-        let mut first_error = None;
-        for (index, result) in receiver {
-            if let Err(error) = visit(index, result)
-                && first_error
+        drop(result_sender);
+        for (worker_index, sender) in task_senders.iter().enumerate() {
+            sender
+                .send(worker_index)
+                .map_err(|_| "duplicate sampling worker stopped unexpectedly".to_owned())?;
+        }
+        let mut next_chunk = worker_count;
+        let mut next_to_visit = 0;
+        let mut pending: Vec<Option<SampleChunk>> = (0..worker_count).map(|_| None).collect();
+        while next_to_visit < chunk_count {
+            let (chunk_index, results) = result_receiver
+                .recv()
+                .map_err(|_| "duplicate sampling workers stopped unexpectedly".to_owned())?;
+            let slot = chunk_index % worker_count;
+            debug_assert!(pending[slot].is_none());
+            pending[slot] = Some((chunk_index, results));
+            loop {
+                let next_slot = next_to_visit % worker_count;
+                if !pending[next_slot]
                     .as_ref()
-                    .is_none_or(|(first_index, _)| index < *first_index)
-            {
-                first_error = Some((index, error));
+                    .is_some_and(|(chunk_index, _)| *chunk_index == next_to_visit)
+                {
+                    break;
+                }
+                let (_, chunk_results) = pending[next_slot]
+                    .take()
+                    .expect("ready duplicate sample chunk is present");
+                let first_index = next_to_visit * CHUNK_SIZE;
+                for (offset, result) in chunk_results.into_iter().enumerate() {
+                    visit(first_index + offset, result)?;
+                }
+                let worker_index = next_to_visit % worker_count;
+                next_to_visit += 1;
+                if next_chunk < chunk_count {
+                    task_senders[worker_index]
+                        .send(next_chunk)
+                        .map_err(|_| "duplicate sampling worker stopped unexpectedly".to_owned())?;
+                    next_chunk += 1;
+                }
             }
         }
+        drop(task_senders);
         for handle in handles {
             handle.join().expect("duplicate sampling worker panicked");
         }
-        first_error
-    });
-    first_error.map_or(Ok(()), |(_, error)| Err(error))
+        Ok(())
+    })
 }
 
 struct VerifiedDuplicateGroup {
@@ -2798,8 +2838,6 @@ fn run_dupes(args: &[String]) -> Result<(), String> {
             duplicate_files += group.count;
             reclaimable += u128::from(size) * group.count.saturating_sub(1) as u128;
             if let Some(file_indices) = group.files {
-                let mut file_indices = file_indices;
-                file_indices.sort_unstable();
                 let files = file_indices
                     .into_iter()
                     .map(|index| paths[index].to_string())
