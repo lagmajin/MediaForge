@@ -1122,6 +1122,7 @@ fn print_scan_csv_info(
 fn parse_scan_settings(contents: &str, path: &Path) -> Result<Vec<String>, String> {
     let contents = contents.strip_prefix('\u{feff}').unwrap_or(contents);
     let mut args = Vec::new();
+    let mut seen_single_value_keys = HashSet::new();
     for (index, raw_line) in contents.lines().enumerate() {
         let line_number = index + 1;
         let line = raw_line.trim();
@@ -1142,6 +1143,14 @@ fn parse_scan_settings(contents: &str, path: &Path) -> Result<Vec<String>, Strin
                 path.display()
             )
         };
+        if !matches!(key, "extension" | "path_contains" | "exclude_path_contains")
+            && !seen_single_value_keys.insert(key.to_owned())
+        {
+            return Err(format!(
+                "duplicate scan setting '{key}' at {}:{line_number}",
+                path.display()
+            ));
+        }
         match key {
             "type"
             | "min_size"
