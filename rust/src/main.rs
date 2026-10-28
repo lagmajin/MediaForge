@@ -963,6 +963,11 @@ fn is_ignored_path(relative: &str, is_directory: bool, rules: &[IgnoreRule]) -> 
 
 fn json_string(value: &str) -> String {
     let mut out = String::with_capacity(value.len() + 2);
+    append_json_string(&mut out, value);
+    out
+}
+
+fn append_json_string(out: &mut String, value: &str) {
     out.push('"');
     for ch in value.chars() {
         match ch {
@@ -971,11 +976,25 @@ fn json_string(value: &str) -> String {
             '\n' => out.push_str("\\n"),
             '\r' => out.push_str("\\r"),
             '\t' => out.push_str("\\t"),
-            c if c <= '\u{1f}' => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c if c <= '\u{1f}' => write!(out, "\\u{:04x}", c as u32)
+                .expect("writing JSON escapes to a String cannot fail"),
             c => out.push(c),
         }
     }
     out.push('"');
+}
+
+fn json_string_array<'a>(values: impl IntoIterator<Item = &'a str>) -> String {
+    let mut out = String::from("[");
+    let mut first = true;
+    for value in values {
+        if !first {
+            out.push_str(", ");
+        }
+        first = false;
+        append_json_string(&mut out, value);
+    }
+    out.push(']');
     out
 }
 
@@ -1289,14 +1308,11 @@ fn print_json(
         println!("  ],\n  \"same_size_candidates\": [");
         for (index, (size, _, files)) in groups.iter().enumerate() {
             let comma = if index + 1 == groups.len() { "" } else { "," };
-            let file_values = files
-                .iter()
-                .map(|file| json_string(file))
-                .collect::<Vec<_>>()
-                .join(", ");
             println!(
-                "    {{\"size_bytes\": {}, \"files\": [{}]}}{}",
-                size, file_values, comma
+                "    {{\"size_bytes\": {}, \"files\": {}}}{}",
+                size,
+                json_string_array(files.iter().copied()),
+                comma
             );
         }
         println!("  ],");
@@ -2179,14 +2195,11 @@ fn run_dupes(args: &[String]) -> Result<(), String> {
             } else {
                 ","
             };
-            let paths = files
-                .iter()
-                .map(|file| json_string(file))
-                .collect::<Vec<_>>()
-                .join(", ");
             println!(
-                "    {{\"size_bytes\": {}, \"files\": [{}]}}{}",
-                size, paths, comma
+                "    {{\"size_bytes\": {}, \"files\": {}}}{}",
+                size,
+                json_string_array(files.iter().map(String::as_str)),
+                comma
             );
         }
         println!(
