@@ -1380,7 +1380,7 @@ fn fraction_ceil_scaled(fraction: &str, multiplier: u128) -> u128 {
 
 fn print_help() {
     println!(
-        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json|--csv] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS] [--largest N]\n  mediaforge dupes [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--top-groups N]\n  mediaforge probe <FILE> [--compact] [--summary]\n  mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--type video|audio] [--min-size SIZE] [--max-size SIZE] [--jobs N] [--summary] [--compare] [--csv]\n  mediaforge storyboard <VIDEO> --output <IMAGE> [--interval SECONDS] [--columns N] [--rows N] [--width PIXELS]\n  mediaforge scene-detect-dir <PATH> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--fps RATE] [--extension EXTENSIONS] [--include-hidden] [--jobs N]\n  mediaforge scene-detect <VIDEO> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--format jsonl|csv] [--fps RATE]\n  mediaforge proxy <VIDEO> --output <FILE.mp4> [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge proxy-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET] [--jobs N] [--skip-existing] [--json]\n  mediaforge proxy-config init [FILE] [--profile fast|balanced|quality] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge extract-audio <VIDEO> --output <FILE> [--format mp3|wav|flac] [--bitrate RATE] [--stream N]\n  mediaforge extract-audio-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--format mp3|wav|flac] [--bitrate RATE] [--stream N] [--jobs N] [--skip-existing] [--json]\n  mediaforge project [PATH] [--json]\n  mediaforge gitignore [PATH] [--apply]\n  mediaforge organize [PATH] [--by type|extension|size] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--apply]\n  mediaforge sequence [PATH] [--prefix NAME] [--start N] [--padding N] [--extension EXTENSIONS] [--include-hidden] [--natural] [--json] [--apply]\n  mediaforge undo [PATH] [--json]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--include-hidden] [--include-generated] [--dry-run] [--json] [--list]\n  mediaforge --version\n  mediaforge --help"
+        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json|--csv] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS] [--largest N]\n  mediaforge dupes [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--top-groups N]\n  mediaforge probe <FILE> [--compact] [--summary]\n  mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--type video|audio] [--min-size SIZE] [--max-size SIZE] [--jobs N] [--summary] [--compare] [--csv]\n  mediaforge storyboard <VIDEO> --output <IMAGE> [--interval SECONDS] [--columns N] [--rows N] [--width PIXELS]\n  mediaforge scene-detect-dir <PATH> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--fps RATE] [--extension EXTENSIONS] [--include-hidden] [--jobs N]\n  mediaforge scene-detect <VIDEO> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--format jsonl|csv] [--fps RATE]\n  mediaforge proxy <VIDEO> --output <FILE.mp4> [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge proxy-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET] [--jobs N] [--skip-existing] [--json]\n  mediaforge proxy-config init [FILE] [--profile fast|balanced|quality] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge extract-audio <VIDEO> --output <FILE> [--format mp3|wav|flac] [--bitrate RATE] [--stream N]\n  mediaforge extract-audio-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--format mp3|wav|flac] [--bitrate RATE] [--stream N] [--jobs N] [--skip-existing] [--json]\n  mediaforge project [PATH] [--json]\n  mediaforge unity-meta [PROJECT_PATH] [--json] [--include-hidden]\n  mediaforge gitignore [PATH] [--apply]\n  mediaforge organize [PATH] [--by type|extension|size] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--apply]\n  mediaforge sequence [PATH] [--prefix NAME] [--start N] [--padding N] [--extension EXTENSIONS] [--include-hidden] [--natural] [--json] [--apply]\n  mediaforge undo [PATH] [--json]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--include-hidden] [--include-generated] [--dry-run] [--json] [--list]\n  mediaforge --version\n  mediaforge --help"
     );
 }
 
@@ -4741,6 +4741,174 @@ fn run_project(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+fn unity_meta_sidecar(path: &Path) -> PathBuf {
+    let mut file_name = path.file_name().unwrap_or_default().to_os_string();
+    file_name.push(".meta");
+    path.with_file_name(file_name)
+}
+
+fn unity_meta_target(path: &Path) -> Option<PathBuf> {
+    let file_name = path.file_name()?.to_string_lossy();
+    if !file_name.to_ascii_lowercase().ends_with(".meta") {
+        return None;
+    }
+    let target_name = &file_name[..file_name.len() - ".meta".len()];
+    (!target_name.is_empty()).then(|| path.with_file_name(target_name))
+}
+
+fn run_unity_meta(args: &[String]) -> Result<(), String> {
+    let mut json = false;
+    let mut include_hidden = false;
+    let mut path = None;
+    for arg in args {
+        match arg.as_str() {
+            "--json" => json = true,
+            "--include-hidden" => include_hidden = true,
+            "--help" | "-h" => {
+                println!(
+                    "Usage: mediaforge unity-meta [PROJECT_PATH] [--json] [--include-hidden]\n\nCheck Unity Assets for files or folders without matching .meta files and .meta files without a matching asset. Honors .gitignore by default, follows no symlinks, and never changes files. Exits with an error status when issues are found."
+                );
+                return Ok(());
+            }
+            value if value.starts_with('-') => return Err(format!("unknown option: {value}")),
+            value => {
+                if path.is_some() {
+                    return Err("unity-meta accepts one Unity project path".to_owned());
+                }
+                path = Some(PathBuf::from(value));
+            }
+        }
+    }
+    let path = path.unwrap_or_else(|| PathBuf::from("."));
+    let root = fs::canonicalize(&path)
+        .map_err(|error| format!("cannot access {}: {error}", path.display()))?;
+    if !root.is_dir() {
+        return Err(format!("expected a project directory: {}", root.display()));
+    }
+    let assets = root.join("Assets");
+    if !is_real_directory(&assets) {
+        return Err(format!(
+            "Unity Assets directory was not found in {}",
+            root.display()
+        ));
+    }
+
+    let rules = ignored_by_git(&root)?;
+    let mut pending = vec![(assets.clone(), Arc::<[IgnoreRule]>::from(rules))];
+    let mut checked = 1_usize;
+    let mut missing_meta = Vec::<String>::new();
+    let mut orphan_meta = Vec::<String>::new();
+    if !unity_meta_sidecar(&assets).exists() {
+        missing_meta.push("Assets".to_owned());
+    }
+    while let Some((directory, active_rules)) = pending.pop() {
+        let mut entries = fs::read_dir(&directory)
+            .map_err(|error| {
+                format!(
+                    "cannot read Unity asset directory {}: {error}",
+                    directory.display()
+                )
+            })?
+            .map(|entry| {
+                entry.map_err(|error| {
+                    format!("cannot read entry in {}: {error}", directory.display())
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        sort_entries(&mut entries);
+        for entry in entries {
+            let entry_path = entry.path();
+            let file_type = entry.file_type().map_err(|error| {
+                format!(
+                    "cannot inspect Unity asset {}: {error}",
+                    entry_path.display()
+                )
+            })?;
+            if file_type.is_symlink() {
+                continue;
+            }
+            let relative = entry_path
+                .strip_prefix(&root)
+                .unwrap_or(&entry_path)
+                .to_string_lossy()
+                .replace('\\', "/");
+            if file_type.is_dir() {
+                if is_ignored_directory(&relative, &active_rules)
+                    || (!include_hidden && is_hidden(&entry.file_name().to_string_lossy()))
+                {
+                    continue;
+                }
+                checked = checked.saturating_add(1);
+                if !unity_meta_sidecar(&entry_path).exists() {
+                    missing_meta.push(relative);
+                }
+                let child_rules = extend_ignore_rules(&root, &entry_path, &active_rules)?;
+                let child_rules = match child_rules {
+                    Cow::Borrowed(_) => Arc::clone(&active_rules),
+                    Cow::Owned(rules) => Arc::from(rules),
+                };
+                pending.push((entry_path, child_rules));
+            } else if file_type.is_file() {
+                if is_ignored(&relative, &active_rules)
+                    || (!include_hidden && is_hidden(&entry.file_name().to_string_lossy()))
+                {
+                    continue;
+                }
+                if let Some(target) = unity_meta_target(&entry_path) {
+                    checked = checked.saturating_add(1);
+                    if !target.exists() {
+                        orphan_meta.push(relative);
+                    }
+                } else {
+                    checked = checked.saturating_add(1);
+                    if !unity_meta_sidecar(&entry_path).exists() {
+                        missing_meta.push(relative);
+                    }
+                }
+            }
+        }
+    }
+    missing_meta.sort();
+    orphan_meta.sort();
+    let issue_count = missing_meta.len() + orphan_meta.len();
+    if json {
+        println!(
+            "{{\"root\":{},\"checked\":{checked},\"missing_meta_count\":{},\"orphan_meta_count\":{},\"missing_meta\":[{}],\"orphan_meta\":[{}]}}",
+            json_string(&root.to_string_lossy()),
+            missing_meta.len(),
+            orphan_meta.len(),
+            missing_meta
+                .iter()
+                .map(|path| json_string(path))
+                .collect::<Vec<_>>()
+                .join(","),
+            orphan_meta
+                .iter()
+                .map(|path| json_string(path))
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+    } else {
+        println!("Unity metadata audit: {}", root.display());
+        println!("Checked paths: {checked}");
+        println!("Missing .meta files: {}", missing_meta.len());
+        for path in &missing_meta {
+            println!("  missing: {path}");
+        }
+        println!("Orphan .meta files: {}", orphan_meta.len());
+        for path in &orphan_meta {
+            println!("  orphan: {path}");
+        }
+        if issue_count == 0 {
+            println!("Unity asset metadata is consistent.");
+        }
+    }
+    if issue_count > 0 {
+        return Err(format!("Unity metadata audit found {issue_count} issue(s)"));
+    }
+    Ok(())
+}
+
 fn run_gitignore(args: &[String]) -> Result<(), String> {
     const UNITY_PATTERNS: &[&str] = &[
         "[Ll]ibrary/",
@@ -6852,6 +7020,7 @@ fn run() -> Result<(), String> {
         Some("extract-audio") => run_extract_audio(&args[1..]),
         Some("extract-audio-dir") => run_extract_audio_dir(&args[1..]),
         Some("project") => run_project(&args[1..]),
+        Some("unity-meta") => run_unity_meta(&args[1..]),
         Some("gitignore") => run_gitignore(&args[1..]),
         Some("organize") => run_organize(&args[1..]),
         Some("sequence") => run_sequence(&args[1..]),

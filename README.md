@@ -131,9 +131,12 @@ mediaforge dupes ./Media --type video --max-size 2G --top-groups 20
 ```sh
 mediaforge project ./Game
 mediaforge project ./Game --json
+mediaforge unity-meta ./Game --json
 ```
 
 The read-only inspector recognizes Unity, Unreal Engine, and Godot project markers. It reports missing expected folders and measures known build/cache folders (`Library`, `Intermediate`, `DerivedDataCache`, `.godot`, `.import`, and related folders) without deleting them. For Unreal projects, it also reports the top-level `EngineAssociation` value from each `.uproject` descriptor. For Godot, it reads the `[application]` `config/features` array from `project.godot`. Some folders, such as Unreal's `Saved`, can also contain backups or logs. It also lists Blender, DaVinci Resolve, Premiere Pro, After Effects, and Final Cut Pro XML project files found below the chosen folder; `.gitignore` rules apply, and hidden folders are included unless ignored.
+
+`unity-meta` checks every included file and folder under Unity's `Assets` directory for its matching `.meta` sidecar and reports orphaned `.meta` files. It honors `.gitignore` rules and skips hidden entries by default; `--include-hidden` includes them. The command is read-only, emits JSON with `--json`, and exits with an error status when it finds issues, so it can be used as a local pre-commit check.
 
 ## Generate engine-specific Git ignore patterns
 
