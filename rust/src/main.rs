@@ -5474,6 +5474,30 @@ fn run_proxy(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+fn print_batch_result_json(
+    current: usize,
+    total: usize,
+    path: &str,
+    output: Option<&Path>,
+    result: &Result<bool, String>,
+) {
+    let output = output
+        .map(|path| json_string(&path.to_string_lossy()))
+        .unwrap_or_else(|| "null".to_owned());
+    match result {
+        Ok(created) => println!(
+            "{{\"type\":\"result\",\"current\":{current},\"total\":{total},\"path\":{},\"output\":{output},\"ok\":true,\"skipped\":{}}}",
+            json_string(path),
+            !created
+        ),
+        Err(error) => println!(
+            "{{\"type\":\"result\",\"current\":{current},\"total\":{total},\"path\":{},\"output\":{output},\"ok\":false,\"error\":{}}}",
+            json_string(path),
+            json_string(error)
+        ),
+    }
+}
+
 fn run_proxy_dir(args: &[String]) -> Result<(), String> {
     const MAX_PROXY_JOBS: usize = 16;
     let mut path = None;
@@ -5567,7 +5591,7 @@ fn run_proxy_dir(args: &[String]) -> Result<(), String> {
             "--skip-existing" => skip_existing = true,
             "--help" | "-h" => {
                 println!(
-                    "Usage: mediaforge proxy-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET] [--jobs N] [--skip-existing] [--json]\n\nCreate H.264/AAC proxies for video assets while preserving their relative folders. Automatically reads .mediaforge-proxy from the working directory when present. Explicit options override settings-file values. --jobs controls concurrent ffmpeg processes (1–16; default 4). Existing regular output files are never overwritten; --skip-existing skips those files. Other occupied output paths are errors. Failed files are reported after the remaining videos are processed. The output directory must already exist. --json emits progress and per-file result records as JSON Lines."
+                    "Usage: mediaforge proxy-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET] [--jobs N] [--skip-existing] [--json]\n\nCreate H.264/AAC proxies for video assets while preserving their relative folders. Automatically reads .mediaforge-proxy from the working directory when present. Explicit options override settings-file values. --jobs controls concurrent ffmpeg processes (1–16; default 4). Existing regular output files are never overwritten; --skip-existing skips those files. Other occupied output paths are errors. Failed files are reported after the remaining videos are processed. The output directory must already exist. --json emits one result record per file as each job completes, with completion counters and a final summary as JSON Lines."
                 );
                 return Ok(());
             }
@@ -5733,12 +5757,14 @@ fn run_proxy_dir(args: &[String]) -> Result<(), String> {
                         let _guard = progress_output
                             .lock()
                             .expect("proxy progress output lock poisoned");
-                        let current = completed.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-                            + 1;
-                        println!(
-                            "{{\"type\":\"progress\",\"current\":{current},\"total\":{},\"path\":{}}}",
+                        let current =
+                            completed.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                        print_batch_result_json(
+                            current,
                             total,
-                            json_string(&record.relative)
+                            &record.relative,
+                            output.as_deref(),
+                            &result,
                         );
                     }
                     results
@@ -5758,11 +5784,6 @@ fn run_proxy_dir(args: &[String]) -> Result<(), String> {
     let mut failed = 0_usize;
     for (index, result) in results {
         let record = &records[index];
-        let output_json = plans[index]
-            .0
-            .as_ref()
-            .map(|output| json_string(&output.to_string_lossy()))
-            .unwrap_or_else(|| "null".to_owned());
         match result {
             Ok(created) => {
                 if created {
@@ -5770,38 +5791,19 @@ fn run_proxy_dir(args: &[String]) -> Result<(), String> {
                 } else {
                     skipped += 1;
                 }
-                if json {
-                    if created {
-                        println!(
-                            "{{\"type\":\"result\",\"path\":{},\"output\":{},\"ok\":true}}",
-                            json_string(&record.relative),
-                            output_json
-                        );
-                    } else {
-                        println!(
-                            "{{\"type\":\"result\",\"path\":{},\"output\":{},\"ok\":true,\"skipped\":true}}",
-                            json_string(&record.relative),
-                            output_json
-                        );
-                    }
-                } else if let Some(output) = &plans[index].0 {
-                    if created {
-                        println!("Created proxy {}", output.display());
-                    } else {
-                        println!("Skipped existing proxy {}", output.display());
+                if !json {
+                    if let Some(output) = &plans[index].0 {
+                        if created {
+                            println!("Created proxy {}", output.display());
+                        } else {
+                            println!("Skipped existing proxy {}", output.display());
+                        }
                     }
                 }
             }
             Err(error) => {
                 failed += 1;
-                if json {
-                    println!(
-                        "{{\"type\":\"result\",\"path\":{},\"output\":{},\"ok\":false,\"error\":{}}}",
-                        json_string(&record.relative),
-                        output_json,
-                        json_string(&error)
-                    );
-                } else {
+                if !json {
                     eprintln!("mediaforge: {}: {error}", record.relative);
                 }
             }
@@ -6088,7 +6090,7 @@ fn run_extract_audio_dir(args: &[String]) -> Result<(), String> {
             "--json" => json = true,
             "--help" | "-h" => {
                 println!(
-                    "Usage: mediaforge extract-audio-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--format mp3|wav|flac] [--bitrate RATE] [--stream N] [--jobs N] [--skip-existing] [--json]\n\nExtract audio from video and audio assets while preserving relative folders. Defaults to MP3 at 192k from the first audio stream. --jobs controls concurrent ffmpeg processes (1–16; default 4). Existing regular output files are never overwritten; --skip-existing skips those files. Other occupied output paths are errors. The output directory must already exist. --json emits progress and per-file results as JSON Lines."
+                    "Usage: mediaforge extract-audio-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--format mp3|wav|flac] [--bitrate RATE] [--stream N] [--jobs N] [--skip-existing] [--json]\n\nExtract audio from video and audio assets while preserving relative folders. Defaults to MP3 at 192k from the first audio stream. --jobs controls concurrent ffmpeg processes (1–16; default 4). Existing regular output files are never overwritten; --skip-existing skips those files. Other occupied output paths are errors. The output directory must already exist. --json emits one result record per file as each job completes, with completion counters and a final summary as JSON Lines."
                 );
                 return Ok(());
             }
@@ -6269,12 +6271,14 @@ fn run_extract_audio_dir(args: &[String]) -> Result<(), String> {
                         let _guard = progress_output
                             .lock()
                             .expect("audio progress output lock poisoned");
-                        let current = completed.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-                            + 1;
-                        println!(
-                            "{{\"type\":\"progress\",\"current\":{current},\"total\":{},\"path\":{}}}",
+                        let current =
+                            completed.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                        print_batch_result_json(
+                            current,
                             total,
-                            json_string(&record.relative)
+                            &record.relative,
+                            output.as_deref(),
+                            &result,
                         );
                     }
                     results
@@ -6294,11 +6298,6 @@ fn run_extract_audio_dir(args: &[String]) -> Result<(), String> {
     let mut failed = 0_usize;
     for (index, result) in results {
         let record = &records[index];
-        let output_json = plans[index]
-            .0
-            .as_ref()
-            .map(|output| json_string(&output.to_string_lossy()))
-            .unwrap_or_else(|| "null".to_owned());
         match result {
             Ok(created) => {
                 if created {
@@ -6306,38 +6305,19 @@ fn run_extract_audio_dir(args: &[String]) -> Result<(), String> {
                 } else {
                     skipped += 1;
                 }
-                if json {
-                    if created {
-                        println!(
-                            "{{\"type\":\"result\",\"path\":{},\"output\":{},\"ok\":true}}",
-                            json_string(&record.relative),
-                            output_json
-                        );
-                    } else {
-                        println!(
-                            "{{\"type\":\"result\",\"path\":{},\"output\":{},\"ok\":true,\"skipped\":true}}",
-                            json_string(&record.relative),
-                            output_json
-                        );
-                    }
-                } else if let Some(output) = &plans[index].0 {
-                    if created {
-                        println!("Created audio {}", output.display());
-                    } else {
-                        println!("Skipped existing audio {}", output.display());
+                if !json {
+                    if let Some(output) = &plans[index].0 {
+                        if created {
+                            println!("Created audio {}", output.display());
+                        } else {
+                            println!("Skipped existing audio {}", output.display());
+                        }
                     }
                 }
             }
             Err(error) => {
                 failed += 1;
-                if json {
-                    println!(
-                        "{{\"type\":\"result\",\"path\":{},\"output\":{},\"ok\":false,\"error\":{}}}",
-                        json_string(&record.relative),
-                        output_json,
-                        json_string(&error)
-                    );
-                } else {
+                if !json {
                     eprintln!("mediaforge: {}: {error}", record.relative);
                 }
             }
