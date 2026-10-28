@@ -28,5 +28,4 @@ jobs:
       - run: cargo build --release --locked
       - run: cargo run --release --locked -- --help
       - run: cargo run --release --locked -- scan tests/parity_sample --json
-      - run: python -m pip install -e . --no-build-isolation
       - run: python tests/check_parity.py target/release/mediaforge

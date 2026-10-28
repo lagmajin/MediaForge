@@ -4,11 +4,12 @@ import sys
 from pathlib import Path
 
 binary = Path(sys.argv[1]).resolve()
+repo = Path(__file__).resolve().parents[1]
 sample = Path(__file__).parent / "parity_sample"
 rust_report = json.loads(subprocess.check_output([str(binary), "scan", str(sample), "--json"], text=True))
 python_report = json.loads(
     subprocess.check_output(
-        [sys.executable, "-c", "import json,sys; from pathlib import Path; from mediaforge.cli import scan; print(json.dumps(scan(Path(sys.argv[1]))))", str(sample)],
+        [sys.executable, "-c", "import json,sys; from pathlib import Path; sys.path.insert(0, sys.argv[1]); from mediaforge.cli import scan; print(json.dumps(scan(Path(sys.argv[2]))))", str(repo / "src"), str(sample)],
         text=True,
     )
 )
