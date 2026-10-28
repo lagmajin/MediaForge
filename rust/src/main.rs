@@ -2550,16 +2550,34 @@ struct DuplicateOutputGroup {
     files: Vec<String>,
 }
 
+fn compare_duplicate_group_stats(
+    left_size: u64,
+    left_count: usize,
+    left_first_path: &str,
+    right_size: u64,
+    right_count: usize,
+    right_first_path: &str,
+) -> std::cmp::Ordering {
+    let left_reclaimable = u128::from(left_size) * left_count.saturating_sub(1) as u128;
+    let right_reclaimable = u128::from(right_size) * right_count.saturating_sub(1) as u128;
+    right_reclaimable
+        .cmp(&left_reclaimable)
+        .then_with(|| right_size.cmp(&left_size))
+        .then_with(|| left_first_path.cmp(right_first_path))
+}
+
 fn compare_duplicate_output_groups(
     left: &DuplicateOutputGroup,
     right: &DuplicateOutputGroup,
 ) -> std::cmp::Ordering {
-    let left_reclaimable = u128::from(left.size) * left.files.len().saturating_sub(1) as u128;
-    let right_reclaimable = u128::from(right.size) * right.files.len().saturating_sub(1) as u128;
-    right_reclaimable
-        .cmp(&left_reclaimable)
-        .then_with(|| right.size.cmp(&left.size))
-        .then_with(|| left.files.first().cmp(&right.files.first()))
+    compare_duplicate_group_stats(
+        left.size,
+        left.files.len(),
+        left.files.first().map_or("", String::as_str),
+        right.size,
+        right.files.len(),
+        right.files.first().map_or("", String::as_str),
+    )
 }
 
 impl PartialEq for DuplicateOutputGroup {
@@ -2838,22 +2856,37 @@ fn run_dupes(args: &[String]) -> Result<(), String> {
             duplicate_files += group.count;
             reclaimable += u128::from(size) * group.count.saturating_sub(1) as u128;
             if let Some(file_indices) = group.files {
-                let files = file_indices
-                    .into_iter()
-                    .map(|index| paths[index].to_string())
-                    .collect();
-                let candidate = DuplicateOutputGroup { size, files };
                 if let Some(limit) = top_groups {
-                    if top_group_heap.len() < limit {
-                        top_group_heap.push(candidate);
-                    } else if top_group_heap.peek().is_some_and(|worst| {
-                        compare_duplicate_output_groups(&candidate, worst).is_lt()
-                    }) {
-                        top_group_heap.pop();
+                    let first_path = paths[group.representative].as_ref();
+                    let is_top_group = top_group_heap.len() < limit
+                        || top_group_heap.peek().is_some_and(|worst| {
+                            compare_duplicate_group_stats(
+                                size,
+                                group.count,
+                                first_path,
+                                worst.size,
+                                worst.files.len(),
+                                worst.files.first().map_or("", String::as_str),
+                            )
+                            .is_lt()
+                        });
+                    if is_top_group {
+                        let files = file_indices
+                            .into_iter()
+                            .map(|index| paths[index].to_string())
+                            .collect();
+                        let candidate = DuplicateOutputGroup { size, files };
+                        if top_group_heap.len() == limit {
+                            top_group_heap.pop();
+                        }
                         top_group_heap.push(candidate);
                     }
                 } else {
-                    groups.push((candidate.size, candidate.files));
+                    let files = file_indices
+                        .into_iter()
+                        .map(|index| paths[index].to_string())
+                        .collect();
+                    groups.push((size, files));
                 }
             }
         }
