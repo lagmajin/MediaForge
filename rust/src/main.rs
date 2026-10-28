@@ -2480,6 +2480,7 @@ fn print_json_summary(
     summary: &mut ScanJsonAccumulator,
     skipped_paths: usize,
     skipped_examples: &[String],
+    include_skipped_examples: bool,
     filters: ScanFilterOptions<'_>,
     compact: bool,
 ) -> Result<(), String> {
@@ -2503,14 +2504,19 @@ fn print_json_summary(
         "  \"skipped_paths_truncated\": {},",
         skipped_paths > skipped_examples.len()
     );
-    write_scan_json_line!(
-        "  \"skipped_path_examples\": [{}],",
-        skipped_examples
-            .iter()
-            .map(|path| json_string(path))
-            .collect::<Vec<_>>()
-            .join(",")
-    );
+    if include_skipped_examples {
+        write_scan_json_line!(
+            "  \"skipped_path_examples\": [{}],",
+            skipped_examples
+                .iter()
+                .map(|path| json_string(path))
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+    } else {
+        write_scan_json_line!("  \"skipped_path_examples\": null,");
+    }
+    write_scan_json_line!("  \"skipped_path_examples_included\": {include_skipped_examples},");
     write_scan_json_line!("  \"filters\": {},", scan_filters_json(filters));
     write_scan_json_line!("  \"largest_limit\": {},", summary.largest_limit);
     write_scan_json_line!("  \"same_size_candidates_included\": false,");
@@ -4218,6 +4224,7 @@ fn run_scan(args: &[String]) -> Result<(), String> {
                 summary,
                 skipped_paths,
                 &skipped_examples,
+                !summary_only,
                 filters,
                 compact,
             )?;
