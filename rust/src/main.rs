@@ -5104,15 +5104,24 @@ fn run_probe_dir(args: &[String]) -> Result<(), String> {
                     });
                     let result = ffprobe_json(&record.path, false, summary || csv, selector);
                     let (success, json, probe) = match result {
-                        Ok(probe) => (
-                            true,
-                            format!(
-                                "{{\"path\":{},\"ok\":true,\"probe\":{}}}",
-                                json_string(&record.relative),
-                                probe.trim()
-                            ),
-                            Some(probe),
-                        ),
+                        Ok(probe) if stream_results => {
+                            let mut json = probe;
+                            let start = json.len() - json.trim_start().len();
+                            let end = json.trim_end().len();
+                            json.truncate(end);
+                            if start > 0 {
+                                json.drain(..start);
+                            }
+                            let prefix = format!(
+                                "{{\"path\":{},\"ok\":true,\"probe\":",
+                                json_string(&record.relative)
+                            );
+                            json.reserve(prefix.len() + 1);
+                            json.insert_str(0, &prefix);
+                            json.push('}');
+                            (true, json, None)
+                        }
+                        Ok(probe) => (true, String::new(), Some(probe)),
                         Err(error) => (
                             false,
                             format!(
