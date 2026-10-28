@@ -1277,7 +1277,7 @@ fn fraction_ceil_scaled(fraction: &str, multiplier: u128) -> u128 {
 
 fn print_help() {
     println!(
-        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS] [--largest N]\n  mediaforge dupes [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--top-groups N]\n  mediaforge probe <FILE> [--compact]\n  mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--jobs N] [--summary]\n  mediaforge storyboard <VIDEO> --output <IMAGE> [--interval SECONDS] [--columns N] [--rows N] [--width PIXELS]\n  mediaforge project [PATH] [--json]\n  mediaforge gitignore [PATH] [--apply]\n  mediaforge organize [PATH] [--by type|extension] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--apply]\n  mediaforge undo [PATH] [--json]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--include-hidden] [--include-generated] [--dry-run] [--json] [--list]\n  mediaforge --version\n  mediaforge --help"
+        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS] [--largest N]\n  mediaforge dupes [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--top-groups N]\n  mediaforge probe <FILE> [--compact]\n  mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--jobs N] [--summary]\n  mediaforge storyboard <VIDEO> --output <IMAGE> [--interval SECONDS] [--columns N] [--rows N] [--width PIXELS]\n  mediaforge proxy <VIDEO> --output <FILE.mp4> [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge project [PATH] [--json]\n  mediaforge gitignore [PATH] [--apply]\n  mediaforge organize [PATH] [--by type|extension] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--apply]\n  mediaforge undo [PATH] [--json]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--include-hidden] [--include-generated] [--dry-run] [--json] [--list]\n  mediaforge --version\n  mediaforge --help"
     );
 }
 
@@ -1673,6 +1673,209 @@ fn run_storyboard(args: &[String]) -> Result<(), String> {
     })?;
     println!(
         "Created storyboard {} ({}; up to {cells} frames)",
+        output.display(),
+        human_size(temporary_size)
+    );
+    Ok(())
+}
+
+fn run_proxy(args: &[String]) -> Result<(), String> {
+    let mut input = None;
+    let mut output = None;
+    let mut max_width = 1280_u32;
+    let mut crf = 28_u8;
+    let mut preset = "veryfast".to_owned();
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--output" | "-o" => {
+                output = Some(PathBuf::from(
+                    iter.next()
+                        .ok_or_else(|| "--output requires a file path".to_owned())?,
+                ));
+            }
+            "--max-width" => {
+                let value = iter
+                    .next()
+                    .ok_or_else(|| "--max-width requires pixels".to_owned())?;
+                max_width = value
+                    .parse::<u32>()
+                    .map_err(|_| format!("invalid maximum width '{value}'"))?;
+            }
+            "--crf" => {
+                let value = iter
+                    .next()
+                    .ok_or_else(|| "--crf requires a value from 0 to 51".to_owned())?;
+                crf = value
+                    .parse::<u8>()
+                    .map_err(|_| format!("invalid CRF '{value}'; use a value from 0 to 51"))?;
+            }
+            "--preset" => {
+                preset = iter
+                    .next()
+                    .ok_or_else(|| "--preset requires an x264 preset".to_owned())?
+                    .clone();
+            }
+            "--help" | "-h" => {
+                println!(
+                    "Usage: mediaforge proxy <VIDEO> --output <FILE.mp4> [--max-width PIXELS] [--crf N] [--preset PRESET]\n\nCreate an H.264/AAC editing proxy with ffmpeg. Defaults: 1280-pixel maximum width, CRF 28, veryfast preset. Existing files are never overwritten."
+                );
+                return Ok(());
+            }
+            value if value.starts_with('-') => return Err(format!("unknown option: {value}")),
+            value => {
+                if input.is_some() {
+                    return Err("proxy accepts one video file".into());
+                }
+                input = Some(PathBuf::from(value));
+            }
+        }
+    }
+    let input = input.ok_or_else(|| "proxy requires a video file".to_owned())?;
+    let output = output.ok_or_else(|| "proxy requires --output <FILE.mp4>".to_owned())?;
+    if !(16..=7680).contains(&max_width) {
+        return Err("--max-width must be between 16 and 7680 pixels".to_owned());
+    }
+    if crf > 51 {
+        return Err("--crf must be between 0 and 51".to_owned());
+    }
+    const PRESETS: &[&str] = &[
+        "ultrafast",
+        "superfast",
+        "veryfast",
+        "faster",
+        "fast",
+        "medium",
+        "slow",
+        "slower",
+        "veryslow",
+    ];
+    if !PRESETS.contains(&preset.as_str()) {
+        return Err(format!(
+            "unsupported x264 preset '{preset}'; choose one of {}",
+            PRESETS.join(", ")
+        ));
+    }
+
+    let input = fs::canonicalize(&input)
+        .map_err(|error| format!("cannot access video {}: {error}", input.display()))?;
+    if !fs::metadata(&input)
+        .map_err(|error| format!("cannot inspect video {}: {error}", input.display()))?
+        .is_file()
+    {
+        return Err(format!("expected a video file: {}", input.display()));
+    }
+    let output_name = output
+        .file_name()
+        .ok_or_else(|| "output must name an MP4 file".to_owned())?;
+    if output
+        .extension()
+        .and_then(|value| value.to_str())
+        .is_none_or(|value| !value.eq_ignore_ascii_case("mp4"))
+    {
+        return Err("proxy output must use the .mp4 extension".to_owned());
+    }
+    let parent = output
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let parent = fs::canonicalize(parent).map_err(|error| {
+        format!(
+            "cannot access output directory {}: {error}",
+            parent.display()
+        )
+    })?;
+    let output = parent.join(output_name);
+    if output == input {
+        return Err("proxy output must differ from the input video".to_owned());
+    }
+    if entry_state(&output)
+        .map_err(|error| format!("cannot inspect output {}: {error}", output.display()))?
+        != EntryState::Missing
+    {
+        return Err(format!(
+            "output already exists; refusing to overwrite: {}",
+            output.display()
+        ));
+    }
+
+    let stem = output
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("proxy");
+    let temporary = parent.join(format!(
+        ".{stem}.mediaforge-{}-{}.tmp.mp4",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    ));
+    let filter = format!("scale=w='trunc(min({max_width},iw)/2)*2':h=-2");
+    let result = Command::new("ffmpeg")
+        .args(["-hide_banner", "-loglevel", "error", "-nostdin", "-n", "-i"])
+        .arg(&input)
+        .args(["-map", "0:v:0", "-map", "0:a?", "-sn", "-dn", "-vf"])
+        .arg(filter)
+        .args(["-c:v", "libx264", "-preset"])
+        .arg(&preset)
+        .args(["-crf"])
+        .arg(crf.to_string())
+        .args([
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "128k",
+            "-movflags",
+            "+faststart",
+        ])
+        .arg(&temporary)
+        .output()
+        .map_err(|error| {
+            if error.kind() == std::io::ErrorKind::NotFound {
+                "ffmpeg was not found on PATH. Install FFmpeg to create proxies.".to_owned()
+            } else {
+                format!("could not start ffmpeg: {error}")
+            }
+        })?;
+    if !result.status.success() {
+        let detail = String::from_utf8_lossy(&result.stderr).trim().to_owned();
+        let _ = fs::remove_file(&temporary);
+        return Err(if detail.is_empty() {
+            format!("ffmpeg failed with {}", result.status)
+        } else {
+            format!("ffmpeg failed: {detail}")
+        });
+    }
+    let temporary_size = match fs::metadata(&temporary) {
+        Ok(metadata) => metadata.len(),
+        Err(error) => {
+            let _ = fs::remove_file(&temporary);
+            return Err(format!("could not inspect generated proxy: {error}"));
+        }
+    };
+    if temporary_size == 0 {
+        let _ = fs::remove_file(&temporary);
+        return Err("ffmpeg produced an empty proxy".to_owned());
+    }
+    move_file_no_replace(&temporary, &output).map_err(|error| {
+        let cleanup = fs::remove_file(&temporary);
+        match cleanup {
+            Ok(()) => format!("could not publish proxy {}: {error}", output.display()),
+            Err(cleanup_error) if cleanup_error.kind() == io::ErrorKind::NotFound => {
+                format!("could not publish proxy {}: {error}", output.display())
+            }
+            Err(cleanup_error) => format!(
+                "could not publish proxy {}: {error}; temporary video remains at {}: {cleanup_error}",
+                output.display(),
+                temporary.display()
+            ),
+        }
+    })?;
+    println!(
+        "Created proxy {} ({})",
         output.display(),
         human_size(temporary_size)
     );
@@ -4101,6 +4304,7 @@ fn run() -> Result<(), String> {
         Some("probe") => run_probe(&args[1..]),
         Some("probe-dir") => run_probe_dir(&args[1..]),
         Some("storyboard") => run_storyboard(&args[1..]),
+        Some("proxy") => run_proxy(&args[1..]),
         Some("project") => run_project(&args[1..]),
         Some("gitignore") => run_gitignore(&args[1..]),
         Some("organize") => run_organize(&args[1..]),
