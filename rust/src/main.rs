@@ -3385,16 +3385,17 @@ fn read_json_timestamp(value: Option<i128>) -> String {
 }
 
 fn write_snapshot_csv_row(output: &mut impl Write, values: &[String]) -> Result<(), String> {
-    let row = format!(
-        "{}\n",
-        values
-            .iter()
-            .map(|value| csv_field(value))
-            .collect::<Vec<_>>()
-            .join(",")
-    );
+    for (index, value) in values.iter().enumerate() {
+        if index > 0 {
+            output
+                .write_all(b",")
+                .map_err(|error| format!("could not write snapshot CSV: {error}"))?;
+        }
+        write_csv_field(output, value)
+            .map_err(|error| format!("could not write snapshot CSV: {error}"))?;
+    }
     output
-        .write_all(row.as_bytes())
+        .write_all(b"\n")
         .map_err(|error| format!("could not write snapshot CSV: {error}"))
 }
 
@@ -3410,7 +3411,8 @@ fn snapshot_csv_event(
         (Some(old), None) => -i128::from(old.size),
         (None, None) => 0,
     };
-    let mut values = vec![
+    let mut values = Vec::with_capacity(16);
+    values.extend([
         change.to_owned(),
         classify(Path::new(relative)).as_str().to_owned(),
         relative.to_owned(),
@@ -3421,8 +3423,8 @@ fn snapshot_csv_event(
             .map_or(String::new(), |value| value.to_string()),
         new.and_then(|entry| entry.modified_ns)
             .map_or(String::new(), |value| value.to_string()),
-    ];
-    values.resize(16, String::new());
+    ]);
+    values.resize_with(16, String::new);
     values
 }
 
