@@ -6139,7 +6139,7 @@ fn run_scene_detect_dir(args: &[String]) -> Result<(), String> {
             "--include-hidden" => include_hidden = true,
             "--help" | "-h" => {
                 println!(
-                    "Usage: mediaforge scene-detect-dir <PATH> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--summary] [--fps RATE] [--extension EXTENSIONS] [--include-hidden] [--jobs N]\n\nFind likely scene cuts in every video under a directory. Streams a progress record and each video's JSON Lines results as processing finishes, followed by a batch summary. --segments emits contiguous intervals instead of individual cuts. --summary counts scene cuts but omits per-cut and per-segment records, using bounded cut memory for long videos. --jobs controls concurrent FFmpeg processes (1–16; default 4)."
+                    "Usage: mediaforge scene-detect-dir <PATH> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--summary] [--fps RATE] [--extension EXTENSIONS] [--include-hidden] [--jobs N]\n\nFind likely scene cuts in every video under a directory. Streams progress records and each video's JSON Lines results as processing finishes, followed by a batch summary. --segments emits contiguous intervals instead of individual cuts. --summary counts scene cuts but omits progress and per-cut/per-segment records, using bounded cut memory for long videos. --jobs controls concurrent FFmpeg processes (1–16; default 4)."
                 );
                 return Ok(());
             }
@@ -6243,13 +6243,18 @@ fn run_scene_detect_dir(args: &[String]) -> Result<(), String> {
                             + 1;
                         let stdout = io::stdout();
                         let mut stdout = stdout.lock();
-                        writeln!(
-                            stdout,
-                            "{{\"type\":\"progress\",\"current\":{current},\"total\":{},\"path\":{}}}",
-                            records.len(),
-                            json_string(&record.relative)
-                        )
-                        .and_then(|()| stdout.write_all(output.as_bytes()))
+                        let write_result = if summary_only {
+                            stdout.write_all(output.as_bytes())
+                        } else {
+                            writeln!(
+                                stdout,
+                                "{{\"type\":\"progress\",\"current\":{current},\"total\":{},\"path\":{}}}",
+                                records.len(),
+                                json_string(&record.relative)
+                            )
+                            .and_then(|()| stdout.write_all(output.as_bytes()))
+                        };
+                        write_result
                         .err()
                         .map(|error| error.to_string())
                     };
