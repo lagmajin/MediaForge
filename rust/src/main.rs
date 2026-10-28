@@ -574,10 +574,12 @@ struct ScanWalkConfig<'a> {
     ignored: &'a [IgnoreRule],
     filters: &'a ScanTraversalFilters<'a>,
     strict: bool,
+    record_writer: Option<&'a mut dyn Write>,
 }
 
 struct ScanWalkResult {
     records: Vec<ScanFileRecord>,
+    file_count: usize,
     skipped_paths: usize,
     skipped_examples: Vec<String>,
 }
@@ -590,8 +592,10 @@ fn walk_with_skip_dirs_mode_counted(config: ScanWalkConfig<'_>) -> Result<ScanWa
         ignored,
         filters,
         strict,
+        mut record_writer,
     } = config;
     let mut records = Vec::new();
+    let mut file_count = 0_usize;
     let mut skipped_paths = 0_usize;
     let mut skipped_examples = Vec::new();
     let mut pending = vec![(
@@ -799,7 +803,7 @@ fn walk_with_skip_dirs_mode_counted(config: ScanWalkConfig<'_>) -> Result<ScanWa
                         return Ok(());
                     }
                 }
-                records.push(ScanFileRecord {
+                let record = ScanFileRecord {
                     relative,
                     kind,
                     modified: if filters.include_modified {
@@ -809,7 +813,14 @@ fn walk_with_skip_dirs_mode_counted(config: ScanWalkConfig<'_>) -> Result<ScanWa
                     },
                     size,
                     extension,
-                });
+                };
+                file_count = file_count.saturating_add(1);
+                if let Some(writer) = record_writer.as_deref_mut() {
+                    write_csv_record(writer, &record)
+                        .map_err(|error| format!("could not write CSV output: {error}"))?;
+                } else {
+                    records.push(record);
+                }
             }
             Ok(())
         };
@@ -857,6 +868,7 @@ fn walk_with_skip_dirs_mode_counted(config: ScanWalkConfig<'_>) -> Result<ScanWa
     }
     Ok(ScanWalkResult {
         records,
+        file_count,
         skipped_paths,
         skipped_examples,
     })
@@ -2334,7 +2346,7 @@ fn print_report(
     println!("\nSame-size candidate groups: {candidate_groups} (not content-verified)");
 }
 
-fn write_csv_field(output: &mut impl Write, value: &str) -> io::Result<()> {
+fn write_csv_field(output: &mut (impl Write + ?Sized), value: &str) -> io::Result<()> {
     let bytes = value.as_bytes();
     let mut start = 0;
     output.write_all(b"\"")?;
@@ -2357,27 +2369,35 @@ fn write_csv_column(output: &mut impl Write, first: &mut bool, value: &str) -> i
     write_csv_field(output, value)
 }
 
+fn write_csv_header(output: &mut (impl Write + ?Sized)) -> io::Result<()> {
+    output.write_all(b"path,type,extension,size_bytes,modified_unix_seconds\n")
+}
+
+fn write_csv_record(output: &mut (impl Write + ?Sized), record: &ScanFileRecord) -> io::Result<()> {
+    write_csv_field(output, &record.relative)?;
+    output.write_all(b",")?;
+    write_csv_field(output, record.kind.as_str())?;
+    output.write_all(b",")?;
+    write_csv_field(output, &record.extension)?;
+    write!(output, ",{}", record.size)?;
+    let modified = record
+        .modified
+        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|duration| duration.as_secs());
+    if let Some(modified) = modified {
+        writeln!(output, ",{}", modified)
+    } else {
+        output.write_all(b",\n")
+    }
+}
+
 fn print_csv(records: &[ScanFileRecord]) -> Result<(), String> {
     let stdout = io::stdout();
     let mut output = io::BufWriter::with_capacity(64 * 1024, stdout.lock());
     let result = (|| -> io::Result<()> {
-        output.write_all(b"path,type,extension,size_bytes,modified_unix_seconds\n")?;
+        write_csv_header(&mut output)?;
         for record in records {
-            write_csv_field(&mut output, &record.relative)?;
-            output.write_all(b",")?;
-            write_csv_field(&mut output, record.kind.as_str())?;
-            output.write_all(b",")?;
-            write_csv_field(&mut output, &record.extension)?;
-            write!(output, ",{}", record.size)?;
-            let modified = record
-                .modified
-                .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
-                .map(|duration| duration.as_secs());
-            if let Some(modified) = modified {
-                writeln!(output, ",{}", modified)?;
-            } else {
-                output.write_all(b",\n")?;
-            }
+            write_csv_record(&mut output, record)?;
         }
         output.flush()
     })();
@@ -3782,8 +3802,16 @@ fn run_scan(args: &[String]) -> Result<(), String> {
         exclude_path_contains_lower: &exclude_path_contains_lower,
         sort_entries_per_directory: csv_sort.is_none() && (csv || strict),
     };
+    let stream_csv = csv && csv_sort.is_none() && !strict;
+    let stdout = io::stdout();
+    let mut streaming_csv =
+        stream_csv.then(|| io::BufWriter::with_capacity(64 * 1024, stdout.lock()));
+    if let Some(output) = streaming_csv.as_mut() {
+        write_csv_header(output).map_err(|error| format!("could not write CSV output: {error}"))?;
+    }
     let ScanWalkResult {
         mut records,
+        file_count,
         skipped_paths,
         mut skipped_examples,
     } = walk_with_skip_dirs_mode_counted(ScanWalkConfig {
@@ -3793,6 +3821,9 @@ fn run_scan(args: &[String]) -> Result<(), String> {
         ignored: &ignored,
         filters: &traversal_filters,
         strict,
+        record_writer: streaming_csv
+            .as_mut()
+            .map(|output| output as &mut dyn Write),
     })?;
     skipped_examples.sort_unstable_by(|left, right| compare_paths_case_insensitive(left, right));
     if let Some(sort) = csv_sort {
@@ -3819,7 +3850,7 @@ fn run_scan(args: &[String]) -> Result<(), String> {
         if csv_info {
             print_scan_csv_info(
                 &root,
-                records.len(),
+                file_count,
                 skipped_paths,
                 &skipped_examples,
                 ScanFilterOptions {
@@ -3846,7 +3877,13 @@ fn run_scan(args: &[String]) -> Result<(), String> {
                 eprintln!("  ... and {} more", skipped_paths - skipped_examples.len());
             }
         }
-        print_csv(&records)?;
+        if let Some(output) = streaming_csv.as_mut() {
+            output
+                .flush()
+                .map_err(|error| format!("could not write CSV output: {error}"))?;
+        } else {
+            print_csv(&records)?;
+        }
     } else if json {
         print_json(
             &root,
