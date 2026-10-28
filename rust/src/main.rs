@@ -1,5 +1,5 @@
 use std::borrow::Cow;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BinaryHeap, HashMap, HashSet};
 use std::env;
 use std::fmt::Write as FmtWrite;
 use std::fs::{self, File, OpenOptions};
@@ -1080,25 +1080,64 @@ fn print_scan_filter_preview(
     );
 }
 
-fn largest_records(records: &[FileRecord], limit: usize) -> Vec<&FileRecord> {
-    let mut ordered = records.iter().collect::<Vec<_>>();
-    let compare = |left: &&FileRecord, right: &&FileRecord| {
-        std::cmp::Reverse(left.size)
-            .cmp(&std::cmp::Reverse(right.size))
-            .then_with(|| {
-                left.relative
-                    .chars()
-                    .flat_map(char::to_lowercase)
-                    .cmp(right.relative.chars().flat_map(char::to_lowercase))
-            })
-            .then_with(|| left.relative.cmp(&right.relative))
-    };
-    if limit < ordered.len() {
-        ordered.select_nth_unstable_by(limit, compare);
-        ordered.truncate(limit);
+fn compare_largest_records(left: &FileRecord, right: &FileRecord) -> std::cmp::Ordering {
+    std::cmp::Reverse(left.size)
+        .cmp(&std::cmp::Reverse(right.size))
+        .then_with(|| {
+            left.relative
+                .chars()
+                .flat_map(char::to_lowercase)
+                .cmp(right.relative.chars().flat_map(char::to_lowercase))
+        })
+        .then_with(|| left.relative.cmp(&right.relative))
+}
+
+struct LargestRecord<'a>(&'a FileRecord);
+
+impl PartialEq for LargestRecord<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        compare_largest_records(self.0, other.0).is_eq()
     }
-    ordered.sort_unstable_by(compare);
-    ordered
+}
+
+impl Eq for LargestRecord<'_> {}
+
+impl PartialOrd for LargestRecord<'_> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for LargestRecord<'_> {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        compare_largest_records(self.0, other.0)
+    }
+}
+
+fn largest_records(records: &[FileRecord], limit: usize) -> Vec<&FileRecord> {
+    if limit == 0 {
+        return Vec::new();
+    }
+    if limit >= records.len() {
+        let mut ordered = records.iter().collect::<Vec<_>>();
+        ordered.sort_unstable_by(|left, right| compare_largest_records(left, right));
+        return ordered;
+    }
+    let mut largest = BinaryHeap::with_capacity(limit);
+    for record in records {
+        if largest.len() < limit {
+            largest.push(LargestRecord(record));
+        } else if largest
+            .peek()
+            .is_some_and(|smallest| compare_largest_records(record, smallest.0).is_lt())
+        {
+            largest.pop();
+            largest.push(LargestRecord(record));
+        }
+    }
+    let mut ordered = largest.into_vec();
+    ordered.sort_unstable_by(|left, right| compare_largest_records(left.0, right.0));
+    ordered.into_iter().map(|entry| entry.0).collect()
 }
 
 fn print_json(
