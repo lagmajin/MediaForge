@@ -7544,7 +7544,7 @@ fn write_scene_segment_csv(
 
 const SCENE_DIR_CSV_HEADER: &[u8] = b"record_type,path,cut_index,timecode,time_seconds,frame,score,segment_index,start_timecode,start_seconds,start_frame,end_timecode,end_seconds,end_frame,duration_seconds,fps,nominal_fps,cuts,files,successful,failed,threshold,min_gap_seconds,error\n";
 
-fn write_scene_csv_row(output: &mut impl Write, fields: &[String]) -> io::Result<()> {
+fn write_scene_csv_row(output: &mut impl Write, fields: &[&str]) -> io::Result<()> {
     for (index, field) in fields.iter().enumerate() {
         if index > 0 {
             output.write_all(b",")?;
@@ -7571,77 +7571,180 @@ fn write_scene_detection_csv(
                 for cut in &detection.cuts {
                     if cut.seconds > start && cut.seconds < duration {
                         segment_index += 1;
-                        let mut row = vec![String::new(); 24];
-                        row[0] = "segment".to_owned();
-                        row[1] = path.to_owned();
-                        row[7] = segment_index.to_string();
-                        row[8] = scene_timecode(start);
-                        row[9] = format!("{start:.6}");
-                        row[10] = ((start * detection.fps).round() as u64).to_string();
-                        row[11] = scene_timecode(cut.seconds);
-                        row[12] = format!("{:.6}", cut.seconds);
-                        row[13] = ((cut.seconds * detection.fps).round() as u64).to_string();
-                        row[14] = format!("{:.6}", cut.seconds - start);
-                        row[15] = format!("{:.6}", detection.fps);
-                        row[16] = detection.nominal_fps.to_string();
-                        write_scene_csv_row(output, &row)?;
+                        let index_text = segment_index.to_string();
+                        let start_timecode = scene_timecode(start);
+                        let start_seconds = format!("{start:.6}");
+                        let start_frame = ((start * detection.fps).round() as u64).to_string();
+                        let end_timecode = scene_timecode(cut.seconds);
+                        let end_seconds = format!("{:.6}", cut.seconds);
+                        let end_frame = ((cut.seconds * detection.fps).round() as u64).to_string();
+                        let duration_seconds = format!("{:.6}", cut.seconds - start);
+                        let fps = format!("{:.6}", detection.fps);
+                        let nominal_fps = detection.nominal_fps.to_string();
+                        write_scene_csv_row(
+                            output,
+                            &[
+                                "segment",
+                                path,
+                                "",
+                                "",
+                                "",
+                                "",
+                                "",
+                                &index_text,
+                                &start_timecode,
+                                &start_seconds,
+                                &start_frame,
+                                &end_timecode,
+                                &end_seconds,
+                                &end_frame,
+                                &duration_seconds,
+                                &fps,
+                                &nominal_fps,
+                                "",
+                                "",
+                                "",
+                                "",
+                                "",
+                                "",
+                                "",
+                            ],
+                        )?;
                         start = cut.seconds;
                     }
                 }
                 if start < duration {
                     segment_index += 1;
-                    let mut row = vec![String::new(); 24];
-                    row[0] = "segment".to_owned();
-                    row[1] = path.to_owned();
-                    row[7] = segment_index.to_string();
-                    row[8] = scene_timecode(start);
-                    row[9] = format!("{start:.6}");
-                    row[10] = ((start * detection.fps).round() as u64).to_string();
-                    row[11] = scene_timecode(duration);
-                    row[12] = format!("{duration:.6}");
-                    row[13] = ((duration * detection.fps).round() as u64).to_string();
-                    row[14] = format!("{:.6}", duration - start);
-                    row[15] = format!("{:.6}", detection.fps);
-                    row[16] = detection.nominal_fps.to_string();
-                    write_scene_csv_row(output, &row)?;
+                    let index_text = segment_index.to_string();
+                    let start_timecode = scene_timecode(start);
+                    let start_seconds = format!("{start:.6}");
+                    let start_frame = ((start * detection.fps).round() as u64).to_string();
+                    let end_timecode = scene_timecode(duration);
+                    let end_seconds = format!("{duration:.6}");
+                    let end_frame = ((duration * detection.fps).round() as u64).to_string();
+                    let duration_seconds = format!("{:.6}", duration - start);
+                    let fps = format!("{:.6}", detection.fps);
+                    let nominal_fps = detection.nominal_fps.to_string();
+                    write_scene_csv_row(
+                        output,
+                        &[
+                            "segment",
+                            path,
+                            "",
+                            "",
+                            "",
+                            "",
+                            "",
+                            &index_text,
+                            &start_timecode,
+                            &start_seconds,
+                            &start_frame,
+                            &end_timecode,
+                            &end_seconds,
+                            &end_frame,
+                            &duration_seconds,
+                            &fps,
+                            &nominal_fps,
+                            "",
+                            "",
+                            "",
+                            "",
+                            "",
+                            "",
+                            "",
+                        ],
+                    )?;
                 }
             }
         } else {
             for (index, cut) in detection.cuts.iter().enumerate() {
-                let mut row = vec![String::new(); 24];
-                row[0] = "scene".to_owned();
-                row[1] = path.to_owned();
-                row[2] = (index + 1).to_string();
-                row[3] = scene_timecode(cut.seconds);
-                row[4] = format!("{:.6}", cut.seconds);
-                row[5] = ((cut.seconds * detection.fps).round() as u64).to_string();
-                row[6] = format!("{:.6}", cut.score);
-                row[15] = format!("{:.6}", detection.fps);
-                row[16] = detection.nominal_fps.to_string();
-                write_scene_csv_row(output, &row)?;
+                let index_text = (index + 1).to_string();
+                let timecode = scene_timecode(cut.seconds);
+                let seconds = format!("{:.6}", cut.seconds);
+                let frame = ((cut.seconds * detection.fps).round() as u64).to_string();
+                let score = format!("{:.6}", cut.score);
+                let fps = format!("{:.6}", detection.fps);
+                let nominal_fps = detection.nominal_fps.to_string();
+                write_scene_csv_row(
+                    output,
+                    &[
+                        "scene",
+                        path,
+                        &index_text,
+                        &timecode,
+                        &seconds,
+                        &frame,
+                        &score,
+                        "",
+                        "",
+                        "",
+                        "",
+                        "",
+                        "",
+                        "",
+                        "",
+                        &fps,
+                        &nominal_fps,
+                        "",
+                        "",
+                        "",
+                        "",
+                        "",
+                        "",
+                        "",
+                    ],
+                )?;
             }
         }
     }
-    let mut summary = vec![String::new(); 24];
-    summary[0] = "summary".to_owned();
-    summary[1] = path.to_owned();
-    summary[14] = detection
+    let duration = detection
         .duration
         .map_or_else(String::new, |duration| format!("{duration:.6}"));
-    summary[15] = format!("{:.6}", detection.fps);
-    summary[16] = detection.nominal_fps.to_string();
-    summary[17] = detection.cut_count.to_string();
-    summary[21] = format!("{threshold:.6}");
-    summary[22] = format!("{min_gap:.6}");
-    write_scene_csv_row(output, &summary)
+    let fps = format!("{:.6}", detection.fps);
+    let nominal_fps = detection.nominal_fps.to_string();
+    let cuts = detection.cut_count.to_string();
+    let threshold = format!("{threshold:.6}");
+    let min_gap = format!("{min_gap:.6}");
+    write_scene_csv_row(
+        output,
+        &[
+            "summary",
+            path,
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            &duration,
+            &fps,
+            &nominal_fps,
+            &cuts,
+            "",
+            "",
+            "",
+            &threshold,
+            &min_gap,
+            "",
+        ],
+    )
 }
 
 fn write_scene_csv_error(output: &mut impl Write, path: &str, error: &str) -> io::Result<()> {
-    let mut row = vec![String::new(); 24];
-    row[0] = "error".to_owned();
-    row[1] = path.to_owned();
-    row[23] = format!("mediaforge: {error}");
-    write_scene_csv_row(output, &row)
+    let error = format!("mediaforge: {error}");
+    write_scene_csv_row(
+        output,
+        &[
+            "error", path, "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "",
+            "", "", "", &error,
+        ],
+    )
 }
 
 fn run_scene_detect(args: &[String]) -> Result<(), String> {
@@ -8021,15 +8124,41 @@ fn run_scene_detect_dir(args: &[String]) -> Result<(), String> {
     let stdout = io::stdout();
     let mut stdout = stdout.lock();
     if output_format == "csv" {
-        let mut summary = vec![String::new(); 24];
-        summary[0] = "batch_summary".to_owned();
-        summary[18] = records.len().to_string();
-        summary[19] = (records.len() - failed).to_string();
-        summary[20] = failed.to_string();
-        summary[21] = format!("{threshold:.6}");
-        summary[22] = format!("{min_gap:.6}");
-        write_scene_csv_row(&mut stdout, &summary)
-            .map_err(|error| format!("could not write scene detection CSV summary: {error}"))?;
+        let files = records.len().to_string();
+        let successful = (records.len() - failed).to_string();
+        let failed_count = failed.to_string();
+        let threshold = format!("{threshold:.6}");
+        let min_gap = format!("{min_gap:.6}");
+        write_scene_csv_row(
+            &mut stdout,
+            &[
+                "batch_summary",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                &files,
+                &successful,
+                &failed_count,
+                &threshold,
+                &min_gap,
+                "",
+            ],
+        )
+        .map_err(|error| format!("could not write scene detection CSV summary: {error}"))?;
     } else {
         writeln!(
             stdout,
