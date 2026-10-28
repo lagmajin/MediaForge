@@ -204,6 +204,17 @@ mediaforge undo ./Media
 
 `sequence` previews an alphabetical renaming plan for regular files directly inside the directory. It preserves extensions, skips hidden files by default, ignores Git-ignored paths, and skips any destination that already exists. JSON preview output includes up to 100 skipped destination examples with a reason (`already_named` or `destination_exists`) and a truncation flag. Use `--natural` to sort digit runs by numeric value, so `frame2.png` comes before `frame10.png`; the default remains alphabetical. Use `--apply` to rename; the shared recovery manifest lets `undo` restore the operation. Only one file operation can be pending per directory so the undo history stays unambiguous.
 
+## Batch rename assets
+
+```sh
+mediaforge rename ./Assets --replace old new --prefix PRJ_ --extension-case lower --extension fbx,obj
+mediaforge rename ./Frames --replace "shot " "shot_" --json
+mediaforge rename ./Assets --suffix _final --apply
+mediaforge undo ./Assets
+```
+
+`rename` previews filename transformations for regular files directly inside the directory. Repeated `--replace OLD NEW` rules run in order against the filename stem; `--prefix` and `--suffix` wrap the transformed stem, while `--extension-case lower|upper` normalizes the extension. `--extension` filters inputs, hidden files are skipped unless requested, and Git-ignored files are excluded. Existing destinations are skipped to prevent overwrites. Use `--apply` to rename; the shared recovery manifest lets `undo` restore original names.
+
 ## Pack a project for handoff
 
 ```sh
