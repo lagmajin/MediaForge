@@ -1909,6 +1909,12 @@ fn sample_signatures(
     ordered
 }
 
+struct VerifiedDuplicateGroup {
+    representative: String,
+    files: Option<Vec<String>>,
+    count: usize,
+}
+
 fn run_dupes(args: &[String]) -> Result<(), String> {
     let mut json = false;
     let mut summary_only = false;
@@ -2042,8 +2048,11 @@ fn run_dupes(args: &[String]) -> Result<(), String> {
     }
 
     let mut groups: Vec<(u64, Vec<String>)> = Vec::new();
+    let mut total_groups = 0_usize;
+    let mut duplicate_files = 0_usize;
+    let mut reclaimable = 0_u128;
     for (size, paths) in by_size.into_iter().filter(|(_, paths)| paths.len() > 1) {
-        let mut by_sample: HashMap<u64, Vec<Vec<String>>> = HashMap::new();
+        let mut by_sample: HashMap<u64, Vec<VerifiedDuplicateGroup>> = HashMap::new();
         let signatures = sample_signatures(&root, &paths, size, jobs);
         for (relative, signature) in paths.into_iter().zip(signatures) {
             let signature = signature?;
@@ -2051,10 +2060,13 @@ fn run_dupes(args: &[String]) -> Result<(), String> {
             let candidates = by_sample.entry(signature).or_default();
             let mut matched = false;
             for group in candidates.iter_mut() {
-                let representative = root.join(&group[0]);
+                let representative = root.join(&group.representative);
                 match files_identical(&representative, &candidate) {
                     Ok(true) => {
-                        group.push(relative.clone());
+                        group.count += 1;
+                        if let Some(files) = &mut group.files {
+                            files.push(relative.clone());
+                        }
                         matched = true;
                         break;
                     }
@@ -2068,30 +2080,34 @@ fn run_dupes(args: &[String]) -> Result<(), String> {
                 }
             }
             if !matched {
-                candidates.push(vec![relative]);
+                candidates.push(VerifiedDuplicateGroup {
+                    representative: relative.clone(),
+                    files: (!summary_only).then(|| vec![relative]),
+                    count: 1,
+                });
             }
         }
         for group in by_sample
             .into_values()
             .flatten()
-            .filter(|group| group.len() > 1)
+            .filter(|group| group.count > 1)
         {
-            groups.push((size, group));
+            total_groups += 1;
+            duplicate_files += group.count;
+            reclaimable += u128::from(size) * group.count.saturating_sub(1) as u128;
+            if let Some(files) = group.files {
+                groups.push((size, files));
+            }
         }
     }
-    groups.sort_by(|left, right| {
-        (u128::from(right.0) * right.1.len().saturating_sub(1) as u128)
-            .cmp(&(u128::from(left.0) * left.1.len().saturating_sub(1) as u128))
-            .then_with(|| right.0.cmp(&left.0))
-            .then_with(|| left.1.first().cmp(&right.1.first()))
-    });
-
-    let total_groups = groups.len();
-    let duplicate_files: usize = groups.iter().map(|(_, files)| files.len()).sum();
-    let reclaimable: u128 = groups
-        .iter()
-        .map(|(size, files)| u128::from(*size) * files.len().saturating_sub(1) as u128)
-        .sum();
+    if !summary_only {
+        groups.sort_by(|left, right| {
+            (u128::from(right.0) * right.1.len().saturating_sub(1) as u128)
+                .cmp(&(u128::from(left.0) * left.1.len().saturating_sub(1) as u128))
+                .then_with(|| right.0.cmp(&left.0))
+                .then_with(|| left.1.first().cmp(&right.1.first()))
+        });
+    }
     let displayed_groups = if summary_only {
         0
     } else {
