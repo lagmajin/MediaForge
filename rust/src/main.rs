@@ -2551,6 +2551,91 @@ fn scan_args_with_settings(args: &[String]) -> Result<Vec<String>, String> {
     Ok(resolved)
 }
 
+fn write_new_file_atomically(
+    path: &Path,
+    contents: &[u8],
+    description: &str,
+) -> Result<(), String> {
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    if path.file_name().is_none() {
+        return Err(format!("{description} path must name a file"));
+    }
+    if entry_state(path).map_err(|error| format!("cannot inspect {}: {error}", path.display()))?
+        != EntryState::Missing
+    {
+        return Err(format!(
+            "{description} file already exists; refusing to overwrite: {}",
+            path.display()
+        ));
+    }
+    let mut attempt = 0_u64;
+    let (temporary, mut file) = loop {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let candidate = parent.join(format!(
+            ".mediaforge-config-{}-{nonce}-{attempt}.tmp",
+            std::process::id()
+        ));
+        attempt = attempt
+            .checked_add(1)
+            .ok_or_else(|| format!("could not allocate a temporary {description} name"))?;
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&candidate)
+        {
+            Ok(file) => break (candidate, file),
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(error) => {
+                return Err(format!(
+                    "cannot create temporary {description} beside {}: {error}",
+                    path.display()
+                ));
+            }
+        }
+    };
+    let write_result = file.write_all(contents).and_then(|()| file.sync_all());
+    drop(file);
+    if let Err(error) = write_result {
+        let cleanup = fs::remove_file(&temporary);
+        return Err(match cleanup {
+            Ok(()) => format!("could not write {description}: {error}"),
+            Err(cleanup_error) if cleanup_error.kind() == io::ErrorKind::NotFound => {
+                format!("could not write {description}: {error}")
+            }
+            Err(cleanup_error) => format!(
+                "could not write {description}: {error}; temporary file remains at {}: {cleanup_error}",
+                temporary.display()
+            ),
+        });
+    }
+    if let Err(error) = move_file_no_replace(&temporary, path) {
+        let publish_error = if error.kind() == io::ErrorKind::AlreadyExists {
+            format!(
+                "{description} file already exists; refusing to overwrite: {}",
+                path.display()
+            )
+        } else {
+            format!("could not publish {}: {error}", path.display())
+        };
+        let cleanup = fs::remove_file(&temporary);
+        return Err(match cleanup {
+            Ok(()) => publish_error,
+            Err(cleanup_error) if cleanup_error.kind() == io::ErrorKind::NotFound => publish_error,
+            Err(cleanup_error) => format!(
+                "{publish_error}; temporary file remains at {}: {cleanup_error}",
+                temporary.display()
+            ),
+        });
+    }
+    Ok(())
+}
+
 fn run_scan_config(args: &[String]) -> Result<(), String> {
     let Some(action) = args.first().map(String::as_str) else {
         println!(
@@ -2691,22 +2776,7 @@ fn run_scan_config(args: &[String]) -> Result<(), String> {
 # include_hidden=false\n\
 # strict=false\n\
 # largest=50\n";
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&path)
-        .map_err(|error| {
-            if error.kind() == io::ErrorKind::AlreadyExists {
-                format!(
-                    "settings file already exists; refusing to overwrite: {}",
-                    path.display()
-                )
-            } else {
-                format!("cannot create scan settings {}: {error}", path.display())
-            }
-        })?;
-    file.write_all(contents.as_bytes())
-        .map_err(|error| format!("could not write scan settings {}: {error}", path.display()))?;
+    write_new_file_atomically(&path, contents.as_bytes(), "scan settings")?;
     println!("Created scan settings {}", path.display());
     Ok(())
 }
