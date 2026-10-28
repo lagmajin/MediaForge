@@ -3633,6 +3633,8 @@ fn collect_snapshot_entries<'a>(
     if hash_content && !records.is_empty() {
         let next = std::sync::atomic::AtomicUsize::new(0);
         let next = &next;
+        let cancelled = std::sync::atomic::AtomicBool::new(false);
+        let cancelled = &cancelled;
         let worker_count = jobs.min(records.len());
         let (sender, receiver) = std::sync::mpsc::sync_channel(worker_count.saturating_mul(2));
         let hash_error = std::thread::scope(|scope| {
@@ -3642,14 +3644,18 @@ fn collect_snapshot_entries<'a>(
                 handles.push(scope.spawn(move || {
                     let mut buffer = [0_u8; SNAPSHOT_HASH_BUFFER_SIZE];
                     loop {
+                        if cancelled.load(std::sync::atomic::Ordering::Acquire) {
+                            break;
+                        }
                         let index = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         let Some(record) = records.get(index) else {
                             break;
                         };
-                        if sender
-                            .send((index, hash_snapshot_file(root, record, &mut buffer)))
-                            .is_err()
-                        {
+                        let result = hash_snapshot_file(root, record, &mut buffer);
+                        if result.is_err() {
+                            cancelled.store(true, std::sync::atomic::Ordering::Release);
+                        }
+                        if sender.send((index, result)).is_err() {
                             break;
                         }
                     }
@@ -3669,13 +3675,17 @@ fn collect_snapshot_entries<'a>(
                             .is_some()
                             && first_error.is_none()
                         {
+                            cancelled.store(true, std::sync::atomic::Ordering::Release);
                             first_error = Some(format!(
                                 "multiple files resolve to the same portable path: {}",
                                 record.relative
                             ));
                         }
                     }
-                    Err(error) if first_error.is_none() => first_error = Some(error),
+                    Err(error) if first_error.is_none() => {
+                        cancelled.store(true, std::sync::atomic::Ordering::Release);
+                        first_error = Some(error);
+                    }
                     Err(_) => {}
                 }
             }
