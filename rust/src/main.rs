@@ -5068,7 +5068,10 @@ fn run_probe_dir(args: &[String]) -> Result<(), String> {
         &filters,
         &mut records,
     )?;
-    records.sort_by(|left, right| left.relative.cmp(&right.relative));
+    let stream_results = !csv && !compare;
+    if !stream_results {
+        records.sort_by(|left, right| left.relative.cmp(&right.relative));
+    }
     if records.is_empty() {
         if csv {
             println!(
@@ -5084,7 +5087,6 @@ fn run_probe_dir(args: &[String]) -> Result<(), String> {
 
     let next = std::sync::atomic::AtomicUsize::new(0);
     let completed = std::sync::atomic::AtomicUsize::new(0);
-    let stream_results = !csv && !compare;
     let stream_output = std::sync::Mutex::new(());
     let failures = std::sync::atomic::AtomicUsize::new(0);
     let results = std::sync::Mutex::new(Vec::<(usize, bool, String, Option<String>)>::new());
@@ -5962,7 +5964,6 @@ fn run_scene_detect_dir(args: &[String]) -> Result<(), String> {
         &filters,
         &mut records,
     )?;
-    records.sort_by(|left, right| left.relative.cmp(&right.relative));
 
     let next = std::sync::atomic::AtomicUsize::new(0);
     let completed = std::sync::atomic::AtomicUsize::new(0);
