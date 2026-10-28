@@ -3506,10 +3506,6 @@ fn move_file_replace(from: &Path, to: &Path) -> io::Result<()> {
     }
 }
 
-fn read_json_timestamp(value: Option<i128>) -> String {
-    value.map_or("null".to_owned(), |value| value.to_string())
-}
-
 fn write_snapshot_csv_row(output: &mut impl Write, values: &[String]) -> Result<(), String> {
     for (index, value) in values.iter().enumerate() {
         if index > 0 {
@@ -3525,32 +3521,128 @@ fn write_snapshot_csv_row(output: &mut impl Write, values: &[String]) -> Result<
         .map_err(|error| format!("could not write snapshot CSV: {error}"))
 }
 
-fn snapshot_csv_event(
+fn write_snapshot_csv_value(
+    output: &mut impl Write,
+    first: &mut bool,
+    value: &str,
+) -> io::Result<()> {
+    if !*first {
+        output.write_all(b",")?;
+    }
+    *first = false;
+    write_csv_field(output, value)
+}
+
+fn write_snapshot_csv_display(
+    output: &mut impl Write,
+    first: &mut bool,
+    value: impl std::fmt::Display,
+) -> io::Result<()> {
+    if !*first {
+        output.write_all(b",")?;
+    }
+    *first = false;
+    write!(output, "\"{value}\"")
+}
+
+fn write_snapshot_csv_optional_display(
+    output: &mut impl Write,
+    first: &mut bool,
+    value: Option<impl std::fmt::Display>,
+) -> io::Result<()> {
+    match value {
+        Some(value) => write_snapshot_csv_display(output, first, value),
+        None => write_snapshot_csv_value(output, first, ""),
+    }
+}
+
+fn write_snapshot_csv_event(
+    output: &mut impl Write,
     change: &str,
     relative: &str,
     old: Option<SnapshotEntry>,
     new: Option<SnapshotEntry>,
-) -> [String; 16] {
+) -> Result<(), String> {
     let size_delta = match (old, new) {
         (Some(old), Some(new)) => i128::from(new.size) - i128::from(old.size),
         (None, Some(new)) => i128::from(new.size),
         (Some(old), None) => -i128::from(old.size),
         (None, None) => 0,
     };
-    let mut values: [String; 16] = std::array::from_fn(|_| String::new());
-    values[0] = change.to_owned();
-    values[1] = classify(Path::new(relative)).as_str().to_owned();
-    values[2] = relative.to_owned();
-    values[3] = old.map_or(String::new(), |entry| entry.size.to_string());
-    values[4] = new.map_or(String::new(), |entry| entry.size.to_string());
-    values[5] = size_delta.to_string();
-    values[6] = old
-        .and_then(|entry| entry.modified_ns())
-        .map_or(String::new(), |value| value.to_string());
-    values[7] = new
-        .and_then(|entry| entry.modified_ns())
-        .map_or(String::new(), |value| value.to_string());
-    values
+    let result = (|| -> io::Result<()> {
+        let mut first = true;
+        write_snapshot_csv_value(output, &mut first, change)?;
+        write_snapshot_csv_value(output, &mut first, classify(Path::new(relative)).as_str())?;
+        write_snapshot_csv_value(output, &mut first, relative)?;
+        write_snapshot_csv_optional_display(output, &mut first, old.map(|entry| entry.size))?;
+        write_snapshot_csv_optional_display(output, &mut first, new.map(|entry| entry.size))?;
+        write_snapshot_csv_display(output, &mut first, size_delta)?;
+        write_snapshot_csv_optional_display(
+            output,
+            &mut first,
+            old.and_then(|entry| entry.modified_ns()),
+        )?;
+        write_snapshot_csv_optional_display(
+            output,
+            &mut first,
+            new.and_then(|entry| entry.modified_ns()),
+        )?;
+        for _ in 8..16 {
+            write_snapshot_csv_value(output, &mut first, "")?;
+        }
+        output.write_all(b"\n")
+    })();
+    result.map_err(|error| format!("could not write snapshot CSV: {error}"))
+}
+
+fn write_snapshot_json_optional_i128(
+    output: &mut impl Write,
+    value: Option<i128>,
+) -> io::Result<()> {
+    match value {
+        Some(value) => write!(output, "{value}"),
+        None => output.write_all(b"null"),
+    }
+}
+
+fn write_snapshot_json_event(
+    output: &mut impl Write,
+    change: &str,
+    relative: &str,
+    old: Option<SnapshotEntry>,
+    new: Option<SnapshotEntry>,
+) -> Result<(), String> {
+    let size_delta = match (old, new) {
+        (Some(old), Some(new)) => i128::from(new.size) - i128::from(old.size),
+        (None, Some(new)) => i128::from(new.size),
+        (Some(old), None) => -i128::from(old.size),
+        (None, None) => 0,
+    };
+    let result = (|| -> io::Result<()> {
+        write!(output, "{{\"type\":{change:?},\"asset_type\":")?;
+        write_json_string(output, classify(Path::new(relative)).as_str())?;
+        output.write_all(b",\"path\":")?;
+        write_json_string(output, relative)?;
+        output.write_all(b",\"old_size_bytes\":")?;
+        match old {
+            Some(old) => write!(output, "{}", old.size)?,
+            None => output.write_all(b"null")?,
+        }
+        output.write_all(b",\"new_size_bytes\":")?;
+        match new {
+            Some(new) => write!(output, "{}", new.size)?,
+            None => output.write_all(b"null")?,
+        }
+        write!(
+            output,
+            ",\"size_delta_bytes\":{size_delta},\"old_modified_unix_ns\":"
+        )?;
+        write_snapshot_json_optional_i128(output, old.and_then(|entry| entry.modified_ns()))?;
+        output.write_all(b",\"new_modified_unix_ns\":")?;
+        write_snapshot_json_optional_i128(output, new.and_then(|entry| entry.modified_ns()))?;
+        output.write_all(b"}\n")
+    })();
+    result.map_err(|error| format!("could not write snapshot JSON: {error}"))
 }
 
 fn run_snapshot(args: &[String]) -> Result<(), String> {
@@ -3852,17 +3944,11 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
                     }
                     Some(_) => continue,
                 };
-                write_snapshot_csv_row(
-                    &mut stdout,
-                    &snapshot_csv_event(change, relative, old, Some(*current)),
-                )?;
+                write_snapshot_csv_event(&mut stdout, change, relative, old, Some(*current))?;
             }
             for (relative, old) in &old_entries {
                 if !current_entries.contains_key(relative.as_str()) {
-                    write_snapshot_csv_row(
-                        &mut stdout,
-                        &snapshot_csv_event("removed", relative, Some(*old), None),
-                    )?;
+                    write_snapshot_csv_event(&mut stdout, "removed", relative, Some(*old), None)?;
                 }
             }
         }
@@ -3911,36 +3997,19 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
                     }
                     Some(_) => continue,
                 };
-                writeln!(
-                    output,
-                    "{{\"type\":{kind:?},\"asset_type\":{},\"path\":{},\"old_size_bytes\":{},\"new_size_bytes\":{},\"size_delta_bytes\":{},\"old_modified_unix_ns\":{},\"new_modified_unix_ns\":{}}}",
-                    json_string(classify(Path::new(relative)).as_str()),
-                    json_string(relative),
-                    old.map_or("null".to_owned(), |value| value.size.to_string()),
-                    current.size,
-                    old.map_or_else(
-                        || current.size.to_string(),
-                        |value| (i128::from(current.size) - i128::from(value.size)).to_string()
-                    ),
-                    read_json_timestamp(old.and_then(|value| value.modified_ns())),
-                    read_json_timestamp(current.modified_ns())
-                )
-                .map_err(|error| format!("could not write snapshot JSON: {error}"))?;
+                write_snapshot_json_event(
+                    &mut output,
+                    kind,
+                    relative,
+                    old.copied(),
+                    Some(*current),
+                )?;
             }
             for (relative, old) in &old_entries {
                 if current_entries.contains_key(relative.as_str()) {
                     continue;
                 }
-                writeln!(
-                    output,
-                    "{{\"type\":\"removed\",\"asset_type\":{},\"path\":{},\"old_size_bytes\":{},\"new_size_bytes\":null,\"size_delta_bytes\":{},\"old_modified_unix_ns\":{},\"new_modified_unix_ns\":null}}",
-                    json_string(classify(Path::new(relative)).as_str()),
-                    json_string(relative),
-                    old.size,
-                    -i128::from(old.size),
-                    read_json_timestamp(old.modified_ns())
-                )
-                .map_err(|error| format!("could not write snapshot JSON: {error}"))?;
+                write_snapshot_json_event(&mut output, "removed", relative, Some(*old), None)?;
             }
         }
         let type_summary = by_type
