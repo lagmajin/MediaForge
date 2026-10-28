@@ -5676,7 +5676,7 @@ fn fraction_ceil_scaled(fraction: &str, multiplier: u128) -> u128 {
 fn print_help() {
     println!(
         "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge doctor [--json] [--strict]\n  mediaforge scan-config <init|validate|show> [FILE] [--json]\n  mediaforge scan [PATH] [--json|--csv] [--compact] [--csv-info] [--show-filters] [--include-hidden] [--strict] [--no-same-size] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--modified-since UNIX_SECONDS] [--modified-until UNIX_SECONDS] [--modified-within DURATION] [--path-contains TEXT ...] [--exclude-path-contains TEXT ...] [--extension EXTENSIONS ...] [--largest N] [--sort path|size|modified] [--settings FILE]\n  mediaforge dupes [PATH] [--json] [--compact] [--summary] [--include-hidden] [--exclude-path-contains TEXT ...] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--top-groups N] [--jobs N]\n  mediaforge probe <FILE> [--compact] [--summary]\n  mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--type video|audio] [--min-size SIZE] [--max-size SIZE] [--jobs N] [--summary] [--compare] [--csv]\n  mediaforge storyboard <VIDEO> --output <IMAGE> [--interval SECONDS] [--columns N] [--rows N] [--width PIXELS]\n  mediaforge scene-detect-dir <PATH> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--summary] [--fps RATE] [--extension EXTENSIONS] [--include-hidden] [--jobs N]\n  mediaforge scene-detect <VIDEO> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--format jsonl|csv] [--fps RATE]\n  mediaforge proxy <VIDEO> --output <FILE.mp4> [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge proxy-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET] [--jobs N] [--skip-existing] [--json]\n  mediaforge proxy-config init [FILE] [--profile fast|balanced|quality] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge extract-audio <VIDEO> --output <FILE> [--format mp3|wav|flac] [--bitrate RATE] [--stream N]\n  mediaforge extract-audio-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--format mp3|wav|flac] [--bitrate RATE] [--stream N] [--jobs N] [--skip-existing] [--json]\n  mediaforge snapshot [PATH] (--output FILE [--overwrite] | --diff FILE [--update]) [--json|--csv] [--summary] [--include-hidden] [--include-generated] [--hash] [--jobs N] [--fail-on-change]\n  mediaforge project [PATH] [--json] [--no-cache-sizes] [--no-editor-files]\n  mediaforge unity-meta [PROJECT_PATH] [--json] [--summary] [--sidecars-only] [--include-hidden]\n  mediaforge gitignore [PATH] [--apply] [--json]\n  mediaforge organize [PATH] [--by type|extension|size] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--apply]\n  mediaforge rename [PATH] [--replace OLD NEW] [--prefix TEXT] [--suffix TEXT] [--extension-case keep|lower|upper] [--extension EXTENSIONS] [--include-hidden] [--json] [--apply]
-  mediaforge sequence [PATH] [--prefix NAME] [--start N] [--padding N] [--extension EXTENSIONS] [--include-hidden] [--natural] [--json] [--apply]\n  mediaforge undo [PATH] [--json]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--exclude-path-contains TEXT ...] [--include-hidden] [--include-generated] [--dry-run] [--json] [--list]\n  mediaforge --version\n  mediaforge --help"
+  mediaforge sequence [PATH] [--prefix NAME] [--start N] [--padding N] [--extension EXTENSIONS] [--include-hidden] [--natural] [--json] [--apply]\n  mediaforge undo [PATH] [--json]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--exclude-path-contains TEXT ...] [--include-hidden] [--include-generated] [--dry-run] [--json] [--compact] [--list]\n  mediaforge --version\n  mediaforge --help"
     );
 }
 
@@ -12752,6 +12752,7 @@ struct PackJsonOptions<'a> {
     input_bytes: u64,
     estimated_archive_bytes: u64,
     list_entries: bool,
+    compact: bool,
     entries: &'a [PackFileRecord],
     archive_bytes: Option<u64>,
 }
@@ -12770,11 +12771,13 @@ fn print_pack_json(options: PackJsonOptions<'_>) -> Result<(), String> {
         input_bytes,
         estimated_archive_bytes,
         list_entries,
+        compact,
         entries,
         archive_bytes,
     } = options;
     let stdout = io::stdout();
-    let mut writer = io::BufWriter::with_capacity(64 * 1024, stdout.lock());
+    let output_buffer = io::BufWriter::with_capacity(64 * 1024, stdout.lock());
+    let mut writer = JsonWhitespaceWriter::new(output_buffer, compact);
     let result = (|| -> io::Result<()> {
         writer.write_all(b"{\n  \"root\": ")?;
         write_json_string(&mut writer, &root.to_string_lossy())?;
@@ -12841,6 +12844,7 @@ fn run_pack(args: &[String]) -> Result<(), String> {
     let mut include_generated = false;
     let mut dry_run = false;
     let mut json = false;
+    let mut compact = false;
     let mut list_entries = false;
     let mut selected_types: Option<HashSet<Kind>> = None;
     let mut selected_extensions: Option<HashSet<String>> = None;
@@ -12860,6 +12864,7 @@ fn run_pack(args: &[String]) -> Result<(), String> {
             "--include-generated" => include_generated = true,
             "--dry-run" => dry_run = true,
             "--json" => json = true,
+            "--compact" => compact = true,
             "--list" => list_entries = true,
             "--type" => {
                 let value = iter
@@ -12896,7 +12901,7 @@ fn run_pack(args: &[String]) -> Result<(), String> {
             }
             "--help" | "-h" => {
                 println!(
-                    "Usage: mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--exclude-path-contains TEXT ...] [--include-hidden] [--include-generated] [--dry-run] [--json] [--list]\n\nCreate an uncompressed, stream-written tar archive. --type accepts comma-separated scan types: video, audio, image, model, texture, project, other. --extension accepts comma-separated extensions such as mov,mxf; use none for files without an extension. Matching Unity .meta sidecars are included with selected assets unless ignored, hidden, or explicitly excluded. --min-size and --max-size accept bytes or K/M/G/T binary units. Repeat --exclude-path-contains to omit matching relative paths; matching directory names prune their subtrees. Git-ignored and hidden files are skipped by default. Common Unity, Unreal, and Godot generated folders are excluded unless --include-generated is used. PAX extensions support long paths and files larger than 8 GiB. --json emits a machine-readable result summary; --list includes per-file paths, sizes, and types in text or JSON output."
+                    "Usage: mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--exclude-path-contains TEXT ...] [--include-hidden] [--include-generated] [--dry-run] [--json] [--compact] [--list]\n\nCreate an uncompressed, stream-written tar archive. --type accepts comma-separated scan types: video, audio, image, model, texture, project, other. --extension accepts comma-separated extensions such as mov,mxf; use none for files without an extension. Matching Unity .meta sidecars are included with selected assets unless ignored, hidden, or explicitly excluded. --min-size and --max-size accept bytes or K/M/G/T binary units. Repeat --exclude-path-contains to omit matching relative paths; matching directory names prune their subtrees. Git-ignored and hidden files are skipped by default. Common Unity, Unreal, and Godot generated folders are excluded unless --include-generated is used. PAX extensions support long paths and files larger than 8 GiB. --json emits a machine-readable result summary; --list includes per-file paths, sizes, and types in text or JSON output. --compact removes formatting whitespace from JSON output and requires --json."
                 );
                 return Ok(());
             }
@@ -12908,6 +12913,9 @@ fn run_pack(args: &[String]) -> Result<(), String> {
                 path = Some(PathBuf::from(value));
             }
         }
+    }
+    if compact && !json {
+        return Err("--compact can only be used with --json".to_owned());
     }
     let path = path.ok_or_else(|| "pack requires an input directory".to_owned())?;
     let output = output.ok_or_else(|| "pack requires --output <FILE.tar>".to_owned())?;
@@ -13198,6 +13206,7 @@ fn run_pack(args: &[String]) -> Result<(), String> {
                 input_bytes: total_bytes,
                 estimated_archive_bytes,
                 list_entries,
+                compact,
                 entries: &records,
                 archive_bytes: None,
             })?;
@@ -13281,6 +13290,7 @@ fn run_pack(args: &[String]) -> Result<(), String> {
             input_bytes: total_bytes,
             estimated_archive_bytes,
             list_entries,
+            compact,
             entries: &records,
             archive_bytes: Some(archive_size),
         })?;
