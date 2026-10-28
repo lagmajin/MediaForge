@@ -8798,6 +8798,8 @@ const ORGANIZE_MAGIC_V1: &[u8; 8] = b"MFORG001";
 const ORGANIZE_MANIFEST_TEMP: &str = ".mediaforge-undo.tmp";
 const ORGANIZE_COMPLETE_MARKER: &str = ".mediaforge-undo.complete";
 const TAR_BLOCK_SIZE: usize = 512;
+const TAR_ZERO_BLOCK: [u8; TAR_BLOCK_SIZE] = [0; TAR_BLOCK_SIZE];
+const TAR_END_MARKER: [u8; TAR_BLOCK_SIZE * 2] = [0; TAR_BLOCK_SIZE * 2];
 const TAR_OCTAL_MAX: u64 = 0o77777777777;
 
 #[derive(Clone, Debug)]
@@ -10539,7 +10541,7 @@ fn write_tar_payload(writer: &mut impl Write, contents: &[u8]) -> io::Result<()>
     writer.write_all(contents)?;
     let padding = (TAR_BLOCK_SIZE - contents.len() % TAR_BLOCK_SIZE) % TAR_BLOCK_SIZE;
     if padding > 0 {
-        writer.write_all(&[0_u8; TAR_BLOCK_SIZE][..padding])?;
+        writer.write_all(&TAR_ZERO_BLOCK[..padding])?;
     }
     Ok(())
 }
@@ -10673,7 +10675,7 @@ fn pack_file(
         (TAR_BLOCK_SIZE as u64 - record.size % TAR_BLOCK_SIZE as u64) % TAR_BLOCK_SIZE as u64;
     if padding > 0 {
         writer
-            .write_all(&[0_u8; TAR_BLOCK_SIZE][..padding as usize])
+            .write_all(&TAR_ZERO_BLOCK[..padding as usize])
             .map_err(|error| format!("could not pad tar member: {error}"))?;
     }
     Ok(())
@@ -11207,7 +11209,7 @@ fn run_pack(args: &[String]) -> Result<(), String> {
             pack_file(&mut archive, name, record, index + 1, &mut copy_buffer)?;
         }
         archive
-            .write_all(&[0_u8; TAR_BLOCK_SIZE * 2])
+            .write_all(&TAR_END_MARKER)
             .map_err(|error| format!("could not finish tar archive: {error}"))?;
         archive
             .flush()
