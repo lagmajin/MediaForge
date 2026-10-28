@@ -2101,6 +2101,12 @@ struct SceneSegment {
     end: f64,
 }
 
+#[derive(Clone, Copy)]
+struct VideoTiming {
+    duration: Option<f64>,
+    fps: f64,
+}
+
 fn scene_timecode(seconds: f64) -> String {
     let milliseconds = (seconds * 1000.0).round() as u64;
     let hours = milliseconds / 3_600_000;
@@ -2110,21 +2116,45 @@ fn scene_timecode(seconds: f64) -> String {
     format!("{hours:02}:{minutes:02}:{seconds:02}.{millis:03}")
 }
 
-fn probe_media_duration(path: &Path) -> Result<f64, String> {
+fn parse_frame_rate(value: &str) -> Option<f64> {
+    let (numerator, denominator) = if let Some((numerator, denominator)) = value.split_once('/') {
+        (
+            numerator.parse::<f64>().ok()?,
+            denominator.parse::<f64>().ok()?,
+        )
+    } else {
+        (value.parse::<f64>().ok()?, 1.0)
+    };
+    let rate = numerator / denominator;
+    (rate.is_finite() && rate > 0.0 && rate <= 1000.0).then_some(rate)
+}
+
+fn parse_requested_fps(value: &str) -> Result<f64, String> {
+    parse_frame_rate(value).ok_or_else(|| {
+        format!(
+            "invalid frame rate '{value}'; use a positive number or rational such as 30000/1001"
+        )
+    })
+}
+
+fn probe_video_timing(path: &Path) -> Result<VideoTiming, String> {
     let output = Command::new("ffprobe")
         .args([
             "-v",
             "error",
+            "-select_streams",
+            "v:0",
             "-show_entries",
-            "format=duration",
+            "stream=avg_frame_rate,r_frame_rate,duration:format=duration",
             "-of",
-            "default=noprint_wrappers=1:nokey=1",
+            "default=noprint_wrappers=1",
         ])
         .arg(path)
         .output()
         .map_err(|error| {
             if error.kind() == io::ErrorKind::NotFound {
-                "ffprobe was not found on PATH. Install FFmpeg to export scene segments.".to_owned()
+                "ffprobe was not found on PATH. Install FFmpeg to include video timing details."
+                    .to_owned()
             } else {
                 format!("could not start ffprobe: {error}")
             }
@@ -2137,14 +2167,31 @@ fn probe_media_duration(path: &Path) -> Result<f64, String> {
             format!("ffprobe failed: {detail}")
         });
     }
-    let duration = String::from_utf8_lossy(&output.stdout)
-        .trim()
-        .parse::<f64>()
-        .map_err(|_| "ffprobe did not return a valid media duration".to_owned())?;
-    if !duration.is_finite() || duration <= 0.0 {
-        return Err("ffprobe returned a non-positive or invalid media duration".to_owned());
+    let mut duration = None;
+    let mut average_rate = None;
+    let mut nominal_rate = None;
+    for line in String::from_utf8_lossy(&output.stdout).lines() {
+        if let Some((key, value)) = line.split_once('=') {
+            match key {
+                "duration" => {
+                    if let Some(value) = value
+                        .parse::<f64>()
+                        .ok()
+                        .filter(|value| value.is_finite() && *value > 0.0)
+                    {
+                        duration = Some(value);
+                    }
+                }
+                "avg_frame_rate" => average_rate = parse_frame_rate(value),
+                "r_frame_rate" => nominal_rate = parse_frame_rate(value),
+                _ => {}
+            }
+        }
     }
-    Ok(duration)
+    let fps = average_rate.or(nominal_rate).ok_or_else(|| {
+        "ffprobe did not return a valid frame rate for the first video stream".to_owned()
+    })?;
+    Ok(VideoTiming { duration, fps })
 }
 
 fn run_scene_detect(args: &[String]) -> Result<(), String> {
@@ -2152,6 +2199,7 @@ fn run_scene_detect(args: &[String]) -> Result<(), String> {
     let mut threshold = 0.4_f64;
     let mut min_gap = 1.0_f64;
     let mut segments = false;
+    let mut fps_override = None;
     let mut output_format = "jsonl";
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
@@ -2186,10 +2234,16 @@ fn run_scene_detect(args: &[String]) -> Result<(), String> {
                     return Err("--format must be 'jsonl' or 'csv'".to_owned());
                 }
             }
+            "--fps" => {
+                let value = iter
+                    .next()
+                    .ok_or_else(|| "--fps requires a rate such as 30 or 30000/1001".to_owned())?;
+                fps_override = Some(parse_requested_fps(value)?);
+            }
             "--segments" => segments = true,
             "--help" | "-h" => {
                 println!(
-                    "Usage: mediaforge scene-detect <VIDEO> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--format jsonl|csv]\n\nFind likely cuts with FFmpeg's scene score. Defaults: threshold 0.4 and at least 1 second between results. JSON Lines is the default; CSV writes a header and one row per cut. --segments turns cut points into contiguous start/end intervals spanning the video."
+                    "Usage: mediaforge scene-detect <VIDEO> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--format jsonl|csv] [--fps RATE]\n\nFind likely cuts with FFmpeg's scene score. Defaults: threshold 0.4 and at least 1 second between results. JSON Lines is the default; CSV writes a header and one row per cut. --segments turns cut points into contiguous start/end intervals spanning the video. Frame numbers use the probed average rate; --fps overrides it (for example 30000/1001)."
                 );
                 return Ok(());
             }
@@ -2211,8 +2265,13 @@ fn run_scene_detect(args: &[String]) -> Result<(), String> {
     {
         return Err(format!("expected a video file: {}", input.display()));
     }
+    let timing = probe_video_timing(&input)?;
+    let fps = fps_override.unwrap_or(timing.fps);
+    let nominal_fps = fps.round().max(1.0) as u32;
     let duration = if segments {
-        Some(probe_media_duration(&input)?)
+        Some(timing.duration.ok_or_else(|| {
+            "ffprobe did not return a valid video duration required by --segments".to_owned()
+        })?)
     } else {
         None
     };
@@ -2304,47 +2363,54 @@ fn run_scene_detect(args: &[String]) -> Result<(), String> {
         }
         if output_format == "csv" {
             println!(
-                "path,segment,start_timecode,start_seconds,end_timecode,end_seconds,duration_seconds"
+                "path,segment,start_timecode,start_seconds,start_frame,end_timecode,end_seconds,end_frame,duration_seconds,fps"
             );
             for interval in &intervals {
                 println!(
-                    "{},{},{},{:.6},{},{:.6},{:.6}",
+                    "{},{},{},{:.6},{},{},{:.6},{},{:.6},{:.6}",
                     csv_field(&input.to_string_lossy()),
                     interval.index,
                     csv_field(&scene_timecode(interval.start)),
                     interval.start,
+                    (interval.start * fps).round() as u64,
                     csv_field(&scene_timecode(interval.end)),
                     interval.end,
-                    interval.end - interval.start
+                    (interval.end * fps).round() as u64,
+                    interval.end - interval.start,
+                    fps
                 );
             }
         } else {
             let source = json_string(&input.to_string_lossy());
             for interval in &intervals {
                 println!(
-                    "{{\"type\":\"segment\",\"path\":{source},\"segment\":{},\"start_timecode\":{},\"start_seconds\":{:.6},\"end_timecode\":{},\"end_seconds\":{:.6},\"duration_seconds\":{:.6}}}",
+                    "{{\"type\":\"segment\",\"path\":{source},\"segment\":{},\"start_timecode\":{},\"start_seconds\":{:.6},\"start_frame\":{},\"end_timecode\":{},\"end_seconds\":{:.6},\"end_frame\":{},\"duration_seconds\":{:.6},\"fps\":{fps:.6},\"nominal_fps\":{nominal_fps}}}",
                     interval.index,
                     json_string(&scene_timecode(interval.start)),
                     interval.start,
+                    (interval.start * fps).round() as u64,
                     json_string(&scene_timecode(interval.end)),
                     interval.end,
+                    (interval.end * fps).round() as u64,
                     interval.end - interval.start
                 );
             }
             println!(
-                "{{\"type\":\"summary\",\"path\":{source},\"segments\":{},\"scene_cuts\":{},\"duration_seconds\":{duration:.6},\"threshold\":{threshold:.6},\"min_gap_seconds\":{min_gap:.6}}}",
+                "{{\"type\":\"summary\",\"path\":{source},\"segments\":{},\"scene_cuts\":{},\"duration_seconds\":{duration:.6},\"fps\":{fps:.6},\"nominal_fps\":{nominal_fps},\"threshold\":{threshold:.6},\"min_gap_seconds\":{min_gap:.6}}}",
                 intervals.len(),
                 cuts.len()
             );
         }
     } else if output_format == "csv" {
-        println!("path,timecode,time_seconds,score");
+        println!("path,timecode,time_seconds,frame,fps,score");
         for cut in &cuts {
             println!(
-                "{},{},{:.6},{:.6}",
+                "{},{},{:.6},{},{:.6},{:.6}",
                 csv_field(&input.to_string_lossy()),
                 csv_field(&scene_timecode(cut.seconds)),
                 cut.seconds,
+                (cut.seconds * fps).round() as u64,
+                fps,
                 cut.score
             );
         }
@@ -2352,14 +2418,15 @@ fn run_scene_detect(args: &[String]) -> Result<(), String> {
         let source = json_string(&input.to_string_lossy());
         for cut in &cuts {
             println!(
-                "{{\"type\":\"scene\",\"path\":{source},\"timecode\":{},\"time_seconds\":{:.6},\"score\":{:.6}}}",
+                "{{\"type\":\"scene\",\"path\":{source},\"timecode\":{},\"time_seconds\":{:.6},\"frame\":{},\"fps\":{fps:.6},\"nominal_fps\":{nominal_fps},\"score\":{:.6}}}",
                 json_string(&scene_timecode(cut.seconds)),
                 cut.seconds,
+                (cut.seconds * fps).round() as u64,
                 cut.score
             );
         }
         println!(
-            "{{\"type\":\"summary\",\"path\":{source},\"cuts\":{},\"threshold\":{threshold:.6},\"min_gap_seconds\":{min_gap:.6}}}",
+            "{{\"type\":\"summary\",\"path\":{source},\"cuts\":{},\"fps\":{fps:.6},\"nominal_fps\":{nominal_fps},\"threshold\":{threshold:.6},\"min_gap_seconds\":{min_gap:.6}}}",
             cuts.len()
         );
     }
