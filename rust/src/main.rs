@@ -1,6 +1,7 @@
 use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::env;
+use std::fmt::Write as FmtWrite;
 use std::fs::{self, File, OpenOptions};
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::io::{self, BufRead, BufReader, BufWriter, Cursor, Read, Seek, Write};
@@ -1379,7 +1380,7 @@ fn fraction_ceil_scaled(fraction: &str, multiplier: u128) -> u128 {
 
 fn print_help() {
     println!(
-        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json|--csv] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS] [--largest N]\n  mediaforge dupes [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--top-groups N]\n  mediaforge probe <FILE> [--compact] [--summary]\n  mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--type video|audio] [--min-size SIZE] [--max-size SIZE] [--jobs N] [--summary]\n  mediaforge storyboard <VIDEO> --output <IMAGE> [--interval SECONDS] [--columns N] [--rows N] [--width PIXELS]\n  mediaforge proxy <VIDEO> --output <FILE.mp4> [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge proxy-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET] [--jobs N] [--skip-existing] [--json]\n  mediaforge proxy-config init [FILE] [--profile fast|balanced|quality] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge extract-audio <VIDEO> --output <FILE> [--format mp3|wav|flac] [--bitrate RATE] [--stream N]\n  mediaforge extract-audio-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--format mp3|wav|flac] [--bitrate RATE] [--stream N] [--jobs N] [--skip-existing] [--json]\n  mediaforge project [PATH] [--json]\n  mediaforge gitignore [PATH] [--apply]\n  mediaforge organize [PATH] [--by type|extension] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--apply]\n  mediaforge sequence [PATH] [--prefix NAME] [--start N] [--padding N] [--extension EXTENSIONS] [--include-hidden] [--natural] [--json] [--apply]\n  mediaforge undo [PATH] [--json]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--include-hidden] [--include-generated] [--dry-run] [--json] [--list]\n  mediaforge --version\n  mediaforge --help"
+        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json|--csv] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS] [--largest N]\n  mediaforge dupes [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--top-groups N]\n  mediaforge probe <FILE> [--compact] [--summary]\n  mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--type video|audio] [--min-size SIZE] [--max-size SIZE] [--jobs N] [--summary] [--compare]\n  mediaforge storyboard <VIDEO> --output <IMAGE> [--interval SECONDS] [--columns N] [--rows N] [--width PIXELS]\n  mediaforge proxy <VIDEO> --output <FILE.mp4> [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge proxy-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET] [--jobs N] [--skip-existing] [--json]\n  mediaforge proxy-config init [FILE] [--profile fast|balanced|quality] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge extract-audio <VIDEO> --output <FILE> [--format mp3|wav|flac] [--bitrate RATE] [--stream N]\n  mediaforge extract-audio-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--format mp3|wav|flac] [--bitrate RATE] [--stream N] [--jobs N] [--skip-existing] [--json]\n  mediaforge project [PATH] [--json]\n  mediaforge gitignore [PATH] [--apply]\n  mediaforge organize [PATH] [--by type|extension] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--apply]\n  mediaforge sequence [PATH] [--prefix NAME] [--start N] [--padding N] [--extension EXTENSIONS] [--include-hidden] [--natural] [--json] [--apply]\n  mediaforge undo [PATH] [--json]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--include-hidden] [--include-generated] [--dry-run] [--json] [--list]\n  mediaforge --version\n  mediaforge --help"
     );
 }
 
@@ -1473,10 +1474,237 @@ fn ffprobe_json(
     Ok(json)
 }
 
+fn skip_json_whitespace(bytes: &[u8], index: &mut usize) {
+    while bytes.get(*index).is_some_and(u8::is_ascii_whitespace) {
+        *index += 1;
+    }
+}
+
+fn json_string_end(bytes: &[u8], start: usize) -> Result<usize, String> {
+    if bytes.get(start) != Some(&b'"') {
+        return Err("invalid JSON string in ffprobe output".to_owned());
+    }
+    let mut index = start + 1;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'\\' => index = (index + 2).min(bytes.len()),
+            b'"' => return Ok(index + 1),
+            _ => index += 1,
+        }
+    }
+    Err("unterminated JSON string in ffprobe output".to_owned())
+}
+
+fn collect_json_scalars(
+    bytes: &[u8],
+    index: &mut usize,
+    prefix: &str,
+    fields: &mut BTreeMap<String, String>,
+    depth: usize,
+) -> Result<(), String> {
+    if depth > 64 {
+        return Err("ffprobe JSON nesting is too deep".to_owned());
+    }
+    skip_json_whitespace(bytes, index);
+    match bytes.get(*index).copied() {
+        Some(b'{') => {
+            *index += 1;
+            loop {
+                skip_json_whitespace(bytes, index);
+                if bytes.get(*index) == Some(&b'}') {
+                    *index += 1;
+                    return Ok(());
+                }
+                let key_start = *index;
+                let key_end = json_string_end(bytes, key_start)?;
+                let key = std::str::from_utf8(&bytes[key_start + 1..key_end - 1])
+                    .map_err(|error| format!("invalid JSON key in ffprobe output: {error}"))?;
+                if key.contains('\\') {
+                    return Err("unexpected escaped JSON key in ffprobe output".to_owned());
+                }
+                *index = key_end;
+                skip_json_whitespace(bytes, index);
+                if bytes.get(*index) != Some(&b':') {
+                    return Err("invalid JSON object in ffprobe output".to_owned());
+                }
+                *index += 1;
+                let field = if prefix.is_empty() {
+                    key.to_owned()
+                } else {
+                    format!("{prefix}.{key}")
+                };
+                collect_json_scalars(bytes, index, &field, fields, depth + 1)?;
+                skip_json_whitespace(bytes, index);
+                match bytes.get(*index) {
+                    Some(b',') => *index += 1,
+                    Some(b'}') => {
+                        *index += 1;
+                        return Ok(());
+                    }
+                    _ => return Err("invalid JSON object separator in ffprobe output".to_owned()),
+                }
+            }
+        }
+        Some(b'[') => {
+            *index += 1;
+            let mut element = 0_usize;
+            loop {
+                skip_json_whitespace(bytes, index);
+                if bytes.get(*index) == Some(&b']') {
+                    *index += 1;
+                    return Ok(());
+                }
+                let field = format!("{prefix}[{element}]");
+                collect_json_scalars(bytes, index, &field, fields, depth + 1)?;
+                element += 1;
+                skip_json_whitespace(bytes, index);
+                match bytes.get(*index) {
+                    Some(b',') => *index += 1,
+                    Some(b']') => {
+                        *index += 1;
+                        return Ok(());
+                    }
+                    _ => return Err("invalid JSON array separator in ffprobe output".to_owned()),
+                }
+            }
+        }
+        Some(b'"') => {
+            let start = *index;
+            *index = json_string_end(bytes, start)?;
+            if !prefix.is_empty() {
+                fields.insert(
+                    prefix.to_owned(),
+                    String::from_utf8_lossy(&bytes[start..*index]).into_owned(),
+                );
+            }
+            Ok(())
+        }
+        Some(_) => {
+            let start = *index;
+            while bytes.get(*index).is_some_and(|byte| {
+                !byte.is_ascii_whitespace() && !matches!(byte, b',' | b']' | b'}')
+            }) {
+                *index += 1;
+            }
+            if start == *index {
+                return Err("invalid JSON scalar in ffprobe output".to_owned());
+            }
+            if !prefix.is_empty() {
+                fields.insert(
+                    prefix.to_owned(),
+                    String::from_utf8_lossy(&bytes[start..*index]).into_owned(),
+                );
+            }
+            Ok(())
+        }
+        None => Err("truncated ffprobe JSON output".to_owned()),
+    }
+}
+
+fn summarize_probe_differences(
+    records: &[FileRecord],
+    results: &[(usize, bool, String, Option<String>)],
+) -> Result<(), String> {
+    const COMPARE_FIELDS: &[&str] = &[
+        "format.format_name",
+        "streams[0].codec_type",
+        "streams[0].codec_name",
+        "streams[0].codec_tag_string",
+        "streams[0].profile",
+        "streams[0].width",
+        "streams[0].height",
+        "streams[0].pix_fmt",
+        "streams[0].sample_aspect_ratio",
+        "streams[0].display_aspect_ratio",
+        "streams[0].avg_frame_rate",
+        "streams[0].r_frame_rate",
+        "streams[0].sample_rate",
+        "streams[0].channels",
+        "streams[0].channel_layout",
+    ];
+    let mut values = BTreeMap::<String, BTreeMap<String, Vec<String>>>::new();
+    let mut failures = Vec::new();
+    let mut successful = 0_usize;
+    for (index, success, json_line, probe) in results {
+        if !success {
+            failures.push((*index, json_line.as_str()));
+            continue;
+        }
+        successful += 1;
+        let probe = probe
+            .as_ref()
+            .ok_or_else(|| "missing successful ffprobe result".to_owned())?;
+        let mut fields = BTreeMap::new();
+        let mut cursor = 0;
+        collect_json_scalars(probe.as_bytes(), &mut cursor, "", &mut fields, 0)?;
+        for field in COMPARE_FIELDS {
+            let value = fields
+                .get(*field)
+                .cloned()
+                .unwrap_or_else(|| "null".to_owned());
+            values
+                .entry((*field).to_owned())
+                .or_default()
+                .entry(value)
+                .or_default()
+                .push(records[*index].relative.clone());
+        }
+    }
+    let varying: Vec<_> = values
+        .into_iter()
+        .filter(|(_, values)| values.len() > 1)
+        .collect();
+    let mut output = String::new();
+    write!(
+        output,
+        "{{\"files\":{},\"successful\":{successful},\"varying_fields\":[",
+        records.len()
+    )
+    .map_err(|error| format!("could not format comparison: {error}"))?;
+    for (field_index, (field, groups)) in varying.iter().enumerate() {
+        if field_index > 0 {
+            output.push(',');
+        }
+        write!(output, "{{\"field\":{},\"values\":[", json_string(field))
+            .map_err(|error| format!("could not format comparison: {error}"))?;
+        for (value_index, (value, paths)) in groups.iter().enumerate() {
+            if value_index > 0 {
+                output.push(',');
+            }
+            write!(output, "{{\"value\":{value},\"files\":[")
+                .map_err(|error| format!("could not format comparison: {error}"))?;
+            for (path_index, path) in paths.iter().enumerate() {
+                if path_index > 0 {
+                    output.push(',');
+                }
+                output.push_str(&json_string(path));
+            }
+            output.push_str("]}");
+        }
+        output.push_str("]}");
+    }
+    output.push_str("],\"failures\":[");
+    for (failure_index, (index, result)) in failures.iter().enumerate() {
+        if failure_index > 0 {
+            output.push(',');
+        }
+        write!(
+            output,
+            "{{\"path\":{},\"result\":{result}}}",
+            json_string(&records[*index].relative)
+        )
+        .map_err(|error| format!("could not format comparison: {error}"))?;
+    }
+    output.push_str("]}");
+    println!("{output}");
+    Ok(())
+}
+
 fn run_probe_dir(args: &[String]) -> Result<(), String> {
     const MAX_PROBE_JOBS: usize = 32;
     let mut include_hidden = false;
     let mut summary = false;
+    let mut compare = false;
     let mut selected_kind = None;
     let mut extensions = None;
     let mut min_size = 0_u64;
@@ -1491,6 +1719,10 @@ fn run_probe_dir(args: &[String]) -> Result<(), String> {
         match arg.as_str() {
             "--include-hidden" => include_hidden = true,
             "--summary" => summary = true,
+            "--compare" => {
+                compare = true;
+                summary = true;
+            }
             "--type" => {
                 let value = iter
                     .next()
@@ -1537,7 +1769,7 @@ fn run_probe_dir(args: &[String]) -> Result<(), String> {
             }
             "--help" | "-h" => {
                 println!(
-                    "Usage: mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--type video|audio] [--min-size SIZE] [--max-size SIZE] [--jobs N] [--summary]\n\nProbe video and audio assets in a directory with ffprobe. Emits one JSON Lines record per file. --type filters to video or audio assets and selects only that stream type in the report. --min-size and --max-size filter file sizes before probing and accept bytes or K/M/G/T units. --jobs controls concurrent ffprobe processes (1–32). --summary selects compact fields for size, duration, bitrate, codecs, dimensions, pixel/aspect formats, frame rates, and audio layout."
+                    "Usage: mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--type video|audio] [--min-size SIZE] [--max-size SIZE] [--jobs N] [--summary] [--compare]\n\nProbe video and audio assets in a directory with ffprobe. Emits one JSON Lines record per file. --type filters to video or audio assets and selects only that stream type in the report. --min-size and --max-size filter file sizes before probing and accept bytes or K/M/G/T units. --jobs controls concurrent ffprobe processes (1–32). --summary selects compact fields. --compare implies --summary and emits only first-stream media-spec fields that differ across files, grouped by value. Use --type to compare video or audio streams consistently."
                 );
                 return Ok(());
             }
@@ -1580,11 +1812,16 @@ fn run_probe_dir(args: &[String]) -> Result<(), String> {
         .retain(|record| record.size >= min_size && max_size.is_none_or(|max| record.size <= max));
     records.sort_by(|left, right| left.relative.cmp(&right.relative));
     if records.is_empty() {
+        if compare {
+            println!("{{\"files\":0,\"successful\":0,\"varying_fields\":[],\"failures\":[]}}");
+        }
         return Ok(());
     }
 
     let next = std::sync::atomic::AtomicUsize::new(0);
-    let results = std::sync::Mutex::new(Vec::<(usize, bool, String)>::with_capacity(records.len()));
+    let results = std::sync::Mutex::new(
+        Vec::<(usize, bool, String, Option<String>)>::with_capacity(records.len()),
+    );
     let worker_count = jobs.min(records.len());
     std::thread::scope(|scope| {
         for _ in 0..worker_count {
@@ -1600,7 +1837,7 @@ fn run_probe_dir(args: &[String]) -> Result<(), String> {
                         _ => unreachable!(),
                     });
                     let result = ffprobe_json(&record.path, false, summary, selector);
-                    let (success, json) = match result {
+                    let (success, json, probe) = match result {
                         Ok(probe) => (
                             true,
                             format!(
@@ -1608,6 +1845,7 @@ fn run_probe_dir(args: &[String]) -> Result<(), String> {
                                 json_string(&record.relative),
                                 probe.trim()
                             ),
+                            Some(probe),
                         ),
                         Err(error) => (
                             false,
@@ -1616,12 +1854,13 @@ fn run_probe_dir(args: &[String]) -> Result<(), String> {
                                 json_string(&record.relative),
                                 json_string(&error)
                             ),
+                            None,
                         ),
                     };
                     results
                         .lock()
                         .expect("probe result mutex poisoned")
-                        .push((index, success, json));
+                        .push((index, success, json, probe));
                 }
             });
         }
@@ -1629,13 +1868,17 @@ fn run_probe_dir(args: &[String]) -> Result<(), String> {
     let mut results = results
         .into_inner()
         .map_err(|_| "probe results could not be collected".to_owned())?;
-    results.sort_by_key(|(index, _, _)| *index);
-    let failures = results.iter().filter(|(_, success, _)| !success).count();
-    let stdout = io::stdout();
-    let mut stdout = stdout.lock();
-    for (_, _, record) in results {
-        writeln!(stdout, "{record}")
-            .map_err(|error| format!("could not write probe results: {error}"))?;
+    results.sort_by_key(|(index, _, _, _)| *index);
+    let failures = results.iter().filter(|(_, success, _, _)| !success).count();
+    if compare {
+        summarize_probe_differences(&records, &results)?;
+    } else {
+        let stdout = io::stdout();
+        let mut stdout = stdout.lock();
+        for (_, _, record, _) in &results {
+            writeln!(stdout, "{record}")
+                .map_err(|error| format!("could not write probe results: {error}"))?;
+        }
     }
     if failures > 0 {
         return Err(format!("ffprobe failed for {failures} file(s)"));
