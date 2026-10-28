@@ -1200,6 +1200,8 @@ fn print_json(
     let mut extensions: BTreeMap<&str, usize> = BTreeMap::new();
     let mut extension_bytes: BTreeMap<&str, u128> = BTreeMap::new();
     let mut by_size: HashMap<u64, usize> = HashMap::new();
+    let mut seen_sizes = HashSet::new();
+    let mut duplicate_sizes = HashSet::new();
     let total_bytes: u128 = records.iter().map(|record| u128::from(record.size)).sum();
     for record in records {
         let entry = by_type.entry(record.kind.as_str()).or_default();
@@ -1207,15 +1209,29 @@ fn print_json(
         entry.1 += u128::from(record.size);
         *extensions.entry(&record.extension).or_default() += 1;
         *extension_bytes.entry(&record.extension).or_default() += u128::from(record.size);
-        *by_size.entry(record.size).or_default() += 1;
+        if include_same_size {
+            *by_size.entry(record.size).or_default() += 1;
+        } else if !seen_sizes.insert(record.size) {
+            duplicate_sizes.insert(record.size);
+        }
     }
     let largest = largest_records(records, largest_limit);
-    let mut groups: Vec<_> = by_size
-        .into_iter()
-        .filter(|(_, count)| *count > 1)
-        .map(|(size, count)| (size, count, Vec::<&str>::new()))
-        .collect();
-    groups.sort_by_key(|(size, _, _)| *size);
+    let candidate_group_count = if include_same_size {
+        by_size.values().filter(|count| **count > 1).count()
+    } else {
+        duplicate_sizes.len()
+    };
+    let mut groups = if include_same_size {
+        let mut groups = by_size
+            .into_iter()
+            .filter(|(_, count)| *count > 1)
+            .map(|(size, count)| (size, count, Vec::<&str>::new()))
+            .collect::<Vec<_>>();
+        groups.sort_by_key(|(size, _, _)| *size);
+        groups
+    } else {
+        Vec::new()
+    };
     if include_same_size {
         for record in records {
             if let Ok(index) = groups.binary_search_by_key(&record.size, |(size, _, _)| *size) {
@@ -1338,7 +1354,7 @@ fn print_json(
     } else {
         println!("  ],\n  \"same_size_candidates\": null,");
     }
-    println!("  \"same_size_candidate_groups\": {},", groups.len());
+    println!("  \"same_size_candidate_groups\": {candidate_group_count},");
     println!(
         "  \"note\": \"Same-size groups are candidates only; byte-for-byte duplicates are not verified.\"\n}}"
     );
