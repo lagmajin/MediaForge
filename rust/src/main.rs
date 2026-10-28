@@ -157,20 +157,15 @@ fn human_size_wide(size: u128) -> String {
 }
 
 fn is_dot_hidden(path: &Path) -> bool {
-    if path
-        .file_name()
+    path.file_name()
         .is_some_and(|name| name.to_string_lossy().starts_with('.'))
-    {
-        return true;
-    }
-    false
 }
 
 fn metadata_has_hidden_attribute(metadata: &fs::Metadata) -> bool {
     #[cfg(windows)]
     {
         use std::os::windows::fs::MetadataExt;
-        return metadata.file_attributes() & 0x2 != 0;
+        metadata.file_attributes() & 0x2 != 0
     }
     #[cfg(not(windows))]
     {
@@ -185,8 +180,7 @@ fn is_hidden(path: &Path) -> bool {
     }
     #[cfg(windows)]
     {
-        return fs::symlink_metadata(path)
-            .is_ok_and(|metadata| metadata_has_hidden_attribute(&metadata));
+        fs::symlink_metadata(path).is_ok_and(|metadata| metadata_has_hidden_attribute(&metadata))
     }
     #[cfg(not(windows))]
     {
@@ -1730,21 +1724,21 @@ fn parse_scan_settings(contents: &str, path: &Path) -> Result<Vec<String>, Strin
             }
         }
     }
-    if let (Some((min, _)), Some((max, line))) = (min_size, max_size) {
-        if max < min {
-            return Err(format!(
-                "invalid scan settings at {}:{line}: max_size must be greater than or equal to min_size",
-                path.display()
-            ));
-        }
+    if let (Some((min, _)), Some((max, line))) = (min_size, max_size)
+        && max < min
+    {
+        return Err(format!(
+            "invalid scan settings at {}:{line}: max_size must be greater than or equal to min_size",
+            path.display()
+        ));
     }
-    if let (Some((since, _)), Some((until, line))) = (modified_since, modified_until) {
-        if until < since {
-            return Err(format!(
-                "invalid scan settings at {}:{line}: modified_until must be greater than or equal to modified_since",
-                path.display()
-            ));
-        }
+    if let (Some((since, _)), Some((until, line))) = (modified_since, modified_until)
+        && until < since
+    {
+        return Err(format!(
+            "invalid scan settings at {}:{line}: modified_until must be greater than or equal to modified_since",
+            path.display()
+        ));
     }
     if modified_within && (modified_since.is_some() || modified_until.is_some()) {
         return Err(format!(
@@ -6280,13 +6274,11 @@ fn run_proxy_dir(args: &[String]) -> Result<(), String> {
                 } else {
                     skipped += 1;
                 }
-                if !json {
-                    if let Some(output) = &plans[index].0 {
-                        if created {
-                            println!("Created proxy {}", output.display());
-                        } else {
-                            println!("Skipped existing proxy {}", output.display());
-                        }
+                if !json && let Some(output) = &plans[index].0 {
+                    if created {
+                        println!("Created proxy {}", output.display());
+                    } else {
+                        println!("Skipped existing proxy {}", output.display());
                     }
                 }
             }
@@ -6794,13 +6786,11 @@ fn run_extract_audio_dir(args: &[String]) -> Result<(), String> {
                 } else {
                     skipped += 1;
                 }
-                if !json {
-                    if let Some(output) = &plans[index].0 {
-                        if created {
-                            println!("Created audio {}", output.display());
-                        } else {
-                            println!("Skipped existing audio {}", output.display());
-                        }
+                if !json && let Some(output) = &plans[index].0 {
+                    if created {
+                        println!("Created audio {}", output.display());
+                    } else {
+                        println!("Skipped existing audio {}", output.display());
                     }
                 }
             }
@@ -7084,12 +7074,11 @@ fn godot_project_features(contents: &str) -> Vec<String> {
             section = &line[1..line.len() - 1];
             continue;
         }
-        if section == "application" {
-            if let Some((key, value)) = line.split_once('=') {
-                if key.trim() == "config/features" {
-                    return parse_godot_string_array(value.trim());
-                }
-            }
+        if section == "application"
+            && let Some((key, value)) = line.split_once('=')
+            && key.trim() == "config/features"
+        {
+            return parse_godot_string_array(value.trim());
         }
     }
     Vec::new()
@@ -8168,12 +8157,12 @@ fn read_organize_manifest(root: &Path) -> Result<(Vec<PlannedMove>, bool), Strin
             return Err(format!("cannot inspect temporary undo manifest: {error}"));
         }
     };
-    let metadata = fs::symlink_metadata(&path)
+    let metadata = fs::symlink_metadata(path)
         .map_err(|error| format!("no organize undo manifest found: {error}"))?;
     if metadata.file_type().is_symlink() || !metadata.is_file() {
         return Err("undo manifest is not a regular file".to_owned());
     }
-    let bytes = fs::read(&path).map_err(|error| format!("cannot read undo manifest: {error}"))?;
+    let bytes = fs::read(path).map_err(|error| format!("cannot read undo manifest: {error}"))?;
     let mut cursor = Cursor::new(bytes.as_slice());
     let mut magic = [0; 8];
     cursor
@@ -8659,13 +8648,11 @@ fn run_organize(args: &[String]) -> Result<(), String> {
         }
     }
     if !apply {
-        if !moves.is_empty() {
-            if !json {
-                println!(
-                    "\nPreview only. Re-run with --apply to move files; then use 'mediaforge undo {}' to restore them.",
-                    root.display()
-                );
-            }
+        if !moves.is_empty() && !json {
+            println!(
+                "\nPreview only. Re-run with --apply to move files; then use 'mediaforge undo {}' to restore them.",
+                root.display()
+            );
         }
         return Ok(());
     }
@@ -9957,7 +9944,7 @@ fn validate_archive_component(component: &str) -> Result<(), String> {
         .split('.')
         .next()
         .unwrap_or(component)
-        .trim_end_matches(|character| character == ' ' || character == '.')
+        .trim_end_matches([' ', '.'])
         .to_ascii_uppercase();
     let reserved = matches!(device_name.as_str(), "CON" | "PRN" | "AUX" | "NUL")
         || ["COM", "LPT"].iter().any(|prefix| {
