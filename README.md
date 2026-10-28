@@ -104,7 +104,7 @@ mediaforge organize ./Media --by type --apply
 mediaforge undo ./Media
 ```
 
-Organization is a preview unless `--apply` is supplied. Add `--json` to emit the full move plan, `move_count`, and `skipped_count` as machine-readable JSON for scripts. Moves preserve paths below the new type/extension folder, skip destination collisions, and refuse symlink paths. Before moving anything, MediaForge writes a `.mediaforge-undo` recovery manifest with portable `/` separators. `undo` restores files only when the original location is clear; it retains the manifest if a conflict needs manual handling. Older manifests are still readable; ambiguous old records are handled conservatively and may need manual conflict resolution. It never deletes source files.
+Organization is a preview unless `--apply` is supplied. Add `--json` to emit one machine-readable JSON object with the full move plan and counts; with `--apply`, the object reports the completed move count and undo manifest path. Moves preserve paths below the new type/extension folder, skip destination collisions, and refuse symlink paths. Before moving anything, MediaForge writes a `.mediaforge-undo` recovery manifest with portable `/` separators. `undo` restores files only when the original location is clear; it retains the manifest if a conflict needs manual handling. Older manifests are still readable; ambiguous old records are handled conservatively and may need manual conflict resolution. It never deletes source files.
 
 ## Pack a project for handoff
 

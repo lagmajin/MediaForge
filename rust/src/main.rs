@@ -2649,7 +2649,7 @@ fn run_organize(args: &[String]) -> Result<(), String> {
         });
     }
 
-    if json {
+    if json && !apply {
         println!(
             "{{\n  \"root\": {},\n  \"by\": {},\n  \"applied\": {},\n  \"moves\": [",
             json_string(&root.to_string_lossy()),
@@ -2670,7 +2670,7 @@ fn run_organize(args: &[String]) -> Result<(), String> {
             moves.len(),
             skipped
         );
-    } else {
+    } else if !json {
         println!(
             "Organize preview by {by}: {} file(s) to move; {skipped} skipped",
             moves.len()
@@ -2694,7 +2694,15 @@ fn run_organize(args: &[String]) -> Result<(), String> {
         return Ok(());
     }
     if moves.is_empty() {
-        if !json {
+        if json {
+            println!(
+                "{{\"root\": {}, \"by\": {}, \"applied\": {}, \"moves\": [], \"move_count\": 0, \"moved_count\": 0, \"skipped_count\": {}, \"result\": \"no_changes\"}}",
+                json_string(&root.to_string_lossy()),
+                json_string(by),
+                if apply { "true" } else { "false" },
+                skipped
+            );
+        } else {
             println!("No files need moving.");
         }
         return Ok(());
@@ -2742,8 +2750,24 @@ fn run_organize(args: &[String]) -> Result<(), String> {
     }
     if json {
         println!(
-            "{{\"result\": \"applied\", \"moved_count\": {}, \"undo_manifest\": {}}}",
+            "{{\n  \"root\": {},\n  \"by\": {},\n  \"applied\": true,\n  \"moves\": [",
+            json_string(&root.to_string_lossy()),
+            json_string(by)
+        );
+        for (index, movement) in moves.iter().enumerate() {
+            let comma = if index + 1 == moves.len() { "" } else { "," };
+            println!(
+                "    {{\"from\": {}, \"to\": {}}}{}",
+                json_string(&movement.from),
+                json_string(&movement.to),
+                comma
+            );
+        }
+        println!(
+            "  ],\n  \"move_count\": {},\n  \"moved_count\": {},\n  \"skipped_count\": {},\n  \"result\": \"applied\",\n  \"undo_manifest\": {}\n}}",
+            moves.len(),
             moved,
+            skipped,
             json_string(&root.join(ORGANIZE_MANIFEST).to_string_lossy())
         );
     } else {
