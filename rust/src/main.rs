@@ -2388,7 +2388,10 @@ fn run_dupes(args: &[String]) -> Result<(), String> {
                 match files_identical(&representative, &candidate) {
                     Ok(true) => {
                         group.count += 1;
-                        if let Some(files) = &mut group.files {
+                        if retain_group_paths {
+                            let files = group
+                                .files
+                                .get_or_insert_with(|| vec![group.representative]);
                             files.push(index);
                         }
                         matched = true;
@@ -2404,14 +2407,9 @@ fn run_dupes(args: &[String]) -> Result<(), String> {
                 }
             }
             if !matched {
-                let files = if retain_group_paths {
-                    Some(vec![index])
-                } else {
-                    None
-                };
                 candidates.push(VerifiedDuplicateGroup {
                     representative: index,
-                    files,
+                    files: None,
                     count: 1,
                 });
             }
