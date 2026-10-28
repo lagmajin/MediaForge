@@ -8400,49 +8400,66 @@ fn run_unity_meta(args: &[String]) -> Result<(), String> {
         + invalid_guid.len()
         + duplicate_guid_count;
     if json {
-        println!(
-            "{{\"root\":{},\"checked\":{checked},\"missing_meta_count\":{},\"orphan_meta_count\":{},\"missing_guid_count\":{},\"invalid_guid_count\":{},\"duplicate_guid_count\":{duplicate_guid_count},\"missing_meta\":[{}],\"orphan_meta\":[{}],\"missing_guid\":[{}],\"invalid_guid\":[{}],\"duplicate_guids\":[{}]}}",
-            json_string(&root.to_string_lossy()),
-            missing_meta.len(),
-            orphan_meta.len(),
-            missing_guid.len(),
-            invalid_guid.len(),
-            missing_meta
-                .iter()
-                .map(|path| json_string(path))
-                .collect::<Vec<_>>()
-                .join(","),
-            orphan_meta
-                .iter()
-                .map(|path| json_string(path))
-                .collect::<Vec<_>>()
-                .join(","),
-            missing_guid
-                .iter()
-                .map(|path| json_string(path))
-                .collect::<Vec<_>>()
-                .join(","),
-            invalid_guid
-                .iter()
-                .map(|path| json_string(path))
-                .collect::<Vec<_>>()
-                .join(","),
-            duplicate_guids
-                .iter()
-                .map(|(guid, paths)| {
-                    format!(
-                        "{{\"guid\":{},\"paths\":[{}]}}",
-                        json_string(guid),
-                        paths
-                            .iter()
-                            .map(|path| json_string(path))
-                            .collect::<Vec<_>>()
-                            .join(",")
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join(",")
-        );
+        let stdout = io::stdout();
+        let mut output = io::BufWriter::with_capacity(64 * 1024, stdout.lock());
+        let result = (|| -> io::Result<()> {
+            output.write_all(b"{\"root\":")?;
+            write_json_string(&mut output, &root.to_string_lossy())?;
+            write!(
+                output,
+                ",\"checked\":{checked},\"missing_meta_count\":{},\"orphan_meta_count\":{},\"missing_guid_count\":{},\"invalid_guid_count\":{},\"duplicate_guid_count\":{duplicate_guid_count},\"missing_meta\":[",
+                missing_meta.len(),
+                orphan_meta.len(),
+                missing_guid.len(),
+                invalid_guid.len()
+            )?;
+            for (index, path) in missing_meta.iter().enumerate() {
+                if index > 0 {
+                    output.write_all(b",")?;
+                }
+                write_json_string(&mut output, path)?;
+            }
+            output.write_all(b"],\"orphan_meta\":[")?;
+            for (index, path) in orphan_meta.iter().enumerate() {
+                if index > 0 {
+                    output.write_all(b",")?;
+                }
+                write_json_string(&mut output, path)?;
+            }
+            output.write_all(b"],\"missing_guid\":[")?;
+            for (index, path) in missing_guid.iter().enumerate() {
+                if index > 0 {
+                    output.write_all(b",")?;
+                }
+                write_json_string(&mut output, path)?;
+            }
+            output.write_all(b"],\"invalid_guid\":[")?;
+            for (index, path) in invalid_guid.iter().enumerate() {
+                if index > 0 {
+                    output.write_all(b",")?;
+                }
+                write_json_string(&mut output, path)?;
+            }
+            output.write_all(b"],\"duplicate_guids\":[")?;
+            for (index, (guid, paths)) in duplicate_guids.iter().enumerate() {
+                if index > 0 {
+                    output.write_all(b",")?;
+                }
+                output.write_all(b"{\"guid\":")?;
+                write_json_string(&mut output, guid)?;
+                output.write_all(b",\"paths\":[")?;
+                for (path_index, path) in paths.iter().enumerate() {
+                    if path_index > 0 {
+                        output.write_all(b",")?;
+                    }
+                    write_json_string(&mut output, path)?;
+                }
+                output.write_all(b"]}")?;
+            }
+            output.write_all(b"]}\n")?;
+            output.flush()
+        })();
+        result.map_err(|error| format!("could not write Unity metadata JSON: {error}"))?;
     } else {
         println!("Unity metadata audit: {}", root.display());
         println!("Checked paths: {checked}");
