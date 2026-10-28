@@ -666,7 +666,7 @@ fn parse_size(value: &str) -> Result<u64, String> {
 
 fn print_help() {
     println!(
-        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE]\n  mediaforge dupes [PATH] [--json] [--min-size SIZE]\n  mediaforge probe <FILE> [--compact]\n  mediaforge project [PATH] [--json]\n  mediaforge organize [PATH] [--by type|extension] [--apply]\n  mediaforge undo [PATH]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--include-hidden] [--include-generated] [--dry-run]\n  mediaforge --version\n  mediaforge --help"
+        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE]\n  mediaforge dupes [PATH] [--json] [--min-size SIZE]\n  mediaforge probe <FILE> [--compact]\n  mediaforge project [PATH] [--json]\n  mediaforge gitignore [PATH] [--apply]\n  mediaforge organize [PATH] [--by type|extension] [--apply]\n  mediaforge undo [PATH]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--include-hidden] [--include-generated] [--dry-run]\n  mediaforge --version\n  mediaforge --help"
     );
 }
 
@@ -1005,6 +1005,220 @@ fn run_project(args: &[String]) -> Result<(), String> {
             println!("No recognized project files found.");
         }
     }
+    Ok(())
+}
+
+fn run_gitignore(args: &[String]) -> Result<(), String> {
+    const UNITY_PATTERNS: &[&str] = &[
+        "[Ll]ibrary/",
+        "[Tt]emp/",
+        "[Oo]bj/",
+        "[Bb]uild/",
+        "[Bb]uilds/",
+        "[Ll]ogs/",
+        "[Uu]ser[Ss]ettings/",
+        ".vs/",
+        "*.csproj",
+        "*.sln",
+    ];
+    const UNREAL_PATTERNS: &[&str] = &[
+        "Binaries/",
+        "DerivedDataCache/",
+        "Intermediate/",
+        ".vs/",
+        "*.sln",
+        "*.suo",
+        "*.xcodeproj/",
+        "*.xcworkspace/",
+    ];
+    const GODOT_PATTERNS: &[&str] = &[".godot/", ".import/"];
+
+    let mut apply = false;
+    let mut path = None;
+    for arg in args {
+        match arg.as_str() {
+            "--apply" => apply = true,
+            "--help" | "-h" => {
+                println!(
+                    "Usage: mediaforge gitignore [PATH] [--apply]\n\nPreview engine-specific generated-file patterns for .gitignore. Existing files are only appended to when --apply is supplied."
+                );
+                return Ok(());
+            }
+            value if value.starts_with('-') => return Err(format!("unknown option: {value}")),
+            value => {
+                if path.is_some() {
+                    return Err("only one project path may be provided".into());
+                }
+                path = Some(PathBuf::from(value));
+            }
+        }
+    }
+    let path = path.unwrap_or_else(|| PathBuf::from("."));
+    let root = fs::canonicalize(&path)
+        .map_err(|error| format!("cannot access {}: {error}", path.display()))?;
+    if !root.is_dir() {
+        return Err(format!("expected a project directory: {}", root.display()));
+    }
+
+    let mut entries = fs::read_dir(&root)
+        .map_err(|error| format!("cannot read project directory {}: {error}", root.display()))?
+        .map(|entry| entry.map_err(|error| format!("cannot read project directory entry: {error}")))
+        .collect::<Result<Vec<_>, _>>()?;
+    entries.sort_by_key(|entry| entry.file_name().to_string_lossy().to_lowercase());
+    let unity =
+        root.join("Assets").is_dir() || root.join("ProjectSettings/ProjectVersion.txt").is_file();
+    let mut unreal = false;
+    for entry in &entries {
+        let file_type = entry
+            .file_type()
+            .map_err(|error| format!("cannot inspect {}: {error}", entry.path().display()))?;
+        if file_type.is_file()
+            && entry
+                .path()
+                .extension()
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("uproject"))
+        {
+            unreal = true;
+            break;
+        }
+    }
+    let godot = root.join("project.godot").is_file();
+    if !unity && !unreal && !godot {
+        return Err("no Unity, Unreal, or Godot project marker found".to_owned());
+    }
+
+    let mut engines = Vec::new();
+    let mut patterns = Vec::<&str>::new();
+    if unity {
+        engines.push("Unity");
+        patterns.extend_from_slice(UNITY_PATTERNS);
+    }
+    if unreal {
+        engines.push("Unreal Engine");
+        patterns.extend_from_slice(UNREAL_PATTERNS);
+    }
+    if godot {
+        engines.push("Godot");
+        patterns.extend_from_slice(GODOT_PATTERNS);
+    }
+    let mut seen_patterns = HashSet::new();
+    patterns.retain(|pattern| seen_patterns.insert(*pattern));
+
+    let gitignore = root.join(".gitignore");
+    let state = entry_state(&gitignore)
+        .map_err(|error| format!("cannot inspect {}: {error}", gitignore.display()))?;
+    if state == EntryState::Other {
+        return Err(format!(
+            "{} exists but is not a regular file; refusing to modify it",
+            gitignore.display()
+        ));
+    }
+    let existing = match state {
+        EntryState::Missing => String::new(),
+        EntryState::File => fs::read_to_string(&gitignore)
+            .map_err(|error| format!("cannot read {} as UTF-8: {error}", gitignore.display()))?,
+        EntryState::Other => unreachable!(),
+    };
+    let existing_patterns: HashSet<_> = existing.lines().map(str::trim).collect();
+    let missing: Vec<_> = patterns
+        .iter()
+        .copied()
+        .filter(|pattern| !existing_patterns.contains(pattern))
+        .collect();
+
+    println!("Project engines: {}", engines.join(", "));
+    println!("Target: {}", gitignore.display());
+    if missing.is_empty() {
+        println!("All recommended patterns are already present.");
+        return Ok(());
+    }
+    println!("{} new pattern(s):", missing.len());
+    for pattern in &missing {
+        println!("  {pattern}");
+    }
+    if unreal {
+        println!(
+            "Note: Unreal's Saved/ folder is not ignored because it can contain backups and logs."
+        );
+    }
+    if !apply {
+        println!("Preview only. Re-run with --apply to append these patterns.");
+        return Ok(());
+    }
+
+    let current_state = entry_state(&gitignore)
+        .map_err(|error| format!("cannot re-inspect {}: {error}", gitignore.display()))?;
+    if current_state == EntryState::Other {
+        return Err(format!(
+            "{} changed to a non-file; refusing to modify it",
+            gitignore.display()
+        ));
+    }
+    let current = match current_state {
+        EntryState::Missing => String::new(),
+        EntryState::File => fs::read_to_string(&gitignore)
+            .map_err(|error| format!("cannot re-read {}: {error}", gitignore.display()))?,
+        EntryState::Other => unreachable!(),
+    };
+    let current_patterns: HashSet<_> = current.lines().map(str::trim).collect();
+    let to_add: Vec<_> = patterns
+        .iter()
+        .copied()
+        .filter(|pattern| !current_patterns.contains(pattern))
+        .collect();
+    if to_add.is_empty() {
+        println!("No changes needed; the patterns were added by another process.");
+        return Ok(());
+    }
+
+    let newline = if current.contains("\r\n") {
+        "\r\n"
+    } else {
+        "\n"
+    };
+    let mut addition = String::new();
+    if !current.is_empty() {
+        if !current.ends_with('\n') {
+            addition.push_str(newline);
+        }
+        if !current.trim().is_empty() {
+            addition.push_str(newline);
+        }
+    }
+    addition.push_str("# MediaForge generated files");
+    addition.push_str(newline);
+    for pattern in &to_add {
+        addition.push_str(pattern);
+        addition.push_str(newline);
+    }
+
+    match current_state {
+        EntryState::Missing => {
+            let mut file = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&gitignore)
+                .map_err(|error| format!("cannot create {}: {error}", gitignore.display()))?;
+            file.write_all(addition.as_bytes())
+                .and_then(|()| file.sync_all())
+                .map_err(|error| format!("could not write {}: {error}", gitignore.display()))?;
+        }
+        EntryState::File => {
+            let mut file = OpenOptions::new()
+                .append(true)
+                .open(&gitignore)
+                .map_err(|error| format!("cannot append {}: {error}", gitignore.display()))?;
+            file.write_all(addition.as_bytes())
+                .and_then(|()| file.sync_all())
+                .map_err(|error| format!("could not append {}: {error}", gitignore.display()))?;
+        }
+        EntryState::Other => unreachable!(),
+    }
+    println!(
+        "Appended {} pattern(s) to {}.",
+        to_add.len(),
+        gitignore.display()
+    );
     Ok(())
 }
 
@@ -2114,6 +2328,7 @@ fn run() -> Result<(), String> {
         Some("dupes") => run_dupes(&args[1..]),
         Some("probe") => run_probe(&args[1..]),
         Some("project") => run_project(&args[1..]),
+        Some("gitignore") => run_gitignore(&args[1..]),
         Some("organize") => run_organize(&args[1..]),
         Some("undo") => run_undo(&args[1..]),
         Some("pack") => run_pack(&args[1..]),

@@ -1,6 +1,6 @@
 # MediaForge CLI
 
-Fast, local-first command-line utilities for game development and video production. The native Rust CLI scans a project or media folder and reports asset counts, storage use, largest files, and same-size duplicate candidates. Core scans make no AI or network calls. A Python implementation is also kept as an equivalent reference while evaluating Rust.
+Fast, local-first command-line utilities for game development and video production. The native Rust CLI scans a project or media folder and reports asset counts, storage use, largest files, and same-size duplicate candidates. Core scans make no AI or network calls. A Python implementation of `scan` is kept as a reference while evaluating Rust.
 
 ## Requirements
 
@@ -26,7 +26,7 @@ cargo build --release
 ./target/release/mediaforge scan ./Media
 ```
 
-On Windows, run `target\release\mediaforge.exe scan .\Media`. The Python and Rust versions use the same command syntax and report fields. Rust scans are fully offline once the toolchain is installed. Both skip Git-ignored path entries without glob syntax, plus built-in generated/dependency directories. Full Git ignore glob and negation semantics are not implemented yet.
+On Windows, run `target\release\mediaforge.exe scan .\Media`. The Python reference currently covers `scan` and uses the same syntax and report fields for that command; the Rust CLI provides the additional project workflows. Rust scans are fully offline once the toolchain is installed. Both skip Git-ignored path entries without glob syntax, plus built-in generated/dependency directories. Full Git ignore glob and negation semantics are not implemented yet.
 
 ## Inspect media metadata
 
@@ -55,6 +55,7 @@ mediaforge scan . --include-hidden
 mediaforge scan ./Media --type video --min-size 500M
 mediaforge dupes ./Game/Content --min-size 1M
 mediaforge project ./Game
+mediaforge gitignore ./Game
 mediaforge organize ./Media --by type
 mediaforge pack ./Game --output ../Game.tar --dry-run
 ```
@@ -78,6 +79,15 @@ mediaforge project ./Game --json
 ```
 
 The read-only inspector recognizes Unity, Unreal Engine, and Godot project markers. It reports missing expected folders and measures known build/cache folders (`Library`, `Intermediate`, `DerivedDataCache`, `.godot`, and related folders) without deleting them. Some folders, such as Unreal's `Saved`, can also contain backups or logs. It also lists Blender, DaVinci Resolve, Premiere Pro, After Effects, and Final Cut Pro XML project files found below the chosen folder.
+
+## Generate engine-specific Git ignore patterns
+
+```sh
+mediaforge gitignore ./Game
+mediaforge gitignore ./Game --apply
+```
+
+`gitignore` detects Unity, Unreal, and Godot project markers and previews the corresponding generated-file patterns. It only appends patterns that are not already present, and only with `--apply`. Existing `.gitignore` files are preserved; symlinks and non-file targets are refused. Unreal's `Saved/` is deliberately left out because it can contain backups and logs.
 
 ## Organize files with preview and undo
 
@@ -111,6 +121,7 @@ mediaforge pack ./Game --output ../Game-assets.tar --type image,model,texture
 - [x] Content-verified duplicate detection on demand
 - [x] Safe media organization plans with preview and undo
 - [x] Read-only project and generated-cache inspection for Unity, Unreal, and Godot
+- [x] Previewable engine-specific `.gitignore` suggestions
 - [x] Streaming tar package creation for project handoff
 - [ ] Optional AI assistance only for ambiguous labeling, never required for core commands
 
