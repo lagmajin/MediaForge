@@ -11077,10 +11077,18 @@ fn write_tar_payload(writer: &mut impl Write, contents: &[u8]) -> io::Result<()>
     Ok(())
 }
 
+struct PackFileRecord {
+    relative: String,
+    path: PathBuf,
+    size: u64,
+    modified: Option<std::time::SystemTime>,
+    kind: Kind,
+}
+
 fn pack_file(
     writer: &mut impl Write,
     archive_name: &str,
-    record: &FileRecord,
+    record: &PackFileRecord,
     source_path: &Path,
     index: usize,
     copy_buffer: &mut [u8],
@@ -11299,7 +11307,7 @@ fn validate_archive_component(component: &str) -> Result<(), String> {
 
 fn register_portable_archive_path(
     paths: &mut HashMap<String, (usize, usize, bool)>,
-    records: &[FileRecord],
+    records: &[PackFileRecord],
     record_index: usize,
     relative: &Path,
     display_name: &str,
@@ -11360,7 +11368,7 @@ fn padded_tar_size(size: u64) -> Result<u64, String> {
         .ok_or_else(|| "estimated archive size exceeds the supported range".to_owned())
 }
 
-fn estimate_tar_size(entries: &[FileRecord]) -> Result<u64, String> {
+fn estimate_tar_size(entries: &[PackFileRecord]) -> Result<u64, String> {
     let mut total = (TAR_BLOCK_SIZE * 2) as u64;
     for record in entries {
         let archive_name = &record.relative;
@@ -11412,7 +11420,7 @@ struct PackJsonOptions<'a> {
     input_bytes: u64,
     estimated_archive_bytes: u64,
     list_entries: bool,
-    entries: &'a [FileRecord],
+    entries: &'a [PackFileRecord],
     archive_bytes: Option<u64>,
 }
 
@@ -11612,7 +11620,7 @@ fn run_pack(args: &[String]) -> Result<(), String> {
     }
 
     let ignored = ignored_by_git(&root)?;
-    let mut records = Vec::new();
+    let mut records = Vec::<PackFileRecord>::new();
     let mut skip_dirs = SKIP_DIRS.to_vec();
     if !include_generated {
         skip_dirs.extend_from_slice(PACK_GENERATED_DIRS);
@@ -11637,14 +11645,23 @@ fn run_pack(args: &[String]) -> Result<(), String> {
         omit_modified_time: false,
         omit_extension: true,
     };
-    walk_strict_filtered(
+    walk_strict_filtered_with_callback(
         &root,
         &root,
         include_hidden,
         &skip_dirs,
         &ignored,
         &filters,
-        &mut records,
+        |record| {
+            records.push(PackFileRecord {
+                relative: record.relative,
+                path: record.path,
+                size: record.size,
+                modified: record.modified,
+                kind: record.kind,
+            });
+            Ok(())
+        },
     )?;
     let mut portable_names = HashMap::<String, (usize, usize, bool)>::with_capacity(records.len());
     let mut portable_prefix = String::new();
