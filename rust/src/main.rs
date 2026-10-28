@@ -498,6 +498,7 @@ struct StrictWalkFilters<'a> {
     extensions: Option<&'a HashSet<String>>,
     min_size: Option<u64>,
     max_size: Option<u64>,
+    excluded_subtree: Option<&'a Path>,
 }
 
 fn walk_strict_filtered(
@@ -543,6 +544,9 @@ fn walk_strict_filtered(
                 if directory_name_matches(&name, skip_dirs)
                     || (!include_hidden && is_hidden(&path))
                     || is_ignored_directory(&relative, &active_ignored)
+                    || filters
+                        .excluded_subtree
+                        .is_some_and(|excluded| path.starts_with(excluded))
                 {
                     continue;
                 }
@@ -1949,6 +1953,7 @@ fn run_dupes(args: &[String]) -> Result<(), String> {
         extensions: extension_filter.as_ref(),
         min_size: Some(min_size),
         max_size,
+        excluded_subtree: None,
     };
     walk_strict_filtered(
         &root,
@@ -4109,6 +4114,7 @@ fn run_probe_dir(args: &[String]) -> Result<(), String> {
         extensions: extensions.as_ref(),
         min_size: Some(min_size),
         max_size,
+        excluded_subtree: None,
     };
     walk_strict_filtered(
         &root,
@@ -5610,6 +5616,7 @@ fn run_proxy_dir(args: &[String]) -> Result<(), String> {
     let filters = StrictWalkFilters {
         kinds: Some(&kinds),
         extensions: extensions.as_ref(),
+        excluded_subtree: output_inside_root.then_some(output_root.as_path()),
         ..StrictWalkFilters::default()
     };
     walk_strict_filtered(
@@ -5622,9 +5629,6 @@ fn run_proxy_dir(args: &[String]) -> Result<(), String> {
         &mut records,
     )?;
     records.sort_by(|left, right| left.relative.cmp(&right.relative));
-    if output_inside_root {
-        records.retain(|record| !record.path.starts_with(&output_root));
-    }
     if records.is_empty() {
         if json {
             println!("{{\"type\":\"summary\",\"succeeded\":0,\"skipped\":0,\"failed\":0}}");
@@ -6144,6 +6148,7 @@ fn run_extract_audio_dir(args: &[String]) -> Result<(), String> {
     let filters = StrictWalkFilters {
         kinds: Some(&kinds),
         extensions: extensions.as_ref(),
+        excluded_subtree: output_inside_root.then_some(output_root.as_path()),
         ..StrictWalkFilters::default()
     };
     walk_strict_filtered(
@@ -6156,9 +6161,6 @@ fn run_extract_audio_dir(args: &[String]) -> Result<(), String> {
         &mut records,
     )?;
     records.sort_by(|left, right| left.relative.cmp(&right.relative));
-    if output_inside_root {
-        records.retain(|record| !record.path.starts_with(&output_root));
-    }
     if records.is_empty() {
         if json {
             println!("{{\"type\":\"summary\",\"succeeded\":0,\"skipped\":0,\"failed\":0}}");
@@ -9244,6 +9246,7 @@ fn run_pack(args: &[String]) -> Result<(), String> {
         extensions: selected_extensions.as_ref(),
         min_size: Some(min_size),
         max_size,
+        excluded_subtree: None,
     };
     walk_strict_filtered(
         &root,
