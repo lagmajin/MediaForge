@@ -200,6 +200,17 @@ fn classify(path: &Path) -> Kind {
         .map_or(Kind::Other, |index| ASSET_KIND_BY_EXTENSION[index].1)
 }
 
+fn matches_extension_filter(extension: Option<&str>, filters: &HashSet<String>) -> bool {
+    match extension {
+        Some(extension) => filters.iter().any(|candidate| {
+            candidate
+                .strip_prefix('.')
+                .is_some_and(|candidate| candidate.eq_ignore_ascii_case(extension))
+        }),
+        None => filters.contains("[no extension]"),
+    }
+}
+
 fn human_size(size: u64) -> String {
     human_size_wide(u128::from(size))
 }
@@ -465,17 +476,15 @@ fn walk_with_skip_dirs_mode_counted(
                 if is_ignored(&relative, &active_ignored) {
                     continue;
                 }
-                let extension = path
-                    .extension()
-                    .and_then(|value| value.to_str())
-                    .map(|value| format!(".{}", value.to_ascii_lowercase()))
-                    .unwrap_or_else(|| "[no extension]".to_owned());
-                if filters
-                    .extensions
-                    .is_some_and(|extensions| !extensions.contains(&extension))
-                {
+                let extension_value = path.extension().and_then(|value| value.to_str());
+                if filters.extensions.is_some_and(|extensions| {
+                    !matches_extension_filter(extension_value, extensions)
+                }) {
                     continue;
                 }
+                let extension = extension_value
+                    .map(|value| format!(".{}", value.to_ascii_lowercase()))
+                    .unwrap_or_else(|| "[no extension]".to_owned());
                 let metadata = match entry.metadata() {
                     Ok(metadata) => metadata,
                     Err(_) if !strict => {
@@ -678,6 +687,12 @@ where
                     continue;
                 }
                 let extension_value = path.extension().and_then(|value| value.to_str());
+                if filters
+                    .extensions
+                    .is_some_and(|values| !matches_extension_filter(extension_value, values))
+                {
+                    continue;
+                }
                 let extension = if filters.omit_extension && filters.extensions.is_none() {
                     String::new()
                 } else {
@@ -685,12 +700,6 @@ where
                         .map(|value| format!(".{}", value.to_ascii_lowercase()))
                         .unwrap_or_else(|| "[no extension]".to_owned())
                 };
-                if filters
-                    .extensions
-                    .is_some_and(|values| !values.contains(&extension))
-                {
-                    continue;
-                }
                 let metadata = entry
                     .metadata()
                     .map_err(|error| format!("cannot inspect {}: {error}", path.display()))?;
