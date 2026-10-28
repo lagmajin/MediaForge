@@ -270,6 +270,13 @@ fn is_dot_hidden(path: &Path) -> bool {
         .is_some_and(|name| name.to_string_lossy().starts_with('.'))
 }
 
+fn relative_path_text(root: &Path, path: &Path) -> String {
+    path.strip_prefix(root)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .replace('\\', "/")
+}
+
 fn strip_ascii_case_insensitive_suffix<'a>(value: &'a str, suffix: &str) -> Option<&'a str> {
     let suffix_start = value.len().checked_sub(suffix.len())?;
     let prefix = value.get(..suffix_start)?;
@@ -8713,6 +8720,23 @@ fn run_unity_meta(args: &[String]) -> Result<(), String> {
             if file_type.is_symlink() || (!include_hidden && is_dot_hidden(&entry_path)) {
                 continue;
             }
+            let meta_target = file_type
+                .is_file()
+                .then(|| unity_meta_target(&entry_path))
+                .flatten();
+            if file_type.is_file() && active_rules.is_empty() && meta_target.is_none() {
+                if !include_hidden && has_hidden_attribute(&entry_path) {
+                    continue;
+                }
+                checked = checked.saturating_add(1);
+                if !unity_meta_sidecar_exists_in_directory(&entry_path, &sibling_types) {
+                    missing_meta_count += 1;
+                    if !summary {
+                        missing_meta.push(relative_path_text(&root, &entry_path));
+                    }
+                }
+                continue;
+            }
             let relative = entry_path
                 .strip_prefix(&root)
                 .unwrap_or(&entry_path)
@@ -8743,7 +8767,7 @@ fn run_unity_meta(args: &[String]) -> Result<(), String> {
                 {
                     continue;
                 }
-                if let Some(target) = unity_meta_target(&entry_path) {
+                if let Some(target) = meta_target {
                     checked = checked.saturating_add(1);
                     if !unity_meta_target_exists_in_directory(&target, &sibling_types) {
                         orphan_meta_count += 1;
