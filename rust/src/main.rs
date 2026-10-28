@@ -107,7 +107,8 @@ fn classify(path: &Path) -> Kind {
         | "m2v" | "ts" | "mts" | "m2ts" | "vob" | "ogv" | "3gp" | "3g2" | "wmv" | "flv" | "f4v"
         | "asf" | "divx" | "r3d" | "braw" | "crm" => Kind::Video,
         "wav" | "aiff" | "aif" | "flac" | "mp3" | "ogg" | "m4a" | "aac" | "caf" | "ac3"
-        | "eac3" | "alac" | "opus" | "wma" | "amr" | "mid" | "midi" => Kind::Audio,
+        | "eac3" | "alac" | "opus" | "wma" | "amr" | "mid" | "midi" | "wem" | "bnk" | "bank"
+        | "fsb" => Kind::Audio,
         "png" | "jpg" | "jpeg" | "tif" | "tiff" | "exr" | "hdr" | "tga" | "bmp" | "webp"
         | "gif" | "heic" | "heif" | "jp2" | "j2k" | "dpx" | "cin" | "dng" | "cr2" | "cr3"
         | "nef" | "arw" | "raf" | "orf" | "rw2" | "ari" => Kind::Image,
@@ -116,7 +117,8 @@ fn classify(path: &Path) -> Kind {
         "sbsar" | "psd" | "psb" | "ktx" | "ktx2" | "dds" | "material" | "basis" | "pvr"
         | "astc" => Kind::Texture,
         "uproject" | "uasset" | "umap" | "unity" | "unitypackage" | "asset" | "prefab"
-        | "godot" | "tscn" | "tres" | "scn" | "res" | "drp" | "prproj" | "aep" | "fcpxml"
+        | "godot" | "tscn" | "tres" | "scn" | "res" | "pak" | "utoc" | "ucas" | "pck" | "wproj"
+        | "wwu" | "drp" | "dra" | "prproj" | "aep" | "aepx" | "aaf" | "edl" | "mlt" | "fcpxml"
         | "blend" | "sbs" | "spp" => Kind::Project,
         _ => Kind::Other,
     }
@@ -6223,8 +6225,13 @@ fn project_file_kind(path: &str) -> Option<&'static str> {
     {
         "blend" => Some("Blender"),
         "drp" => Some("DaVinci Resolve"),
+        "dra" => Some("DaVinci Resolve Archive"),
         "prproj" => Some("Adobe Premiere Pro"),
         "aep" => Some("Adobe After Effects"),
+        "aepx" => Some("Adobe After Effects XML"),
+        "aaf" => Some("Advanced Authoring Format"),
+        "edl" => Some("Edit Decision List"),
+        "mlt" => Some("MLT project"),
         "fcpxml" => Some("Final Cut Pro XML"),
         _ => None,
     }
