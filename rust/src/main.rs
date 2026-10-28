@@ -8821,17 +8821,17 @@ fn run_unity_meta(args: &[String]) -> Result<(), String> {
             }
         }
     }
-    missing_meta.sort();
-    orphan_meta.sort();
-    missing_guid.sort();
-    invalid_guid.sort();
+    missing_meta.sort_unstable();
+    orphan_meta.sort_unstable();
+    missing_guid.sort_unstable();
+    invalid_guid.sort_unstable();
     let mut duplicate_guids = guid_paths
         .into_iter()
         .filter_map(|(guid, (_, paths))| paths.map(|paths| (guid, paths)))
         .collect::<Vec<_>>();
     duplicate_guids.sort_unstable_by_key(|entry| entry.0);
     for (_, paths) in &mut duplicate_guids {
-        paths.sort();
+        paths.sort_unstable();
     }
     let duplicate_guid_count = if summary {
         summary_duplicate_guid_count
