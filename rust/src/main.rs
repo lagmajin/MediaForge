@@ -81,15 +81,20 @@ fn classify(path: &Path) -> Kind {
         .unwrap_or("")
         .to_ascii_lowercase();
     match ext.as_str() {
-        "mp4" | "mov" | "mxf" | "mkv" | "avi" | "webm" | "m4v" => Kind::Video,
-        "wav" | "aiff" | "aif" | "flac" | "mp3" | "ogg" | "m4a" | "aac" => Kind::Audio,
-        "png" | "jpg" | "jpeg" | "tif" | "tiff" | "exr" | "hdr" | "tga" | "bmp" | "webp" => {
-            Kind::Image
-        }
-        "fbx" | "obj" | "gltf" | "glb" | "usd" | "usda" | "usdc" | "blend" | "abc" | "ma"
-        | "mb" => Kind::Model,
-        "sbsar" | "psd" | "psb" | "ktx" | "ktx2" | "dds" | "material" => Kind::Texture,
-        "uproject" | "unity" | "godot" | "drp" | "prproj" | "aep" | "fcpxml" => Kind::Project,
+        "mp4" | "mov" | "mxf" | "mkv" | "avi" | "webm" | "m4v" | "mpg" | "mpeg" | "mpe" | "mpv"
+        | "m2v" | "ts" | "mts" | "m2ts" | "vob" | "ogv" | "3gp" | "3g2" | "wmv" | "flv" | "f4v"
+        | "asf" | "divx" | "r3d" | "braw" | "crm" => Kind::Video,
+        "wav" | "aiff" | "aif" | "flac" | "mp3" | "ogg" | "m4a" | "aac" | "caf" | "ac3"
+        | "eac3" | "alac" | "opus" | "wma" | "amr" | "mid" | "midi" => Kind::Audio,
+        "png" | "jpg" | "jpeg" | "tif" | "tiff" | "exr" | "hdr" | "tga" | "bmp" | "webp"
+        | "gif" | "heic" | "heif" | "jp2" | "j2k" | "dpx" | "cin" | "dng" | "cr2" | "cr3"
+        | "nef" | "arw" | "raf" | "orf" | "rw2" | "ari" => Kind::Image,
+        "fbx" | "obj" | "gltf" | "glb" | "usd" | "usda" | "usdc" | "usdz" | "abc" | "ma" | "mb"
+        | "stl" | "ply" | "3ds" | "dae" => Kind::Model,
+        "sbsar" | "psd" | "psb" | "ktx" | "ktx2" | "dds" | "material" | "basis" | "pvr"
+        | "astc" => Kind::Texture,
+        "uproject" | "unity" | "unitypackage" | "godot" | "umap" | "drp" | "prproj" | "aep"
+        | "fcpxml" | "blend" | "sbs" | "spp" => Kind::Project,
         _ => Kind::Other,
     }
 }
