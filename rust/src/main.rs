@@ -1227,7 +1227,7 @@ fn fraction_ceil_scaled(fraction: &str, multiplier: u128) -> u128 {
 
 fn print_help() {
     println!(
-        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS]\n  mediaforge dupes [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS]\n  mediaforge probe <FILE> [--compact]\n  mediaforge project [PATH] [--json]\n  mediaforge gitignore [PATH] [--apply]\n  mediaforge organize [PATH] [--by type|extension] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--apply]\n  mediaforge undo [PATH] [--json]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--include-hidden] [--include-generated] [--dry-run] [--json]\n  mediaforge --version\n  mediaforge --help"
+        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS]\n  mediaforge dupes [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS]\n  mediaforge probe <FILE> [--compact]\n  mediaforge project [PATH] [--json]\n  mediaforge gitignore [PATH] [--apply]\n  mediaforge organize [PATH] [--by type|extension] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--apply]\n  mediaforge undo [PATH] [--json]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--dry-run] [--json]\n  mediaforge --version\n  mediaforge --help"
     );
 }
 
@@ -3284,6 +3284,7 @@ fn print_pack_json(
     status: &str,
     dry_run: bool,
     output_exists: bool,
+    min_size: u64,
     files: usize,
     input_bytes: u64,
     archive_bytes: Option<u64>,
@@ -3294,6 +3295,7 @@ fn print_pack_json(
     println!("  \"status\": {},", json_string(status));
     println!("  \"dry_run\": {dry_run},");
     println!("  \"output_exists\": {output_exists},");
+    println!("  \"min_size_bytes\": {min_size},");
     println!("  \"files\": {files},");
     println!("  \"input_bytes\": {input_bytes},");
     println!(
@@ -3319,6 +3321,7 @@ fn run_pack(args: &[String]) -> Result<(), String> {
     let mut json = false;
     let mut selected_types: Option<HashSet<Kind>> = None;
     let mut selected_extensions: Option<HashSet<String>> = None;
+    let mut min_size = 0_u64;
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
         match arg.as_str() {
@@ -3344,9 +3347,15 @@ fn run_pack(args: &[String]) -> Result<(), String> {
                 })?;
                 selected_extensions = Some(parse_extensions(value)?);
             }
+            "--min-size" => {
+                let value = iter
+                    .next()
+                    .ok_or_else(|| "--min-size requires a value".to_owned())?;
+                min_size = parse_size(value)?;
+            }
             "--help" | "-h" => {
                 println!(
-                    "Usage: mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--include-hidden] [--include-generated] [--dry-run] [--json]\n\nCreate an uncompressed, stream-written tar archive. --type accepts comma-separated scan types: video, audio, image, model, texture, project, other. --extension accepts comma-separated extensions such as mov,mxf; use none for files without an extension. Git-ignored and hidden files are skipped by default. Common Unity, Unreal, and Godot generated folders are excluded unless --include-generated is used. PAX extensions support long paths and files larger than 8 GiB. --json emits a machine-readable result summary."
+                    "Usage: mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--dry-run] [--json]\n\nCreate an uncompressed, stream-written tar archive. --type accepts comma-separated scan types: video, audio, image, model, texture, project, other. --extension accepts comma-separated extensions such as mov,mxf; use none for files without an extension. --min-size accepts bytes or K/M/G/T binary units. Git-ignored and hidden files are skipped by default. Common Unity, Unreal, and Godot generated folders are excluded unless --include-generated is used. PAX extensions support long paths and files larger than 8 GiB. --json emits a machine-readable result summary."
                 );
                 return Ok(());
             }
@@ -3418,6 +3427,7 @@ fn run_pack(args: &[String]) -> Result<(), String> {
     if let Some(extensions) = &selected_extensions {
         records.retain(|record| extensions.contains(&record.extension));
     }
+    records.retain(|record| record.size >= min_size);
     let mut entries = Vec::<(&FileRecord, String)>::with_capacity(records.len());
     let mut portable_names = HashMap::<String, (String, bool)>::new();
     let mut total_bytes = 0_u64;
@@ -3475,6 +3485,7 @@ fn run_pack(args: &[String]) -> Result<(), String> {
                 },
                 true,
                 output_exists,
+                min_size,
                 entries.len(),
                 total_bytes,
                 None,
@@ -3579,6 +3590,7 @@ fn run_pack(args: &[String]) -> Result<(), String> {
             "created",
             false,
             true,
+            min_size,
             entries.len(),
             total_bytes,
             Some(archive_size),
