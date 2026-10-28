@@ -7157,7 +7157,7 @@ fn print_batch_result_json(
     path: &str,
     output: Option<&Path>,
     result: &Result<bool, String>,
-) {
+) -> Result<(), String> {
     let stdout = io::stdout();
     let mut output_writer = stdout.lock();
     let write_result = (|| -> io::Result<()> {
@@ -7181,7 +7181,7 @@ fn print_batch_result_json(
             }
         }
     })();
-    write_result.expect("could not write batch result JSON");
+    write_result.map_err(|error| format!("could not write batch result JSON: {error}"))
 }
 
 fn run_proxy_dir(args: &[String]) -> Result<(), String> {
@@ -7375,6 +7375,8 @@ fn run_proxy_dir(args: &[String]) -> Result<(), String> {
     mark_output_path_collisions(&mut plans, "proxy");
     let next = std::sync::atomic::AtomicUsize::new(0);
     let completed = std::sync::atomic::AtomicUsize::new(0);
+    let output_failed = std::sync::atomic::AtomicBool::new(false);
+    let stream_error = std::sync::Mutex::new(None::<String>);
     let progress_output = std::sync::Mutex::new(());
     let succeeded_count = std::sync::atomic::AtomicUsize::new(0);
     let skipped_count = std::sync::atomic::AtomicUsize::new(0);
@@ -7389,8 +7391,14 @@ fn run_proxy_dir(args: &[String]) -> Result<(), String> {
         for _ in 0..jobs.min(total) {
             scope.spawn(|| {
                 loop {
+                    if output_failed.load(std::sync::atomic::Ordering::Acquire) {
+                        break;
+                    }
                     let index = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     if index >= total {
+                        break;
+                    }
+                    if output_failed.load(std::sync::atomic::Ordering::Acquire) {
                         break;
                     }
                     let record = &records[index];
@@ -7436,13 +7444,20 @@ fn run_proxy_dir(args: &[String]) -> Result<(), String> {
                             .expect("proxy progress output lock poisoned");
                         let current =
                             completed.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-                        print_batch_result_json(
+                        if let Err(error) = print_batch_result_json(
                             current,
                             total,
                             &record.relative,
                             output.as_deref(),
                             &result,
-                        );
+                        ) {
+                            output_failed.store(true, std::sync::atomic::Ordering::Release);
+                            stream_error
+                                .lock()
+                                .expect("proxy output error lock poisoned")
+                                .get_or_insert(error);
+                            break;
+                        }
                         match &result {
                             Ok(true) => {
                                 succeeded_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -7477,6 +7492,12 @@ fn run_proxy_dir(args: &[String]) -> Result<(), String> {
             });
         }
     });
+    if let Some(error) = stream_error
+        .into_inner()
+        .map_err(|_| "proxy output error lock poisoned".to_owned())?
+    {
+        return Err(error);
+    }
     let mut errors = errors
         .into_inner()
         .map_err(|_| "proxy error lock poisoned".to_owned())?;
@@ -7927,6 +7948,8 @@ fn run_extract_audio_dir(args: &[String]) -> Result<(), String> {
     mark_output_path_collisions(&mut plans, "audio");
     let next = std::sync::atomic::AtomicUsize::new(0);
     let completed = std::sync::atomic::AtomicUsize::new(0);
+    let output_failed = std::sync::atomic::AtomicBool::new(false);
+    let stream_error = std::sync::Mutex::new(None::<String>);
     let progress_output = std::sync::Mutex::new(());
     let succeeded_count = std::sync::atomic::AtomicUsize::new(0);
     let skipped_count = std::sync::atomic::AtomicUsize::new(0);
@@ -7941,8 +7964,14 @@ fn run_extract_audio_dir(args: &[String]) -> Result<(), String> {
         for _ in 0..jobs.min(total) {
             scope.spawn(|| {
                 loop {
+                    if output_failed.load(std::sync::atomic::Ordering::Acquire) {
+                        break;
+                    }
                     let index = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     if index >= total {
+                        break;
+                    }
+                    if output_failed.load(std::sync::atomic::Ordering::Acquire) {
                         break;
                     }
                     let record = &records[index];
@@ -7988,13 +8017,20 @@ fn run_extract_audio_dir(args: &[String]) -> Result<(), String> {
                             .expect("audio progress output lock poisoned");
                         let current =
                             completed.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-                        print_batch_result_json(
+                        if let Err(error) = print_batch_result_json(
                             current,
                             total,
                             &record.relative,
                             output.as_deref(),
                             &result,
-                        );
+                        ) {
+                            output_failed.store(true, std::sync::atomic::Ordering::Release);
+                            stream_error
+                                .lock()
+                                .expect("audio output error lock poisoned")
+                                .get_or_insert(error);
+                            break;
+                        }
                         match &result {
                             Ok(true) => {
                                 succeeded_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -8029,6 +8065,12 @@ fn run_extract_audio_dir(args: &[String]) -> Result<(), String> {
             });
         }
     });
+    if let Some(error) = stream_error
+        .into_inner()
+        .map_err(|_| "audio output error lock poisoned".to_owned())?
+    {
+        return Err(error);
+    }
     let mut errors = errors
         .into_inner()
         .map_err(|_| "audio error lock poisoned".to_owned())?;
