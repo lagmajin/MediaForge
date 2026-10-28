@@ -1093,7 +1093,66 @@ thread_local! {
 }
 
 fn ignored_by_git(root: &Path) -> Result<Vec<IgnoreRule>, String> {
-    Ok(extend_ignore_rules(root, root, &[])?.into_owned())
+    let mut global_rules = Vec::new();
+    if let Some(path) = global_ignore_file(root)? {
+        let metadata = match fs::metadata(&path) {
+            Ok(metadata) => Some(metadata),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+            Err(error) => {
+                return Err(format!(
+                    "cannot inspect global ignore file {}: {error}",
+                    path.display()
+                ));
+            }
+        };
+        if metadata.is_some_and(|metadata| metadata.is_file()) {
+            let contents = fs::read_to_string(&path).map_err(|error| {
+                format!("cannot read global ignore file {}: {error}", path.display())
+            })?;
+            global_rules.extend(contents.lines().filter_map(parse_ignore_rule));
+        }
+    }
+    Ok(extend_ignore_rules(root, root, &global_rules)?.into_owned())
+}
+
+fn global_ignore_file(root: &Path) -> Result<Option<PathBuf>, String> {
+    let configured = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["config", "--path", "--get", "core.excludesFile"])
+        .output();
+    match configured {
+        Ok(output) if output.status.success() => {
+            let value = String::from_utf8_lossy(&output.stdout);
+            let value = value.trim();
+            if value.is_empty() {
+                return Ok(None);
+            }
+            let path = PathBuf::from(value);
+            return Ok(Some(if path.is_absolute() {
+                path
+            } else {
+                root.join(path)
+            }));
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(format!(
+                "could not resolve Git's global ignore file: {error}"
+            ));
+        }
+    }
+
+    let config_root = env::var_os("XDG_CONFIG_HOME")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| {
+            env::var_os("HOME")
+                .or_else(|| env::var_os("USERPROFILE"))
+                .map(|home| PathBuf::from(home).join(".config"))
+        });
+    Ok(config_root.map(|path| path.join("git").join("ignore")))
 }
 
 fn extend_ignore_rules<'a>(
