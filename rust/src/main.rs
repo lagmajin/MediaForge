@@ -467,7 +467,9 @@ fn walk_with_skip_dirs_mode_counted(
             }
             let needs_relative_lower = !filters.exclude_path_contains_lower.is_empty()
                 || (!path_filter_satisfied && !filters.path_contains_lower.is_empty());
-            let mut relative = (file_type.is_dir() || needs_relative_lower).then(|| {
+            let needs_relative_path =
+                needs_relative_lower || (file_type.is_dir() && !active_ignored.is_empty());
+            let mut relative = needs_relative_path.then(|| {
                 path.strip_prefix(root)
                     .unwrap_or(&path)
                     .to_string_lossy()
@@ -481,26 +483,34 @@ fn walk_with_skip_dirs_mode_counted(
                 lowercase_scratch.as_str()
             });
             if file_type.is_dir() {
-                let relative = relative
-                    .as_deref()
-                    .expect("directory paths are materialized");
                 let name = entry.file_name();
                 let name = name.to_string_lossy();
+                if directory_name_matches(&name, skip_dirs)
+                    || (!include_hidden && has_hidden_attribute(&path))
+                {
+                    return Ok(());
+                }
+                if !active_ignored.is_empty()
+                    && is_ignored_directory(
+                        relative
+                            .as_deref()
+                            .expect("ignored directories are materialized"),
+                        &active_ignored,
+                    )
+                {
+                    return Ok(());
+                }
                 let child_path_filter_satisfied = path_filter_satisfied
                     || filters.path_contains_lower.iter().all(|needle| {
                         relative_lower
                             .as_ref()
                             .is_some_and(|value| value.contains(needle))
                     });
-                if directory_name_matches(&name, skip_dirs)
-                    || (!include_hidden && has_hidden_attribute(&path))
-                    || is_ignored_directory(relative, &active_ignored)
-                    || filters.exclude_path_contains_lower.iter().any(|needle| {
-                        relative_lower
-                            .as_ref()
-                            .is_some_and(|value| value.contains(needle))
-                    })
-                {
+                if filters.exclude_path_contains_lower.iter().any(|needle| {
+                    relative_lower
+                        .as_ref()
+                        .is_some_and(|value| value.contains(needle))
+                }) {
                     return Ok(());
                 }
                 let child_rules = extend_ignore_rules(root, &path, active_ignored.as_ref())?;
