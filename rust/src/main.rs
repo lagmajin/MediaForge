@@ -23,6 +23,7 @@ const PACK_GENERATED_DIRS: &[&str] = &[
     "DerivedDataCache",
     "Binaries",
     ".godot",
+    ".import",
 ];
 const PROJECT_ARTIFACT_DIRS: &[&str] = &[
     "Library",
@@ -33,6 +34,7 @@ const PROJECT_ARTIFACT_DIRS: &[&str] = &[
     "Binaries",
     "Saved",
     ".godot",
+    ".import",
 ];
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -1078,7 +1080,7 @@ fn run_project(args: &[String]) -> Result<(), String> {
         ));
     }
     if root.join("project.godot").is_file() {
-        engines.push(("Godot", vec!["project.godot"], vec![".godot"]));
+        engines.push(("Godot", vec!["project.godot"], vec![".godot", ".import"]));
     }
 
     let mut project_files = Vec::<(String, &'static str)>::new();
