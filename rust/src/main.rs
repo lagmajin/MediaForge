@@ -914,6 +914,7 @@ fn run_dupes(args: &[String]) -> Result<(), String> {
     let mut min_size = 0;
     let mut kind_filter = None;
     let mut extension_filter = None;
+    let mut top_groups = None;
     let mut path = None;
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
@@ -942,9 +943,17 @@ fn run_dupes(args: &[String]) -> Result<(), String> {
                 })?;
                 extension_filter = Some(parse_extensions(value)?);
             }
+            "--top-groups" => {
+                let value = iter
+                    .next()
+                    .ok_or_else(|| "--top-groups requires a group count".to_owned())?;
+                top_groups = Some(value.parse::<usize>().map_err(|_| {
+                    format!("invalid --top-groups count '{value}'; use a non-negative integer")
+                })?);
+            }
             "--help" | "-h" => {
                 println!(
-                    "Usage: mediaforge dupes [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS]\n\nFind byte-for-byte duplicate files. Files are compared in fixed-size chunks to keep memory use low. --type accepts video, audio, image, model, texture, project, or other. --extension accepts a comma-separated list such as mov,mxf; use none for files without an extension. Fractional size thresholds round up to the next byte."
+                    "Usage: mediaforge dupes [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS] [--top-groups N]\n\nFind byte-for-byte duplicate files. Files are compared in fixed-size chunks to keep memory use low. --top-groups limits displayed groups, ordered by reclaimable space; summary totals include all groups. --type accepts video, audio, image, model, texture, project, or other. --extension accepts a comma-separated list such as mov,mxf; use none for files without an extension. Fractional size thresholds round up to the next byte."
                 );
                 return Ok(());
             }
@@ -1026,23 +1035,34 @@ fn run_dupes(args: &[String]) -> Result<(), String> {
         }
     }
     groups.sort_by(|left, right| {
-        left.0
-            .cmp(&right.0)
+        (u128::from(right.0) * right.1.len().saturating_sub(1) as u128)
+            .cmp(&(u128::from(left.0) * left.1.len().saturating_sub(1) as u128))
+            .then_with(|| right.0.cmp(&left.0))
             .then_with(|| left.1.first().cmp(&right.1.first()))
     });
 
+    let total_groups = groups.len();
     let duplicate_files: usize = groups.iter().map(|(_, files)| files.len()).sum();
     let reclaimable: u128 = groups
         .iter()
         .map(|(size, files)| u128::from(*size) * files.len().saturating_sub(1) as u128)
         .sum();
+    let displayed_groups = top_groups.unwrap_or(total_groups).min(total_groups);
+    let truncated_groups = total_groups - displayed_groups;
     if json {
         println!(
-            "{{\n  \"root\": {},\n  \"groups\": [",
-            json_string(&root.to_string_lossy())
+            "{{\n  \"root\": {},\n  \"groups_total\": {},\n  \"groups_returned\": {},\n  \"groups_truncated\": {},\n  \"groups\": [",
+            json_string(&root.to_string_lossy()),
+            total_groups,
+            displayed_groups,
+            truncated_groups
         );
-        for (index, (size, files)) in groups.iter().enumerate() {
-            let comma = if index + 1 == groups.len() { "" } else { "," };
+        for (index, (size, files)) in groups.iter().take(displayed_groups).enumerate() {
+            let comma = if index + 1 == displayed_groups {
+                ""
+            } else {
+                ","
+            };
             let paths = files
                 .iter()
                 .map(|file| json_string(file))
@@ -1067,11 +1087,16 @@ fn run_dupes(args: &[String]) -> Result<(), String> {
         if groups.is_empty() {
             println!("No byte-for-byte duplicate groups found.");
         }
-        for (size, files) in groups {
-            println!("\n{} each", human_size(size));
+        for (size, files) in groups.iter().take(displayed_groups) {
+            println!("\n{} each", human_size(*size));
             for file in files {
                 println!("  {file}");
             }
+        }
+        if truncated_groups > 0 {
+            println!(
+                "\nOmitted {truncated_groups} smaller reclaimable group(s); summary totals include all verified groups."
+            );
         }
     }
     Ok(())
@@ -1238,7 +1263,7 @@ fn fraction_ceil_scaled(fraction: &str, multiplier: u128) -> u128 {
 
 fn print_help() {
     println!(
-        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS] [--largest N]\n  mediaforge dupes [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS]\n  mediaforge probe <FILE> [--compact]\n  mediaforge project [PATH] [--json]\n  mediaforge gitignore [PATH] [--apply]\n  mediaforge organize [PATH] [--by type|extension] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--apply]\n  mediaforge undo [PATH] [--json]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--include-hidden] [--include-generated] [--dry-run] [--json] [--list]\n  mediaforge --version\n  mediaforge --help"
+        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS] [--largest N]\n  mediaforge dupes [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS] [--top-groups N]\n  mediaforge probe <FILE> [--compact]\n  mediaforge project [PATH] [--json]\n  mediaforge gitignore [PATH] [--apply]\n  mediaforge organize [PATH] [--by type|extension] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--apply]\n  mediaforge undo [PATH] [--json]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--include-hidden] [--include-generated] [--dry-run] [--json] [--list]\n  mediaforge --version\n  mediaforge --help"
     );
 }
 
