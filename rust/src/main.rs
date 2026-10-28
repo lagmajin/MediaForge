@@ -4712,7 +4712,7 @@ fn fraction_ceil_scaled(fraction: &str, multiplier: u128) -> u128 {
 
 fn print_help() {
     println!(
-        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge doctor [--json]\n  mediaforge scan-config <init|validate|show> [FILE] [--json]\n  mediaforge scan [PATH] [--json|--csv] [--csv-info] [--show-filters] [--include-hidden] [--strict] [--no-same-size] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--modified-since UNIX_SECONDS] [--modified-until UNIX_SECONDS] [--modified-within DURATION] [--path-contains TEXT ...] [--exclude-path-contains TEXT ...] [--extension EXTENSIONS ...] [--largest N] [--sort path|size|modified] [--settings FILE]\n  mediaforge dupes [PATH] [--json] [--summary] [--include-hidden] [--exclude-path-contains TEXT ...] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--top-groups N] [--jobs N]\n  mediaforge probe <FILE> [--compact] [--summary]\n  mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--type video|audio] [--min-size SIZE] [--max-size SIZE] [--jobs N] [--summary] [--compare] [--csv]\n  mediaforge storyboard <VIDEO> --output <IMAGE> [--interval SECONDS] [--columns N] [--rows N] [--width PIXELS]\n  mediaforge scene-detect-dir <PATH> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--fps RATE] [--extension EXTENSIONS] [--include-hidden] [--jobs N]\n  mediaforge scene-detect <VIDEO> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--format jsonl|csv] [--fps RATE]\n  mediaforge proxy <VIDEO> --output <FILE.mp4> [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge proxy-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET] [--jobs N] [--skip-existing] [--json]\n  mediaforge proxy-config init [FILE] [--profile fast|balanced|quality] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge extract-audio <VIDEO> --output <FILE> [--format mp3|wav|flac] [--bitrate RATE] [--stream N]\n  mediaforge extract-audio-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--format mp3|wav|flac] [--bitrate RATE] [--stream N] [--jobs N] [--skip-existing] [--json]\n  mediaforge snapshot [PATH] (--output FILE [--overwrite] | --diff FILE [--update]) [--json|--csv] [--summary] [--include-hidden] [--include-generated] [--hash] [--jobs N] [--fail-on-change]\n  mediaforge project [PATH] [--json] [--no-cache-sizes]\n  mediaforge unity-meta [PROJECT_PATH] [--json] [--summary] [--include-hidden]\n  mediaforge gitignore [PATH] [--apply] [--json]\n  mediaforge organize [PATH] [--by type|extension|size] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--apply]\n  mediaforge rename [PATH] [--replace OLD NEW] [--prefix TEXT] [--suffix TEXT] [--extension-case keep|lower|upper] [--extension EXTENSIONS] [--include-hidden] [--json] [--apply]
+        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge doctor [--json]\n  mediaforge scan-config <init|validate|show> [FILE] [--json]\n  mediaforge scan [PATH] [--json|--csv] [--csv-info] [--show-filters] [--include-hidden] [--strict] [--no-same-size] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--modified-since UNIX_SECONDS] [--modified-until UNIX_SECONDS] [--modified-within DURATION] [--path-contains TEXT ...] [--exclude-path-contains TEXT ...] [--extension EXTENSIONS ...] [--largest N] [--sort path|size|modified] [--settings FILE]\n  mediaforge dupes [PATH] [--json] [--summary] [--include-hidden] [--exclude-path-contains TEXT ...] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--top-groups N] [--jobs N]\n  mediaforge probe <FILE> [--compact] [--summary]\n  mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--type video|audio] [--min-size SIZE] [--max-size SIZE] [--jobs N] [--summary] [--compare] [--csv]\n  mediaforge storyboard <VIDEO> --output <IMAGE> [--interval SECONDS] [--columns N] [--rows N] [--width PIXELS]\n  mediaforge scene-detect-dir <PATH> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--summary] [--fps RATE] [--extension EXTENSIONS] [--include-hidden] [--jobs N]\n  mediaforge scene-detect <VIDEO> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--format jsonl|csv] [--fps RATE]\n  mediaforge proxy <VIDEO> --output <FILE.mp4> [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge proxy-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET] [--jobs N] [--skip-existing] [--json]\n  mediaforge proxy-config init [FILE] [--profile fast|balanced|quality] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge extract-audio <VIDEO> --output <FILE> [--format mp3|wav|flac] [--bitrate RATE] [--stream N]\n  mediaforge extract-audio-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--format mp3|wav|flac] [--bitrate RATE] [--stream N] [--jobs N] [--skip-existing] [--json]\n  mediaforge snapshot [PATH] (--output FILE [--overwrite] | --diff FILE [--update]) [--json|--csv] [--summary] [--include-hidden] [--include-generated] [--hash] [--jobs N] [--fail-on-change]\n  mediaforge project [PATH] [--json] [--no-cache-sizes]\n  mediaforge unity-meta [PROJECT_PATH] [--json] [--summary] [--include-hidden]\n  mediaforge gitignore [PATH] [--apply] [--json]\n  mediaforge organize [PATH] [--by type|extension|size] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--apply]\n  mediaforge rename [PATH] [--replace OLD NEW] [--prefix TEXT] [--suffix TEXT] [--extension-case keep|lower|upper] [--extension EXTENSIONS] [--include-hidden] [--json] [--apply]
   mediaforge sequence [PATH] [--prefix NAME] [--start N] [--padding N] [--extension EXTENSIONS] [--include-hidden] [--natural] [--json] [--apply]\n  mediaforge undo [PATH] [--json]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--exclude-path-contains TEXT ...] [--include-hidden] [--include-generated] [--dry-run] [--json] [--list]\n  mediaforge --version\n  mediaforge --help"
     );
 }
@@ -5583,6 +5583,7 @@ struct SceneCut {
 struct SceneDetection {
     input: PathBuf,
     cuts: Vec<SceneCut>,
+    cut_count: usize,
     duration: Option<f64>,
     fps: f64,
     nominal_fps: u32,
@@ -5693,6 +5694,7 @@ fn detect_scene_cuts(
     min_gap: f64,
     fps_override: Option<f64>,
     segments: bool,
+    summary_only: bool,
 ) -> Result<SceneDetection, String> {
     let input = fs::canonicalize(input)
         .map_err(|error| format!("cannot access video {}: {error}", input.display()))?;
@@ -5753,6 +5755,8 @@ fn detect_scene_cuts(
     let mut line = Vec::with_capacity(256);
     let mut current_time = None;
     let mut cuts = Vec::<SceneCut>::new();
+    let mut summary_last_cut = None::<SceneCut>;
+    let mut cut_count = 0_usize;
     loop {
         line.clear();
         let bytes_read = loop {
@@ -5794,7 +5798,18 @@ fn detect_scene_cuts(
                 && (0.0..=1.0).contains(&score)
             {
                 let cut = SceneCut { seconds, score };
-                if let Some(previous) = cuts.last_mut()
+                if summary_only {
+                    if let Some(previous) = summary_last_cut.as_mut()
+                        && seconds - previous.seconds < min_gap
+                    {
+                        if score > previous.score {
+                            *previous = cut;
+                        }
+                    } else {
+                        summary_last_cut = Some(cut);
+                        cut_count += 1;
+                    }
+                } else if let Some(previous) = cuts.last_mut()
                     && seconds - previous.seconds < min_gap
                 {
                     if score > previous.score {
@@ -5821,6 +5836,7 @@ fn detect_scene_cuts(
     }
     Ok(SceneDetection {
         input,
+        cut_count: if summary_only { cut_count } else { cuts.len() },
         cuts,
         duration,
         fps,
@@ -5833,8 +5849,22 @@ fn write_scene_detection_json(
     detection: &SceneDetection,
     threshold: f64,
     min_gap: f64,
+    summary_only: bool,
 ) -> io::Result<()> {
     let source = json_string(&detection.input.to_string_lossy());
+    if summary_only {
+        writeln!(
+            output,
+            "{{\"type\":\"summary\",\"path\":{source},\"cuts\":{},\"duration_seconds\":{},\"fps\":{:.6},\"nominal_fps\":{},\"threshold\":{threshold:.6},\"min_gap_seconds\":{min_gap:.6},\"details_included\":false}}",
+            detection.cut_count,
+            detection
+                .duration
+                .map_or("null".to_owned(), |duration| format!("{duration:.6}")),
+            detection.fps,
+            detection.nominal_fps
+        )?;
+        return Ok(());
+    }
     if let Some(duration) = detection.duration {
         let mut intervals = Vec::with_capacity(detection.cuts.len() + 1);
         let mut start = 0.0_f64;
@@ -5875,7 +5905,7 @@ fn write_scene_detection_json(
             output,
             "{{\"type\":\"summary\",\"path\":{source},\"segments\":{},\"scene_cuts\":{},\"duration_seconds\":{duration:.6},\"fps\":{:.6},\"nominal_fps\":{},\"threshold\":{threshold:.6},\"min_gap_seconds\":{min_gap:.6}}}",
             intervals.len(),
-            detection.cuts.len(),
+            detection.cut_count,
             detection.fps,
             detection.nominal_fps
         )?;
@@ -5895,9 +5925,7 @@ fn write_scene_detection_json(
         writeln!(
             output,
             "{{\"type\":\"summary\",\"path\":{source},\"cuts\":{},\"fps\":{:.6},\"nominal_fps\":{},\"threshold\":{threshold:.6},\"min_gap_seconds\":{min_gap:.6}}}",
-            detection.cuts.len(),
-            detection.fps,
-            detection.nominal_fps
+            detection.cut_count, detection.fps, detection.nominal_fps
         )?;
     }
     Ok(())
@@ -5966,7 +5994,7 @@ fn run_scene_detect(args: &[String]) -> Result<(), String> {
         }
     }
     let input = input.ok_or_else(|| "scene-detect requires a video file".to_owned())?;
-    let detection = detect_scene_cuts(&input, threshold, min_gap, fps_override, segments)?;
+    let detection = detect_scene_cuts(&input, threshold, min_gap, fps_override, segments, false)?;
     let input = &detection.input;
     let cuts = &detection.cuts;
     let duration = detection.duration;
@@ -6033,7 +6061,7 @@ fn run_scene_detect(args: &[String]) -> Result<(), String> {
                 }
             }
         } else {
-            write_scene_detection_json(&mut output, &detection, threshold, min_gap)?;
+            write_scene_detection_json(&mut output, &detection, threshold, min_gap, false)?;
         }
         Ok(())
     })();
@@ -6050,6 +6078,7 @@ fn run_scene_detect_dir(args: &[String]) -> Result<(), String> {
     let mut threshold = 0.4_f64;
     let mut min_gap = 1.0_f64;
     let mut segments = false;
+    let mut summary_only = false;
     let mut include_hidden = false;
     let mut extensions = None;
     let mut fps = None;
@@ -6106,10 +6135,11 @@ fn run_scene_detect_dir(args: &[String]) -> Result<(), String> {
                 }
             }
             "--segments" => segments = true,
+            "--summary" => summary_only = true,
             "--include-hidden" => include_hidden = true,
             "--help" | "-h" => {
                 println!(
-                    "Usage: mediaforge scene-detect-dir <PATH> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--fps RATE] [--extension EXTENSIONS] [--include-hidden] [--jobs N]\n\nFind likely scene cuts in every video under a directory. Streams a progress record and each video's JSON Lines results as processing finishes, followed by a batch summary. --segments emits contiguous intervals instead of individual cuts. --jobs controls concurrent FFmpeg processes (1–16; default 4)."
+                    "Usage: mediaforge scene-detect-dir <PATH> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--summary] [--fps RATE] [--extension EXTENSIONS] [--include-hidden] [--jobs N]\n\nFind likely scene cuts in every video under a directory. Streams a progress record and each video's JSON Lines results as processing finishes, followed by a batch summary. --segments emits contiguous intervals instead of individual cuts. --summary counts scene cuts but omits per-cut and per-segment records, using bounded cut memory for long videos. --jobs controls concurrent FFmpeg processes (1–16; default 4)."
                 );
                 return Ok(());
             }
@@ -6161,7 +6191,14 @@ fn run_scene_detect_dir(args: &[String]) -> Result<(), String> {
                     let Some(record) = records.get(index) else {
                         break;
                     };
-                    let result = detect_scene_cuts(&record.path, threshold, min_gap, fps, segments);
+                    let result = detect_scene_cuts(
+                        &record.path,
+                        threshold,
+                        min_gap,
+                        fps,
+                        segments,
+                        summary_only,
+                    );
                     let (success, output) = match result {
                         Ok(detection) => {
                             let mut output = Vec::new();
@@ -6170,6 +6207,7 @@ fn run_scene_detect_dir(args: &[String]) -> Result<(), String> {
                                 &detection,
                                 threshold,
                                 min_gap,
+                                summary_only,
                             ) {
                                 Ok(()) => (
                                     true,
