@@ -2091,17 +2091,25 @@ fn sample_signature_for_path(root: &Path, relative: &str, size: u64) -> Result<u
         .map_err(|error| format!("could not sample {}: {error}", path.display()))
 }
 
-fn sample_signatures<P: AsRef<str> + Sync>(
+fn for_each_sample_signature<P, F>(
     root: &Path,
     paths: &[P],
     size: u64,
     jobs: usize,
-) -> Vec<Result<u64, String>> {
+    mut visit: F,
+) -> Result<(), String>
+where
+    P: AsRef<str> + Sync,
+    F: FnMut(usize, Result<u64, String>) -> Result<(), String>,
+{
     if jobs == 1 || paths.len() < 8 {
-        return paths
-            .iter()
-            .map(|relative| sample_signature_for_path(root, relative.as_ref(), size))
-            .collect();
+        for (index, relative) in paths.iter().enumerate() {
+            visit(
+                index,
+                sample_signature_for_path(root, relative.as_ref(), size),
+            )?;
+        }
+        return Ok(());
     }
     let worker_count = jobs.min(paths.len());
     let results = (0..paths.len())
@@ -2128,14 +2136,15 @@ fn sample_signatures<P: AsRef<str> + Sync>(
             handle.join().expect("duplicate sampling worker panicked");
         }
     });
-    results
-        .into_iter()
-        .map(|result| {
+    for (index, result) in results.into_iter().enumerate() {
+        visit(
+            index,
             result
                 .into_inner()
-                .expect("every duplicate sample is written")
-        })
-        .collect()
+                .expect("every duplicate sample is written"),
+        )?;
+    }
+    Ok(())
 }
 
 struct VerifiedDuplicateGroup {
@@ -2388,8 +2397,7 @@ fn run_dupes(args: &[String]) -> Result<(), String> {
     let mut reclaimable = 0_u128;
     for (size, paths) in duplicate_sizes {
         let mut by_sample: HashMap<u64, Vec<VerifiedDuplicateGroup>> = HashMap::new();
-        let signatures = sample_signatures(&root, &paths, size, jobs);
-        for (index, signature) in signatures.into_iter().enumerate() {
+        for_each_sample_signature(&root, &paths, size, jobs, |index, signature| {
             let relative = paths[index].as_ref();
             let signature = signature?;
             let candidate = root.join(relative);
@@ -2425,7 +2433,8 @@ fn run_dupes(args: &[String]) -> Result<(), String> {
                     count: 1,
                 });
             }
-        }
+            Ok(())
+        })?;
         for group in by_sample
             .into_values()
             .flatten()
