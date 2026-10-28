@@ -186,6 +186,7 @@ fn walk_strict(
     include_hidden: bool,
     include_generated: bool,
     skip_dirs: &[&str],
+    ignored: &[IgnoreRule],
     records: &mut Vec<FileRecord>,
 ) -> Result<(), String> {
     let entries = fs::read_dir(current)
@@ -205,11 +206,17 @@ fn walk_strict(
         if file_type.is_symlink() {
             continue;
         }
+        let relative = path
+            .strip_prefix(root)
+            .map_err(|error| format!("cannot relativize {}: {error}", path.display()))?
+            .to_string_lossy()
+            .replace('\\', "/");
         if file_type.is_dir() {
             let generated_hidden =
                 include_generated && PACK_GENERATED_DIRS.contains(&name.as_str());
             if skip_dirs.contains(&name.as_str())
                 || (!include_hidden && is_hidden(&name) && !generated_hidden)
+                || is_ignored_directory(&relative, ignored)
             {
                 continue;
             }
@@ -219,17 +226,16 @@ fn walk_strict(
                 include_hidden,
                 include_generated,
                 skip_dirs,
+                ignored,
                 records,
             )?;
-        } else if file_type.is_file() && (include_hidden || !is_hidden(&name)) {
+        } else if file_type.is_file()
+            && (include_hidden || !is_hidden(&name))
+            && !is_ignored(&relative, ignored)
+        {
             let metadata = entry
                 .metadata()
                 .map_err(|error| format!("cannot inspect {}: {error}", path.display()))?;
-            let relative = path
-                .strip_prefix(root)
-                .map_err(|error| format!("cannot relativize {}: {error}", path.display()))?
-                .to_string_lossy()
-                .replace('\\', "/");
             let extension = path
                 .extension()
                 .and_then(|value| value.to_str())
@@ -2785,9 +2791,9 @@ fn run_pack(args: &[String]) -> Result<(), String> {
         include_hidden,
         include_generated,
         &skip_dirs,
+        &ignored,
         &mut records,
     )?;
-    records.retain(|record| !is_ignored(&record.relative, &ignored));
     if let Some(types) = &selected_types {
         records.retain(|record| types.contains(&record.kind));
     }
