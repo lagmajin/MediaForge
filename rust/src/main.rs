@@ -1123,6 +1123,11 @@ fn parse_scan_settings(contents: &str, path: &Path) -> Result<Vec<String>, Strin
     let contents = contents.strip_prefix('\u{feff}').unwrap_or(contents);
     let mut args = Vec::new();
     let mut seen_single_value_keys = HashSet::new();
+    let mut min_size = None;
+    let mut max_size = None;
+    let mut modified_since = None;
+    let mut modified_until = None;
+    let mut modified_within = false;
     for (index, raw_line) in contents.lines().enumerate() {
         let line_number = index + 1;
         let line = raw_line.trim();
@@ -1165,6 +1170,60 @@ fn parse_scan_settings(contents: &str, path: &Path) -> Result<Vec<String>, Strin
                 if value.is_empty() {
                     return Err(invalid());
                 }
+                let invalid_value = |reason: &str| {
+                    format!(
+                        "invalid scan setting at {}:{line_number}: {key} {reason}",
+                        path.display()
+                    )
+                };
+                match key {
+                    "type" if parse_asset_kind(value).is_none() => {
+                        return Err(invalid_value(
+                            "must be video, audio, image, model, texture, project, or other",
+                        ));
+                    }
+                    "min_size" => {
+                        min_size = Some((
+                            parse_size(value).map_err(|_| invalid_value("has an invalid size"))?,
+                            line_number,
+                        ));
+                    }
+                    "max_size" => {
+                        max_size = Some((
+                            parse_size(value).map_err(|_| invalid_value("has an invalid size"))?,
+                            line_number,
+                        ));
+                    }
+                    "modified_since" => {
+                        modified_since = Some((
+                            value
+                                .parse::<u64>()
+                                .map_err(|_| invalid_value("must be non-negative Unix seconds"))?,
+                            line_number,
+                        ));
+                    }
+                    "modified_until" => {
+                        modified_until = Some((
+                            value
+                                .parse::<u64>()
+                                .map_err(|_| invalid_value("must be non-negative Unix seconds"))?,
+                            line_number,
+                        ));
+                    }
+                    "modified_within" => {
+                        parse_duration_seconds(value).map_err(|error| invalid_value(&error))?;
+                        modified_within = true;
+                    }
+                    "extension" => {
+                        parse_extensions(value).map_err(|error| invalid_value(&error))?;
+                    }
+                    "largest" => {
+                        value
+                            .parse::<usize>()
+                            .map_err(|_| invalid_value("must be a non-negative integer"))?;
+                    }
+                    _ => {}
+                }
                 let option = match key {
                     "type" => "--type",
                     "min_size" => "--min-size",
@@ -1203,6 +1262,28 @@ fn parse_scan_settings(contents: &str, path: &Path) -> Result<Vec<String>, Strin
                 ));
             }
         }
+    }
+    if let (Some((min, _)), Some((max, line))) = (min_size, max_size) {
+        if max < min {
+            return Err(format!(
+                "invalid scan settings at {}:{line}: max_size must be greater than or equal to min_size",
+                path.display()
+            ));
+        }
+    }
+    if let (Some((since, _)), Some((until, line))) = (modified_since, modified_until) {
+        if until < since {
+            return Err(format!(
+                "invalid scan settings at {}:{line}: modified_until must be greater than or equal to modified_since",
+                path.display()
+            ));
+        }
+    }
+    if modified_within && (modified_since.is_some() || modified_until.is_some()) {
+        return Err(format!(
+            "invalid scan settings at {}: modified_within cannot be combined with modified_since or modified_until",
+            path.display()
+        ));
     }
     Ok(args)
 }
@@ -1257,11 +1338,42 @@ fn scan_args_with_settings(args: &[String]) -> Result<Vec<String>, String> {
 }
 
 fn run_scan_config(args: &[String]) -> Result<(), String> {
-    let action = args
-        .first()
-        .ok_or_else(|| "scan-config requires the 'init' action".to_owned())?;
+    let Some(action) = args.first().map(String::as_str) else {
+        println!(
+            "Usage: mediaforge scan-config <init|validate> [FILE]\n\nCreate or validate reusable scan filter settings."
+        );
+        return Ok(());
+    };
+    if action == "--help" || action == "-h" {
+        println!(
+            "Usage: mediaforge scan-config <init|validate> [FILE]\n\nCreate or validate reusable scan filter settings."
+        );
+        return Ok(());
+    }
+    if action == "validate" {
+        if args.iter().any(|arg| arg == "--help" || arg == "-h") {
+            println!(
+                "Usage: mediaforge scan-config validate [FILE]\n\nValidate scan filter keys, values, and cross-field constraints without scanning files. Defaults to .mediaforge-scan."
+            );
+            return Ok(());
+        }
+        if args.len() > 2 {
+            return Err("scan-config validate accepts one file path".to_owned());
+        }
+        let path = args
+            .get(1)
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(".mediaforge-scan"));
+        let contents = fs::read_to_string(&path)
+            .map_err(|error| format!("cannot read scan settings {}: {error}", path.display()))?;
+        parse_scan_settings(&contents, &path)?;
+        println!("Valid scan settings {}", path.display());
+        return Ok(());
+    }
     if action != "init" {
-        return Err(format!("unknown scan-config action '{action}'; use init"));
+        return Err(format!(
+            "unknown scan-config action '{action}'; use init or validate"
+        ));
     }
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
         println!(
@@ -3083,7 +3195,7 @@ fn fraction_ceil_scaled(fraction: &str, multiplier: u128) -> u128 {
 
 fn print_help() {
     println!(
-        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan-config init [FILE]\n  mediaforge scan [PATH] [--json|--csv] [--csv-info] [--include-hidden] [--strict] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--modified-since UNIX_SECONDS] [--modified-until UNIX_SECONDS] [--modified-within DURATION] [--path-contains TEXT ...] [--exclude-path-contains TEXT ...] [--extension EXTENSIONS ...] [--largest N] [--sort path|size|modified] [--settings FILE]\n  mediaforge dupes [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--top-groups N]\n  mediaforge probe <FILE> [--compact] [--summary]\n  mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--type video|audio] [--min-size SIZE] [--max-size SIZE] [--jobs N] [--summary] [--compare] [--csv]\n  mediaforge storyboard <VIDEO> --output <IMAGE> [--interval SECONDS] [--columns N] [--rows N] [--width PIXELS]\n  mediaforge scene-detect-dir <PATH> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--fps RATE] [--extension EXTENSIONS] [--include-hidden] [--jobs N]\n  mediaforge scene-detect <VIDEO> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--format jsonl|csv] [--fps RATE]\n  mediaforge proxy <VIDEO> --output <FILE.mp4> [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge proxy-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET] [--jobs N] [--skip-existing] [--json]\n  mediaforge proxy-config init [FILE] [--profile fast|balanced|quality] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge extract-audio <VIDEO> --output <FILE> [--format mp3|wav|flac] [--bitrate RATE] [--stream N]\n  mediaforge extract-audio-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--format mp3|wav|flac] [--bitrate RATE] [--stream N] [--jobs N] [--skip-existing] [--json]\n  mediaforge snapshot [PATH] (--output FILE [--overwrite] | --diff FILE [--update]) [--json|--csv] [--include-hidden] [--include-generated] [--hash] [--jobs N] [--fail-on-change]\n  mediaforge project [PATH] [--json]\n  mediaforge unity-meta [PROJECT_PATH] [--json] [--include-hidden]\n  mediaforge gitignore [PATH] [--apply]\n  mediaforge organize [PATH] [--by type|extension|size] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--apply]\n  mediaforge sequence [PATH] [--prefix NAME] [--start N] [--padding N] [--extension EXTENSIONS] [--include-hidden] [--natural] [--json] [--apply]\n  mediaforge undo [PATH] [--json]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--include-hidden] [--include-generated] [--dry-run] [--json] [--list]\n  mediaforge --version\n  mediaforge --help"
+        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan-config <init|validate> [FILE]\n  mediaforge scan [PATH] [--json|--csv] [--csv-info] [--include-hidden] [--strict] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--modified-since UNIX_SECONDS] [--modified-until UNIX_SECONDS] [--modified-within DURATION] [--path-contains TEXT ...] [--exclude-path-contains TEXT ...] [--extension EXTENSIONS ...] [--largest N] [--sort path|size|modified] [--settings FILE]\n  mediaforge dupes [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--top-groups N]\n  mediaforge probe <FILE> [--compact] [--summary]\n  mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--type video|audio] [--min-size SIZE] [--max-size SIZE] [--jobs N] [--summary] [--compare] [--csv]\n  mediaforge storyboard <VIDEO> --output <IMAGE> [--interval SECONDS] [--columns N] [--rows N] [--width PIXELS]\n  mediaforge scene-detect-dir <PATH> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--fps RATE] [--extension EXTENSIONS] [--include-hidden] [--jobs N]\n  mediaforge scene-detect <VIDEO> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--format jsonl|csv] [--fps RATE]\n  mediaforge proxy <VIDEO> --output <FILE.mp4> [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge proxy-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET] [--jobs N] [--skip-existing] [--json]\n  mediaforge proxy-config init [FILE] [--profile fast|balanced|quality] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge extract-audio <VIDEO> --output <FILE> [--format mp3|wav|flac] [--bitrate RATE] [--stream N]\n  mediaforge extract-audio-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--format mp3|wav|flac] [--bitrate RATE] [--stream N] [--jobs N] [--skip-existing] [--json]\n  mediaforge snapshot [PATH] (--output FILE [--overwrite] | --diff FILE [--update]) [--json|--csv] [--include-hidden] [--include-generated] [--hash] [--jobs N] [--fail-on-change]\n  mediaforge project [PATH] [--json]\n  mediaforge unity-meta [PROJECT_PATH] [--json] [--include-hidden]\n  mediaforge gitignore [PATH] [--apply]\n  mediaforge organize [PATH] [--by type|extension|size] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--apply]\n  mediaforge sequence [PATH] [--prefix NAME] [--start N] [--padding N] [--extension EXTENSIONS] [--include-hidden] [--natural] [--json] [--apply]\n  mediaforge undo [PATH] [--json]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--include-hidden] [--include-generated] [--dry-run] [--json] [--list]\n  mediaforge --version\n  mediaforge --help"
     );
 }
 
