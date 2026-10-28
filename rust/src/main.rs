@@ -195,7 +195,11 @@ fn compare_extensions_case_insensitive(left: &str, right: &str) -> std::cmp::Ord
 }
 
 fn classify(path: &Path) -> Kind {
-    let Some(extension) = path.extension().and_then(|extension| extension.to_str()) else {
+    classify_extension(path.extension().and_then(|extension| extension.to_str()))
+}
+
+fn classify_extension(extension: Option<&str>) -> Kind {
+    let Some(extension) = extension else {
         return Kind::Other;
     };
     ASSET_KIND_BY_EXTENSION
@@ -805,15 +809,15 @@ where
                 };
                 pending.push((path, child_ignored));
             } else if file_type.is_file() {
-                let kind = classify(&path);
-                if filters.kinds.is_some_and(|values| !values.contains(&kind)) {
-                    return Ok(());
-                }
                 let extension_value = path.extension().and_then(|value| value.to_str());
                 if filters
                     .extensions
                     .is_some_and(|values| !matches_extension_filter(extension_value, values))
                 {
+                    return Ok(());
+                }
+                let kind = classify_extension(extension_value);
+                if filters.kinds.is_some_and(|values| !values.contains(&kind)) {
                     return Ok(());
                 }
                 let has_path_filter = filters
