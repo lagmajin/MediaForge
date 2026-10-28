@@ -10972,12 +10972,15 @@ fn tar_header(
 }
 
 fn pax_record(key: &str, value: &str) -> String {
-    let body = format!(" {key}={value}\n");
-    let mut length = body.len() + 1;
+    let body_length = key.len() + value.len() + 3;
+    let mut length = body_length + 1;
     loop {
-        let updated = body.len() + length.to_string().len();
+        let updated = body_length + length.to_string().len();
         if updated == length {
-            return format!("{length}{body}");
+            let mut record = String::with_capacity(length);
+            writeln!(&mut record, "{length} {key}={value}")
+                .expect("writing a PAX record into a String");
+            return record;
         }
         length = updated;
     }
