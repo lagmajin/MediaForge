@@ -445,20 +445,22 @@ fn walk_with_skip_dirs_mode_counted(
                 {
                     continue;
                 }
-                let extension = path
-                    .extension()
-                    .and_then(|s| s.to_str())
-                    .map(|s| format!(".{}", s.to_ascii_lowercase()))
-                    .unwrap_or_else(|| "[no extension]".to_owned());
                 let kind = classify(&path);
-                if filters.kind.is_some_and(|filter| filter != kind)
-                    || filters
-                        .extensions
-                        .is_some_and(|values| !values.contains(&extension))
-                {
+                if filters.kind.is_some_and(|filter| filter != kind) {
                     continue;
                 }
                 if is_ignored(&relative, &active_ignored) {
+                    continue;
+                }
+                let extension = path
+                    .extension()
+                    .and_then(|value| value.to_str())
+                    .map(|value| format!(".{}", value.to_ascii_lowercase()))
+                    .unwrap_or_else(|| "[no extension]".to_owned());
+                if filters
+                    .extensions
+                    .is_some_and(|extensions| !extensions.contains(&extension))
+                {
                     continue;
                 }
                 let metadata = match entry.metadata() {
