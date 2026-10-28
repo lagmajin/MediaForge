@@ -6679,7 +6679,13 @@ fn run_project(args: &[String]) -> Result<(), String> {
     let mut caches = Vec::<(String, u64, u64)>::new();
     for (engine, required, cache_names) in &engines {
         for required_path in required {
-            if !root.join(required_path).exists() {
+            let required_entry = root.join(required_path);
+            let present = if *required_path == "project.godot" {
+                is_real_file(&required_entry)
+            } else {
+                is_real_directory(&required_entry)
+            };
+            if !present {
                 missing.push((engine, required_path));
             }
         }
