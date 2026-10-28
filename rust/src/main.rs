@@ -290,20 +290,17 @@ fn sort_entries(entries: &mut Vec<fs::DirEntry>) {
     let mut keyed = entries
         .drain(..)
         .map(|entry| {
-            let lowercase_name = entry.file_name().to_string_lossy().to_lowercase();
-            (lowercase_name, entry)
+            let original_name = entry.file_name().to_string_lossy().into_owned();
+            let lowercase_name = original_name.to_lowercase();
+            (lowercase_name, original_name, entry)
         })
         .collect::<Vec<_>>();
-    keyed.sort_by(|(left_lower, left), (right_lower, right)| {
-        left_lower.cmp(right_lower).then_with(|| {
-            let left_name = left.file_name();
-            let right_name = right.file_name();
-            left_name
-                .to_string_lossy()
-                .cmp(&right_name.to_string_lossy())
-        })
+    keyed.sort_by(|(left_lower, left_name, _), (right_lower, right_name, _)| {
+        left_lower
+            .cmp(right_lower)
+            .then_with(|| left_name.cmp(right_name))
     });
-    entries.extend(keyed.into_iter().map(|(_, entry)| entry));
+    entries.extend(keyed.into_iter().map(|(_, _, entry)| entry));
 }
 
 fn natural_name_cmp(left: &str, right: &str) -> std::cmp::Ordering {
