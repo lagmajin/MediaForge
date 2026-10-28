@@ -7272,12 +7272,7 @@ fn run_project(args: &[String]) -> Result<(), String> {
             unreal_files.push((project_file, association));
         }
     }
-    unreal_files.sort_by(|left, right| {
-        left.0
-            .to_lowercase()
-            .cmp(&right.0.to_lowercase())
-            .then_with(|| left.0.cmp(&right.0))
-    });
+    unreal_files.sort_by(|left, right| compare_paths_case_insensitive(&left.0, &right.0));
     if !unreal_files.is_empty() {
         engines.push((
             "Unreal Engine",
@@ -7360,12 +7355,7 @@ fn run_project(args: &[String]) -> Result<(), String> {
             }
         }
     }
-    project_files.sort_by(|left, right| {
-        left.0
-            .to_lowercase()
-            .cmp(&right.0.to_lowercase())
-            .then_with(|| left.0.cmp(&right.0))
-    });
+    project_files.sort_by(|left, right| compare_paths_case_insensitive(&left.0, &right.0));
 
     let mut missing = Vec::<(&str, &str)>::new();
     let mut caches = Vec::<(String, u64, u64)>::new();
