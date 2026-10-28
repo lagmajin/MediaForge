@@ -1771,7 +1771,7 @@ fn write_csv_column(output: &mut impl Write, first: &mut bool, value: &str) -> i
 
 fn print_csv(records: &[FileRecord]) -> Result<(), String> {
     let stdout = io::stdout();
-    let mut output = io::BufWriter::new(stdout.lock());
+    let mut output = io::BufWriter::with_capacity(64 * 1024, stdout.lock());
     let result = (|| -> io::Result<()> {
         output.write_all(b"path,type,extension,size_bytes,modified_unix_seconds\n")?;
         for record in records {
@@ -2724,7 +2724,7 @@ fn run_dupes(args: &[String]) -> Result<(), String> {
             truncated_groups
         );
         let stdout = io::stdout();
-        let mut output = io::BufWriter::new(stdout.lock());
+        let mut output = io::BufWriter::with_capacity(64 * 1024, stdout.lock());
         for (index, (size, files)) in groups.iter().take(displayed_groups).enumerate() {
             let comma = if index + 1 == displayed_groups {
                 ""
