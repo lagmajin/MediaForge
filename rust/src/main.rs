@@ -1080,16 +1080,17 @@ fn print_scan_filter_preview(
     );
 }
 
+fn compare_paths_case_insensitive(left: &str, right: &str) -> std::cmp::Ordering {
+    left.chars()
+        .flat_map(char::to_lowercase)
+        .cmp(right.chars().flat_map(char::to_lowercase))
+        .then_with(|| left.cmp(right))
+}
+
 fn compare_largest_records(left: &FileRecord, right: &FileRecord) -> std::cmp::Ordering {
     std::cmp::Reverse(left.size)
         .cmp(&std::cmp::Reverse(right.size))
-        .then_with(|| {
-            left.relative
-                .chars()
-                .flat_map(char::to_lowercase)
-                .cmp(right.relative.chars().flat_map(char::to_lowercase))
-        })
-        .then_with(|| left.relative.cmp(&right.relative))
+        .then_with(|| compare_paths_case_insensitive(&left.relative, &right.relative))
 }
 
 struct LargestRecord<'a>(&'a FileRecord);
@@ -1186,7 +1187,7 @@ fn print_json(
             }
         }
         for (_, _, files) in &mut groups {
-            files.sort_by_cached_key(|file| (file.to_lowercase(), (*file).to_owned()));
+            files.sort_unstable_by(|left, right| compare_paths_case_insensitive(left, right));
         }
     }
     println!("{{");
