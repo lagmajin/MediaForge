@@ -12120,7 +12120,7 @@ fn run_pack(args: &[String]) -> Result<(), String> {
         .collect::<HashSet<_>>();
     let mut sidecars_by_directory = HashMap::<PathBuf, HashMap<String, Option<String>>>::new();
     let mut ignore_rules_by_directory =
-        HashMap::<PathBuf, Vec<IgnoreRule>>::from([(PathBuf::new(), ignored.clone())]);
+        HashMap::<PathBuf, Arc<[IgnoreRule]>>::from([(PathBuf::new(), Arc::from(ignored.clone()))]);
     let mut unity_sidecars = Vec::<PackFileRecord>::new();
     for record in &records {
         let Some(asset_name) = record.path.file_name().and_then(|name| name.to_str()) else {
@@ -12166,22 +12166,37 @@ fn run_pack(args: &[String]) -> Result<(), String> {
         {
             continue;
         }
-        let mut active_ignored = ignored.clone();
-        let mut walked_parent = PathBuf::new();
-        for component in parent.components() {
-            let std::path::Component::Normal(name) = component else {
-                continue;
-            };
-            walked_parent.push(name);
-            if let Some(rules) = ignore_rules_by_directory.get(&walked_parent) {
-                active_ignored.clone_from(rules);
-                continue;
+        if !ignore_rules_by_directory.contains_key(&parent) {
+            let mut walked_parent = PathBuf::new();
+            for component in parent.components() {
+                let std::path::Component::Normal(name) = component else {
+                    continue;
+                };
+                walked_parent.push(name);
+                if ignore_rules_by_directory.contains_key(&walked_parent) {
+                    continue;
+                }
+                let inherited_path = walked_parent.parent().unwrap_or(Path::new(""));
+                let inherited = ignore_rules_by_directory
+                    .get(inherited_path)
+                    .ok_or_else(|| {
+                        format!(
+                            "cannot resolve ignore rules for {}",
+                            walked_parent.display()
+                        )
+                    })?;
+                let directory = root.join(&walked_parent);
+                let rules = match extend_ignore_rules(&root, &directory, inherited)? {
+                    Cow::Borrowed(_) => Arc::clone(inherited),
+                    Cow::Owned(rules) => Arc::from(rules),
+                };
+                ignore_rules_by_directory.insert(walked_parent.clone(), rules);
             }
-            let directory = root.join(&walked_parent);
-            active_ignored = extend_ignore_rules(&root, &directory, &active_ignored)?.into_owned();
-            ignore_rules_by_directory.insert(walked_parent.clone(), active_ignored.clone());
         }
-        if is_ignored(&relative, &active_ignored) {
+        let active_ignored = ignore_rules_by_directory
+            .get(&parent)
+            .ok_or_else(|| format!("cannot resolve ignore rules for {}", parent.display()))?;
+        if is_ignored(&relative, active_ignored) {
             continue;
         }
         let sidecar_path = root.join(&relative_path);
