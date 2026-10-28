@@ -1019,6 +1019,16 @@ fn glob_matches(pattern: &[GlobToken], value: &str, scratch: &mut GlobMatchScrat
             matches!(token, GlobToken::Literal(expected) if Some(*expected) == characters.next())
         }) && characters.next().is_none();
     }
+    if value.is_ascii() {
+        return glob_matches_units(
+            pattern,
+            value.as_bytes(),
+            |byte| byte as char,
+            &mut scratch.previous,
+            &mut scratch.current,
+            &mut scratch.directory_prefix,
+        );
+    }
     scratch.value.clear();
     scratch.value.extend(value.chars());
     let GlobMatchScratch {
@@ -1027,7 +1037,14 @@ fn glob_matches(pattern: &[GlobToken], value: &str, scratch: &mut GlobMatchScrat
         current,
         directory_prefix,
     } = scratch;
-    glob_matches_chars(pattern, value, previous, current, directory_prefix)
+    glob_matches_units(
+        pattern,
+        value,
+        |character| character,
+        previous,
+        current,
+        directory_prefix,
+    )
 }
 
 fn glob_matches_path_prefix(
@@ -1038,22 +1055,14 @@ fn glob_matches_path_prefix(
     glob_matches(pattern, value, scratch)
 }
 
-fn glob_matches_chars(
+fn glob_matches_units<T: Copy>(
     pattern: &[GlobToken],
-    value: &[char],
+    value: &[T],
+    to_character: impl Fn(T) -> char,
     previous: &mut Vec<bool>,
     current: &mut Vec<bool>,
     directory_prefix: &mut Vec<bool>,
 ) -> bool {
-    if pattern
-        .iter()
-        .all(|token| matches!(token, GlobToken::Literal(_)))
-    {
-        return pattern.len() == value.len()
-            && pattern.iter().zip(value).all(
-                |(token, character)| matches!(token, GlobToken::Literal(expected) if expected == character),
-            );
-    }
     let state_len = value.len() + 1;
     previous.resize(state_len, false);
     previous.fill(false);
@@ -1067,17 +1076,18 @@ fn glob_matches_chars(
         match token {
             GlobToken::Literal(expected) => {
                 for index in 1..=value.len() {
-                    current[index] = previous[index - 1] && value[index - 1] == *expected;
+                    current[index] =
+                        previous[index - 1] && to_character(value[index - 1]) == *expected;
                 }
             }
             GlobToken::Any => {
                 for index in 1..=value.len() {
-                    current[index] = previous[index - 1] && value[index - 1] != '/';
+                    current[index] = previous[index - 1] && to_character(value[index - 1]) != '/';
                 }
             }
             GlobToken::Class { negated, members } => {
                 for index in 1..=value.len() {
-                    let character = value[index - 1];
+                    let character = to_character(value[index - 1]);
                     current[index] = previous[index - 1]
                         && character != '/'
                         && character_class_matches(members, *negated, character);
@@ -1086,7 +1096,7 @@ fn glob_matches_chars(
             GlobToken::Star { crosses_slash } => {
                 current[0] = previous[0];
                 for index in 1..=value.len() {
-                    let character = value[index - 1];
+                    let character = to_character(value[index - 1]);
                     current[index] = previous[index]
                         || ((*crosses_slash || character != '/') && current[index - 1]);
                 }
@@ -1096,8 +1106,8 @@ fn glob_matches_chars(
                 directory_prefix[0] = previous[0];
                 for index in 1..=value.len() {
                     directory_prefix[index] = previous[index] || directory_prefix[index - 1];
-                    current[index] =
-                        previous[index] || (value[index - 1] == '/' && directory_prefix[index - 1]);
+                    current[index] = previous[index]
+                        || (to_character(value[index - 1]) == '/' && directory_prefix[index - 1]);
                 }
             }
         }
