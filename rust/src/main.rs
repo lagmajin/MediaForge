@@ -4186,7 +4186,7 @@ fn run_probe_dir(args: &[String]) -> Result<(), String> {
                         let current =
                             completed.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
                         println!(
-                            "{{\"current\":{current},\"total\":{},{}",
+                            "{{\"type\":\"result\",\"current\":{current},\"total\":{},{}",
                             records.len(),
                             &json[1..]
                         );
