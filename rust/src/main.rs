@@ -1975,6 +1975,7 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
     let mut json = false;
     let mut csv = false;
     let mut overwrite = false;
+    let mut update_baseline = false;
     let mut fail_on_change = false;
     let mut include_hidden = None;
     let mut include_generated = None;
@@ -2001,6 +2002,7 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
             "--json" => json = true,
             "--csv" => csv = true,
             "--overwrite" => overwrite = true,
+            "--update" => update_baseline = true,
             "--fail-on-change" => fail_on_change = true,
             "--include-hidden" => include_hidden = Some(true),
             "--include-generated" => include_generated = Some(true),
@@ -2018,7 +2020,7 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
             }
             "--help" | "-h" => {
                 println!(
-                    "Usage: mediaforge snapshot [PATH] (--output FILE [--overwrite] | --diff FILE) [--json|--csv] [--include-hidden] [--include-generated] [--hash] [--jobs N] [--fail-on-change]\n\nSave or compare project snapshots using relative paths, sizes, and modification times. By default this is a fast metadata-only scan; --hash stores SHA-256 file fingerprints and compares contents, ignoring timestamp-only changes. --jobs controls concurrent file hashing (1–64; default up to 4). Unity/Unreal/Godot generated cache directories and hidden files are skipped by default. Snapshot files store inclusion settings and can be compared on another supported OS. --csv and --json select diff output formats. --fail-on-change applies only to --diff."
+                    "Usage: mediaforge snapshot [PATH] (--output FILE [--overwrite] | --diff FILE [--update]) [--json|--csv] [--include-hidden] [--include-generated] [--hash] [--jobs N] [--fail-on-change]\n\nSave or compare project snapshots using relative paths, sizes, and modification times. --diff FILE --update replaces the baseline with the current project state after producing the diff. By default this is a fast metadata-only scan; --hash stores SHA-256 file fingerprints and compares contents, ignoring timestamp-only changes. --jobs controls concurrent file hashing (1–64; default up to 4). Unity/Unreal/Godot generated cache directories and hidden files are skipped by default. Snapshot files store inclusion settings and can be compared on another supported OS. --csv and --json select diff output formats. --fail-on-change applies only to --diff."
                 );
                 return Ok(());
             }
@@ -2043,6 +2045,12 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
     if overwrite && baseline.is_some() {
         return Err("--overwrite can only be used with --output".to_owned());
     }
+    if update_baseline && baseline.is_none() {
+        return Err("--update can only be used with --diff".to_owned());
+    }
+    if update_baseline && overwrite {
+        return Err("--update and --overwrite cannot be used together".to_owned());
+    }
     if fail_on_change && baseline.is_none() {
         return Err("--fail-on-change can only be used with --diff".to_owned());
     }
@@ -2055,6 +2063,7 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
 
     let mut old_entries = BTreeMap::new();
     let mut excluded = None;
+    let mut baseline_path = None;
     let (use_hidden, use_generated, use_hash) = if let Some(baseline) = &baseline {
         let baseline = fs::canonicalize(baseline)
             .map_err(|error| format!("cannot access snapshot {}: {error}", baseline.display()))?;
@@ -2075,6 +2084,7 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
             );
         }
         excluded = Some(baseline);
+        baseline_path = excluded.clone();
         old_entries = entries;
         (saved_hidden, saved_generated, saved_hash)
     } else {
@@ -2190,6 +2200,20 @@ fn run_snapshot(args: &[String]) -> Result<(), String> {
             stats.removed += 1;
             stats.removed_bytes += u128::from(previous.size);
         }
+    }
+    if update_baseline {
+        let baseline = baseline_path
+            .as_ref()
+            .expect("--update requires a validated baseline");
+        write_snapshot_manifest(
+            baseline,
+            &records,
+            &current_entries,
+            use_hidden,
+            use_generated,
+            use_hash,
+            true,
+        )?;
     }
     let change_count = added + removed + modified;
     if csv {
@@ -2437,7 +2461,7 @@ fn fraction_ceil_scaled(fraction: &str, multiplier: u128) -> u128 {
 
 fn print_help() {
     println!(
-        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json|--csv] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS] [--largest N]\n  mediaforge dupes [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--top-groups N]\n  mediaforge probe <FILE> [--compact] [--summary]\n  mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--type video|audio] [--min-size SIZE] [--max-size SIZE] [--jobs N] [--summary] [--compare] [--csv]\n  mediaforge storyboard <VIDEO> --output <IMAGE> [--interval SECONDS] [--columns N] [--rows N] [--width PIXELS]\n  mediaforge scene-detect-dir <PATH> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--fps RATE] [--extension EXTENSIONS] [--include-hidden] [--jobs N]\n  mediaforge scene-detect <VIDEO> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--format jsonl|csv] [--fps RATE]\n  mediaforge proxy <VIDEO> --output <FILE.mp4> [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge proxy-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET] [--jobs N] [--skip-existing] [--json]\n  mediaforge proxy-config init [FILE] [--profile fast|balanced|quality] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge extract-audio <VIDEO> --output <FILE> [--format mp3|wav|flac] [--bitrate RATE] [--stream N]\n  mediaforge extract-audio-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--format mp3|wav|flac] [--bitrate RATE] [--stream N] [--jobs N] [--skip-existing] [--json]\n  mediaforge snapshot [PATH] (--output FILE [--overwrite] | --diff FILE) [--json|--csv] [--include-hidden] [--include-generated] [--hash] [--jobs N] [--fail-on-change]\n  mediaforge project [PATH] [--json]\n  mediaforge unity-meta [PROJECT_PATH] [--json] [--include-hidden]\n  mediaforge gitignore [PATH] [--apply]\n  mediaforge organize [PATH] [--by type|extension|size] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--apply]\n  mediaforge sequence [PATH] [--prefix NAME] [--start N] [--padding N] [--extension EXTENSIONS] [--include-hidden] [--natural] [--json] [--apply]\n  mediaforge undo [PATH] [--json]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--include-hidden] [--include-generated] [--dry-run] [--json] [--list]\n  mediaforge --version\n  mediaforge --help"
+        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json|--csv] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS] [--largest N]\n  mediaforge dupes [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--top-groups N]\n  mediaforge probe <FILE> [--compact] [--summary]\n  mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--type video|audio] [--min-size SIZE] [--max-size SIZE] [--jobs N] [--summary] [--compare] [--csv]\n  mediaforge storyboard <VIDEO> --output <IMAGE> [--interval SECONDS] [--columns N] [--rows N] [--width PIXELS]\n  mediaforge scene-detect-dir <PATH> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--fps RATE] [--extension EXTENSIONS] [--include-hidden] [--jobs N]\n  mediaforge scene-detect <VIDEO> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--format jsonl|csv] [--fps RATE]\n  mediaforge proxy <VIDEO> --output <FILE.mp4> [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge proxy-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET] [--jobs N] [--skip-existing] [--json]\n  mediaforge proxy-config init [FILE] [--profile fast|balanced|quality] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge extract-audio <VIDEO> --output <FILE> [--format mp3|wav|flac] [--bitrate RATE] [--stream N]\n  mediaforge extract-audio-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--format mp3|wav|flac] [--bitrate RATE] [--stream N] [--jobs N] [--skip-existing] [--json]\n  mediaforge snapshot [PATH] (--output FILE [--overwrite] | --diff FILE [--update]) [--json|--csv] [--include-hidden] [--include-generated] [--hash] [--jobs N] [--fail-on-change]\n  mediaforge project [PATH] [--json]\n  mediaforge unity-meta [PROJECT_PATH] [--json] [--include-hidden]\n  mediaforge gitignore [PATH] [--apply]\n  mediaforge organize [PATH] [--by type|extension|size] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--apply]\n  mediaforge sequence [PATH] [--prefix NAME] [--start N] [--padding N] [--extension EXTENSIONS] [--include-hidden] [--natural] [--json] [--apply]\n  mediaforge undo [PATH] [--json]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--include-hidden] [--include-generated] [--dry-run] [--json] [--list]\n  mediaforge --version\n  mediaforge --help"
     );
 }
 
