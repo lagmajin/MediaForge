@@ -2251,6 +2251,38 @@ fn parse_pack_types(value: &str) -> Result<HashSet<Kind>, String> {
     Ok(kinds)
 }
 
+fn validate_archive_component(component: &str) -> Result<(), String> {
+    if component.is_empty()
+        || component.ends_with('.')
+        || component.ends_with(' ')
+        || component
+            .chars()
+            .any(|character| character.is_control() || "<>\"|?*:\\/".contains(character))
+    {
+        return Err(format!(
+            "path component is not portable to Windows: {component:?}"
+        ));
+    }
+    let device_name = component
+        .split('.')
+        .next()
+        .unwrap_or(component)
+        .to_ascii_uppercase();
+    let reserved = matches!(device_name.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || ["COM", "LPT"].iter().any(|prefix| {
+            device_name.strip_prefix(prefix).is_some_and(|suffix| {
+                matches!(suffix, "¹" | "²" | "³")
+                    || (suffix.len() == 1 && matches!(suffix.as_bytes()[0], b'1'..=b'9'))
+            })
+        });
+    if reserved {
+        return Err(format!(
+            "path component is a reserved Windows device name: {component:?}"
+        ));
+    }
+    Ok(())
+}
+
 fn run_pack(args: &[String]) -> Result<(), String> {
     let mut path = None;
     let mut output = None;
@@ -2358,15 +2390,7 @@ fn run_pack(args: &[String]) -> Result<(), String> {
             let part = part.to_str().ok_or_else(|| {
                 format!("non-UTF-8 path cannot be packed: {}", relative.display())
             })?;
-            if part
-                .chars()
-                .any(|character| matches!(character, '\\' | ':' | '\0'))
-            {
-                return Err(format!(
-                    "path contains a character unsafe for cross-platform extraction: {}",
-                    relative.display()
-                ));
-            }
+            validate_archive_component(part)?;
             components.push(part);
         }
         if components.is_empty() {
