@@ -57,7 +57,7 @@ mediaforge dupes ./Game/Content --include-hidden --min-size 1M
 mediaforge project ./Game
 mediaforge gitignore ./Game
 mediaforge organize ./Media --by type
-mediaforge pack ./Game --output ../Game.tar --dry-run
+mediaforge pack ./Game --output ../Game.tar --dry-run --json
 ```
 
 Hidden folders and common generated/dependency directories (`.git`, `node_modules`, virtual environments) are skipped by default, with directory-name matching that is case-insensitive across platforms. Root and nested `.gitignore` rules are applied during traversal, so ignored directories are pruned. Symlinks are not followed. The `project` type includes engine assets such as Unity prefabs/assets, Unreal `.uasset` files, and Godot scenes/resources. The duplicate section only groups equal file sizes; it does not claim the files have identical content. JSON output includes file counts, byte totals by type and extension, and relative paths for scripts and other tools.
@@ -107,12 +107,12 @@ Organization is a preview unless `--apply` is supplied. Moves preserve paths bel
 
 ```sh
 mediaforge pack ./Game --output ../Game.tar --dry-run
-mediaforge pack ./Game --output ../Game.tar
+mediaforge pack ./Game --output ../Game.tar --json
 mediaforge pack ./Game --output ../Game-videos.tar --type video
 mediaforge pack ./Game --output ../Game-assets.tar --type image,model,texture
 ```
 
-`pack` creates an uncompressed tar archive using only Rust's standard library. It streams file contents, preserves relative paths and Unix file permissions, and uses PAX extensions for long Unicode paths and files larger than 8 GiB. Archive entries and the output filename that cannot be used on Windows, including reserved device names and Windows-forbidden characters, are rejected. Entry paths that collide when compared without case or resolve to a file/directory conflict are also rejected for reliable extraction on default Windows filesystems. `--type` can limit the archive to one or more scan types: `video`, `audio`, `image`, `model`, `texture`, `project`, or `other`. Hidden files, simple `.gitignore` patterns (including escaped glob characters, escaped trailing spaces, and Git-style `**/` matching), and common Unity/Unreal/Godot generated folders (`Library`, `Intermediate`, `DerivedDataCache`, `.godot`, `.import`, and related folders) are skipped by default. Use `--include-generated` to include those folders. Unreal's `Saved` folder is retained because it can contain backups and logs. Symlinks are never followed. Empty directories are not stored. The output must be outside the input folder and must not already exist. Already-compressed video and image files are copied as-is, so the archive can be large.
+`pack` creates an uncompressed tar archive using only Rust's standard library. It streams file contents, preserves relative paths and Unix file permissions, and uses PAX extensions for long Unicode paths and files larger than 8 GiB. Add `--json` for a machine-readable summary with the root, output path, result, file count, input bytes, and archive bytes; status is `planned`, `output_exists`, or `created`. Combine it with `--dry-run` to get a plan without writing the archive. Archive entries and the output filename that cannot be used on Windows, including reserved device names and Windows-forbidden characters, are rejected. Entry paths that collide when compared without case or resolve to a file/directory conflict are also rejected for reliable extraction on default Windows filesystems. `--type` can limit the archive to one or more scan types: `video`, `audio`, `image`, `model`, `texture`, `project`, or `other`. Hidden files, simple `.gitignore` patterns (including escaped glob characters, escaped trailing spaces, and Git-style `**/` matching), and common Unity/Unreal/Godot generated folders (`Library`, `Intermediate`, `DerivedDataCache`, `.godot`, `.import`, and related folders) are skipped by default. Use `--include-generated` to include those folders. Unreal's `Saved` folder is retained because it can contain backups and logs. Symlinks are never followed. Empty directories are not stored. The output must be outside the input folder and must not already exist. Already-compressed video and image files are copied as-is, so the archive can be large.
 
 ## Cross-platform roadmap
 

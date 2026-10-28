@@ -1181,7 +1181,7 @@ fn fraction_ceil_scaled(fraction: &str, multiplier: u128) -> u128 {
 
 fn print_help() {
     println!(
-        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE]\n  mediaforge dupes [PATH] [--json] [--include-hidden] [--min-size SIZE]\n  mediaforge probe <FILE> [--compact]\n  mediaforge project [PATH] [--json]\n  mediaforge gitignore [PATH] [--apply]\n  mediaforge organize [PATH] [--by type|extension] [--apply]\n  mediaforge undo [PATH]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--include-hidden] [--include-generated] [--dry-run]\n  mediaforge --version\n  mediaforge --help"
+        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE]\n  mediaforge dupes [PATH] [--json] [--include-hidden] [--min-size SIZE]\n  mediaforge probe <FILE> [--compact]\n  mediaforge project [PATH] [--json]\n  mediaforge gitignore [PATH] [--apply]\n  mediaforge organize [PATH] [--by type|extension] [--apply]\n  mediaforge undo [PATH]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--include-hidden] [--include-generated] [--dry-run] [--json]\n  mediaforge --version\n  mediaforge --help"
     );
 }
 
@@ -3084,12 +3084,45 @@ fn register_portable_archive_path(
     Ok(())
 }
 
+fn print_pack_json(
+    root: &Path,
+    output: &Path,
+    status: &str,
+    dry_run: bool,
+    output_exists: bool,
+    files: usize,
+    input_bytes: u64,
+    archive_bytes: Option<u64>,
+) {
+    println!("{{");
+    println!("  \"root\": {},", json_string(&root.to_string_lossy()));
+    println!("  \"output\": {},", json_string(&output.to_string_lossy()));
+    println!("  \"status\": {},", json_string(status));
+    println!("  \"dry_run\": {dry_run},");
+    println!("  \"output_exists\": {output_exists},");
+    println!("  \"files\": {files},");
+    println!("  \"input_bytes\": {input_bytes},");
+    println!(
+        "  \"input_size\": {},",
+        json_string(&human_size(input_bytes))
+    );
+    match archive_bytes {
+        Some(bytes) => {
+            println!("  \"archive_bytes\": {bytes},");
+            println!("  \"archive_size\": {}", json_string(&human_size(bytes)));
+        }
+        None => println!("  \"archive_bytes\": null,\n  \"archive_size\": null"),
+    }
+    println!("}}");
+}
+
 fn run_pack(args: &[String]) -> Result<(), String> {
     let mut path = None;
     let mut output = None;
     let mut include_hidden = false;
     let mut include_generated = false;
     let mut dry_run = false;
+    let mut json = false;
     let mut selected_types: Option<HashSet<Kind>> = None;
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
@@ -3103,6 +3136,7 @@ fn run_pack(args: &[String]) -> Result<(), String> {
             "--include-hidden" => include_hidden = true,
             "--include-generated" => include_generated = true,
             "--dry-run" => dry_run = true,
+            "--json" => json = true,
             "--type" => {
                 let value = iter
                     .next()
@@ -3111,7 +3145,7 @@ fn run_pack(args: &[String]) -> Result<(), String> {
             }
             "--help" | "-h" => {
                 println!(
-                    "Usage: mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--include-hidden] [--include-generated] [--dry-run]\n\nCreate an uncompressed, stream-written tar archive. --type accepts comma-separated scan types: video, audio, image, model, texture, project, other. Git-ignored and hidden files are skipped by default. Common Unity, Unreal, and Godot generated folders are excluded unless --include-generated is used. PAX extensions support long paths and files larger than 8 GiB."
+                    "Usage: mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--include-hidden] [--include-generated] [--dry-run] [--json]\n\nCreate an uncompressed, stream-written tar archive. --type accepts comma-separated scan types: video, audio, image, model, texture, project, other. Git-ignored and hidden files are skipped by default. Common Unity, Unreal, and Godot generated folders are excluded unless --include-generated is used. PAX extensions support long paths and files larger than 8 GiB. --json emits a machine-readable result summary."
                 );
                 return Ok(());
             }
@@ -3212,18 +3246,37 @@ fn run_pack(args: &[String]) -> Result<(), String> {
             .checked_add(record.size)
             .ok_or_else(|| "total input size exceeds the supported range".to_owned())?;
     }
-    println!(
-        "Pack plan: {} file(s), {} uncompressed",
-        entries.len(),
-        human_size(total_bytes)
-    );
-    for (record, name) in entries.iter().take(30) {
-        println!("  {}  {name}", human_size(record.size));
-    }
-    if entries.len() > 30 {
-        println!("  ... and {} more", entries.len() - 30);
+    if !json {
+        println!(
+            "Pack plan: {} file(s), {} uncompressed",
+            entries.len(),
+            human_size(total_bytes)
+        );
+        for (record, name) in entries.iter().take(30) {
+            println!("  {}  {name}", human_size(record.size));
+        }
+        if entries.len() > 30 {
+            println!("  ... and {} more", entries.len() - 30);
+        }
     }
     if dry_run {
+        if json {
+            print_pack_json(
+                &root,
+                &output_path,
+                if output_exists {
+                    "output_exists"
+                } else {
+                    "planned"
+                },
+                true,
+                output_exists,
+                entries.len(),
+                total_bytes,
+                None,
+            );
+            return Ok(());
+        }
         if output_exists {
             println!(
                 "Dry run; no archive was written. Output already exists and would not be overwritten."
@@ -3315,11 +3368,24 @@ fn run_pack(args: &[String]) -> Result<(), String> {
     let archive_size = fs::metadata(&output_path)
         .map_err(|error| format!("archive was created but could not be inspected: {error}"))?
         .len();
-    println!(
-        "Created {} ({})",
-        output_path.display(),
-        human_size(archive_size)
-    );
+    if json {
+        print_pack_json(
+            &root,
+            &output_path,
+            "created",
+            false,
+            true,
+            entries.len(),
+            total_bytes,
+            Some(archive_size),
+        );
+    } else {
+        println!(
+            "Created {} ({})",
+            output_path.display(),
+            human_size(archive_size)
+        );
+    }
     Ok(())
 }
 
