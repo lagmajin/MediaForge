@@ -1380,7 +1380,7 @@ fn fraction_ceil_scaled(fraction: &str, multiplier: u128) -> u128 {
 
 fn print_help() {
     println!(
-        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json|--csv] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS] [--largest N]\n  mediaforge dupes [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--top-groups N]\n  mediaforge probe <FILE> [--compact] [--summary]\n  mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--type video|audio] [--min-size SIZE] [--max-size SIZE] [--jobs N] [--summary] [--compare]\n  mediaforge storyboard <VIDEO> --output <IMAGE> [--interval SECONDS] [--columns N] [--rows N] [--width PIXELS]\n  mediaforge scene-detect <VIDEO> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--format jsonl|csv] [--fps RATE]\n  mediaforge proxy <VIDEO> --output <FILE.mp4> [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge proxy-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET] [--jobs N] [--skip-existing] [--json]\n  mediaforge proxy-config init [FILE] [--profile fast|balanced|quality] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge extract-audio <VIDEO> --output <FILE> [--format mp3|wav|flac] [--bitrate RATE] [--stream N]\n  mediaforge extract-audio-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--format mp3|wav|flac] [--bitrate RATE] [--stream N] [--jobs N] [--skip-existing] [--json]\n  mediaforge project [PATH] [--json]\n  mediaforge gitignore [PATH] [--apply]\n  mediaforge organize [PATH] [--by type|extension|size] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--apply]\n  mediaforge sequence [PATH] [--prefix NAME] [--start N] [--padding N] [--extension EXTENSIONS] [--include-hidden] [--natural] [--json] [--apply]\n  mediaforge undo [PATH] [--json]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--include-hidden] [--include-generated] [--dry-run] [--json] [--list]\n  mediaforge --version\n  mediaforge --help"
+        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json|--csv] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS] [--largest N]\n  mediaforge dupes [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--top-groups N]\n  mediaforge probe <FILE> [--compact] [--summary]\n  mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--type video|audio] [--min-size SIZE] [--max-size SIZE] [--jobs N] [--summary] [--compare] [--csv]\n  mediaforge storyboard <VIDEO> --output <IMAGE> [--interval SECONDS] [--columns N] [--rows N] [--width PIXELS]\n  mediaforge scene-detect <VIDEO> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--format jsonl|csv] [--fps RATE]\n  mediaforge proxy <VIDEO> --output <FILE.mp4> [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge proxy-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET] [--jobs N] [--skip-existing] [--json]\n  mediaforge proxy-config init [FILE] [--profile fast|balanced|quality] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge extract-audio <VIDEO> --output <FILE> [--format mp3|wav|flac] [--bitrate RATE] [--stream N]\n  mediaforge extract-audio-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--format mp3|wav|flac] [--bitrate RATE] [--stream N] [--jobs N] [--skip-existing] [--json]\n  mediaforge project [PATH] [--json]\n  mediaforge gitignore [PATH] [--apply]\n  mediaforge organize [PATH] [--by type|extension|size] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--apply]\n  mediaforge sequence [PATH] [--prefix NAME] [--start N] [--padding N] [--extension EXTENSIONS] [--include-hidden] [--natural] [--json] [--apply]\n  mediaforge undo [PATH] [--json]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--include-hidden] [--include-generated] [--dry-run] [--json] [--list]\n  mediaforge --version\n  mediaforge --help"
     );
 }
 
@@ -1708,11 +1708,95 @@ fn summarize_probe_differences(
     Ok(())
 }
 
+fn probe_csv_value(fields: &BTreeMap<String, String>, name: &str) -> String {
+    let Some(value) = fields.get(name) else {
+        return String::new();
+    };
+    if value == "null" {
+        return String::new();
+    }
+    let Some(value) = value
+        .strip_prefix('"')
+        .and_then(|value| value.strip_suffix('"'))
+    else {
+        return value.clone();
+    };
+    let mut decoded = String::with_capacity(value.len());
+    let mut chars = value.chars();
+    while let Some(character) = chars.next() {
+        if character != '\\' {
+            decoded.push(character);
+            continue;
+        }
+        match chars.next() {
+            Some('"') => decoded.push('"'),
+            Some('\\') => decoded.push('\\'),
+            Some('/') => decoded.push('/'),
+            Some('b') => decoded.push('\u{0008}'),
+            Some('f') => decoded.push('\u{000c}'),
+            Some('n') => decoded.push('\n'),
+            Some('r') => decoded.push('\r'),
+            Some('t') => decoded.push('\t'),
+            Some(other) => {
+                decoded.push('\\');
+                decoded.push(other);
+            }
+            None => decoded.push('\\'),
+        }
+    }
+    decoded
+}
+
+fn print_probe_csv_row(
+    path: &str,
+    ok: bool,
+    error: &str,
+    probe: Option<&str>,
+) -> Result<(), String> {
+    let mut fields = BTreeMap::new();
+    if let Some(probe) = probe {
+        let mut cursor = 0;
+        collect_json_scalars(probe.as_bytes(), &mut cursor, "", &mut fields, 0)?;
+    }
+    let columns = [
+        path.to_owned(),
+        ok.to_string(),
+        error.to_owned(),
+        probe_csv_value(&fields, "format.format_name"),
+        probe_csv_value(&fields, "format.duration"),
+        probe_csv_value(&fields, "streams[0].codec_type"),
+        probe_csv_value(&fields, "streams[0].codec_name"),
+        probe_csv_value(&fields, "streams[0].profile"),
+        probe_csv_value(&fields, "streams[0].width"),
+        probe_csv_value(&fields, "streams[0].height"),
+        probe_csv_value(&fields, "streams[0].avg_frame_rate"),
+        probe_csv_value(&fields, "streams[0].pix_fmt"),
+        probe_csv_value(&fields, "streams[0].sample_rate"),
+        probe_csv_value(&fields, "streams[0].channels"),
+        probe_csv_value(&fields, "streams[0].channel_layout"),
+        probe_csv_value(&fields, "format.size"),
+        probe_csv_value(&fields, "format.bit_rate"),
+    ];
+    let row = format!(
+        "{}\n",
+        columns
+            .iter()
+            .map(|value| csv_field(value))
+            .collect::<Vec<_>>()
+            .join(",")
+    );
+    io::stdout()
+        .lock()
+        .write_all(row.as_bytes())
+        .map_err(|write_error| format!("could not write probe CSV row: {write_error}"))
+}
+
 fn run_probe_dir(args: &[String]) -> Result<(), String> {
     const MAX_PROBE_JOBS: usize = 32;
     let mut include_hidden = false;
     let mut summary = false;
     let mut compare = false;
+    let mut csv = false;
     let mut selected_kind = None;
     let mut extensions = None;
     let mut min_size = 0_u64;
@@ -1727,6 +1811,7 @@ fn run_probe_dir(args: &[String]) -> Result<(), String> {
         match arg.as_str() {
             "--include-hidden" => include_hidden = true,
             "--summary" => summary = true,
+            "--csv" => csv = true,
             "--compare" => {
                 compare = true;
                 summary = true;
@@ -1777,7 +1862,7 @@ fn run_probe_dir(args: &[String]) -> Result<(), String> {
             }
             "--help" | "-h" => {
                 println!(
-                    "Usage: mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--type video|audio] [--min-size SIZE] [--max-size SIZE] [--jobs N] [--summary] [--compare]\n\nProbe video and audio assets in a directory with ffprobe. Emits one JSON Lines record per file. --type filters to video or audio assets and selects only that stream type in the report. --min-size and --max-size filter file sizes before probing and accept bytes or K/M/G/T units. --jobs controls concurrent ffprobe processes (1–32). --summary selects compact fields. --compare implies --summary and emits only first-stream media-spec fields that differ across files, grouped by value. Use --type to compare video or audio streams consistently."
+                    "Usage: mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--type video|audio] [--min-size SIZE] [--max-size SIZE] [--jobs N] [--summary] [--compare] [--csv]\n\nProbe video and audio assets in a directory with ffprobe. Emits one JSON Lines record per file by default. --csv writes one row per file with common video/audio metadata; failed probes are included with an error. --type filters to video or audio assets and selects only that stream type in the report. --min-size and --max-size filter file sizes before probing and accept bytes or K/M/G/T units. --jobs controls concurrent ffprobe processes (1–32). --summary selects compact fields. --compare implies --summary and emits only first-stream media-spec fields that differ across files, grouped by value. Use --type to compare video or audio streams consistently."
                 );
                 return Ok(());
             }
@@ -1789,6 +1874,9 @@ fn run_probe_dir(args: &[String]) -> Result<(), String> {
                 path = Some(PathBuf::from(value));
             }
         }
+    }
+    if csv && compare {
+        return Err("--csv cannot be combined with --compare".to_owned());
     }
     let path = path.ok_or_else(|| "probe-dir requires a directory path".to_owned())?;
     if max_size.is_some_and(|max_size| min_size > max_size) {
@@ -1820,7 +1908,11 @@ fn run_probe_dir(args: &[String]) -> Result<(), String> {
         .retain(|record| record.size >= min_size && max_size.is_none_or(|max| record.size <= max));
     records.sort_by(|left, right| left.relative.cmp(&right.relative));
     if records.is_empty() {
-        if compare {
+        if csv {
+            println!(
+                "path,ok,error,format_name,duration_seconds,codec_type,codec,profile,width,height,frame_rate,pixel_format,sample_rate,channels,channel_layout,size_bytes,bit_rate"
+            );
+        } else if compare {
             println!(
                 "{{\"files\":0,\"successful\":0,\"failed\":0,\"varying_fields\":[],\"failures\":[]}}"
             );
@@ -1846,7 +1938,7 @@ fn run_probe_dir(args: &[String]) -> Result<(), String> {
                         Kind::Audio => "a",
                         _ => unreachable!(),
                     });
-                    let result = ffprobe_json(&record.path, false, summary, selector);
+                    let result = ffprobe_json(&record.path, false, summary || csv, selector);
                     let (success, json, probe) = match result {
                         Ok(probe) => (
                             true,
@@ -1882,6 +1974,26 @@ fn run_probe_dir(args: &[String]) -> Result<(), String> {
     let failures = results.iter().filter(|(_, success, _, _)| !success).count();
     if compare {
         summarize_probe_differences(&records, &results)?;
+    } else if csv {
+        println!(
+            "path,ok,error,format_name,duration_seconds,codec_type,codec,profile,width,height,frame_rate,pixel_format,sample_rate,channels,channel_layout,size_bytes,bit_rate"
+        );
+        for (index, success, record, probe) in &results {
+            let error = if *success {
+                String::new()
+            } else {
+                let mut fields = BTreeMap::new();
+                let mut cursor = 0;
+                collect_json_scalars(record.as_bytes(), &mut cursor, "", &mut fields, 0)?;
+                probe_csv_value(&fields, "error")
+            };
+            print_probe_csv_row(
+                &records[*index].relative,
+                *success,
+                &error,
+                probe.as_deref(),
+            )?;
+        }
     } else {
         let stdout = io::stdout();
         let mut stdout = stdout.lock();
