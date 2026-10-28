@@ -1160,6 +1160,12 @@ fn run_gitignore(args: &[String]) -> Result<(), String> {
             .map_err(|error| format!("cannot re-read {}: {error}", gitignore.display()))?,
         EntryState::Other => unreachable!(),
     };
+    if current_state != state || current != existing {
+        return Err(format!(
+            "{} changed after inspection; refusing to append stale suggestions",
+            gitignore.display()
+        ));
+    }
     let current_patterns: HashSet<_> = current.lines().map(str::trim).collect();
     let to_add: Vec<_> = patterns
         .iter()
