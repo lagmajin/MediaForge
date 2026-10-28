@@ -244,11 +244,14 @@ struct IgnoreRule {
     has_slash: bool,
 }
 
-fn ignored_by_git(root: &Path) -> Vec<IgnoreRule> {
-    let Ok(text) = fs::read_to_string(root.join(".gitignore")) else {
-        return Vec::new();
+fn ignored_by_git(root: &Path) -> Result<Vec<IgnoreRule>, String> {
+    let path = root.join(".gitignore");
+    let text = match fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(format!("cannot read {}: {error}", path.display())),
     };
-    text.lines().filter_map(parse_ignore_rule).collect()
+    Ok(text.lines().filter_map(parse_ignore_rule).collect())
 }
 
 fn parse_ignore_rule(line: &str) -> Option<IgnoreRule> {
@@ -597,11 +600,7 @@ fn run_dupes(args: &[String]) -> Result<(), String> {
     }
     let mut records = Vec::new();
     walk(&root, &root, include_hidden, &mut records);
-    let ignored = if include_hidden {
-        Vec::new()
-    } else {
-        ignored_by_git(&root)
-    };
+    let ignored = ignored_by_git(&root)?;
     records.retain(|record| !is_ignored(&record.relative, &ignored));
     let mut by_size: BTreeMap<u64, Vec<String>> = BTreeMap::new();
     for record in records.into_iter().filter(|record| record.size >= min_size) {
@@ -742,11 +741,7 @@ fn run_scan(args: &[String]) -> Result<(), String> {
     if !root.is_dir() {
         return Err(format!("expected a directory: {}", root.display()));
     }
-    let ignored = if include_hidden {
-        Vec::new()
-    } else {
-        ignored_by_git(&root)
-    };
+    let ignored = ignored_by_git(&root)?;
     let mut records = Vec::new();
     walk(&root, &root, include_hidden, &mut records);
     records.retain(|record| !is_ignored(&record.relative, &ignored));
@@ -965,7 +960,7 @@ fn run_project(args: &[String]) -> Result<(), String> {
     }
 
     let mut project_files = Vec::<(String, &'static str)>::new();
-    let ignored = ignored_by_git(&root);
+    let ignored = ignored_by_git(&root)?;
     let mut pending = vec![root.clone()];
     while let Some(directory) = pending.pop() {
         let entries = match fs::read_dir(&directory) {
@@ -1810,7 +1805,7 @@ fn run_organize(args: &[String]) -> Result<(), String> {
         ));
     }
 
-    let ignored = ignored_by_git(&root);
+    let ignored = ignored_by_git(&root)?;
     let mut records = Vec::new();
     walk(&root, &root, false, &mut records);
     records.retain(|record| !is_ignored(&record.relative, &ignored));
@@ -2330,7 +2325,7 @@ fn run_pack(args: &[String]) -> Result<(), String> {
         ));
     }
 
-    let ignored = ignored_by_git(&root);
+    let ignored = ignored_by_git(&root)?;
     let mut records = Vec::new();
     let mut skip_dirs = SKIP_DIRS.to_vec();
     if !include_generated {
