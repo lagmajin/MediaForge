@@ -123,8 +123,14 @@ fn sort_entries(entries: &mut [fs::DirEntry]) {
     });
 }
 
-fn walk(root: &Path, current: &Path, include_hidden: bool, records: &mut Vec<FileRecord>) {
-    walk_with_skip_dirs(root, current, include_hidden, SKIP_DIRS, records);
+fn walk(
+    root: &Path,
+    current: &Path,
+    include_hidden: bool,
+    ignored: &[IgnoreRule],
+    records: &mut Vec<FileRecord>,
+) {
+    walk_with_skip_dirs(root, current, include_hidden, SKIP_DIRS, ignored, records);
 }
 
 fn walk_with_skip_dirs(
@@ -132,6 +138,7 @@ fn walk_with_skip_dirs(
     current: &Path,
     include_hidden: bool,
     skip_dirs: &[&str],
+    ignored: &[IgnoreRule],
     records: &mut Vec<FileRecord>,
 ) {
     let Ok(entries) = fs::read_dir(current) else {
@@ -149,19 +156,30 @@ fn walk_with_skip_dirs(
             continue;
         }
         if file_type.is_dir() {
-            if skip_dirs.contains(&name.as_str()) || (!include_hidden && is_hidden(&name)) {
-                continue;
-            }
-            walk_with_skip_dirs(root, &path, include_hidden, skip_dirs, records);
-        } else if file_type.is_file() && (include_hidden || !is_hidden(&name)) {
-            let Ok(metadata) = entry.metadata() else {
-                continue;
-            };
             let relative = path
                 .strip_prefix(root)
                 .unwrap_or(&path)
                 .to_string_lossy()
                 .replace('\\', "/");
+            if skip_dirs.contains(&name.as_str())
+                || (!include_hidden && is_hidden(&name))
+                || is_ignored_directory(&relative, ignored)
+            {
+                continue;
+            }
+            walk_with_skip_dirs(root, &path, include_hidden, skip_dirs, ignored, records);
+        } else if file_type.is_file() && (include_hidden || !is_hidden(&name)) {
+            let relative = path
+                .strip_prefix(root)
+                .unwrap_or(&path)
+                .to_string_lossy()
+                .replace('\\', "/");
+            if is_ignored(&relative, ignored) {
+                continue;
+            }
+            let Ok(metadata) = entry.metadata() else {
+                continue;
+            };
             let extension = path
                 .extension()
                 .and_then(|s| s.to_str())
@@ -628,10 +646,9 @@ fn run_dupes(args: &[String]) -> Result<(), String> {
     if !root.is_dir() {
         return Err(format!("expected a directory: {}", root.display()));
     }
-    let mut records = Vec::new();
-    walk(&root, &root, include_hidden, &mut records);
     let ignored = ignored_by_git(&root)?;
-    records.retain(|record| !is_ignored(&record.relative, &ignored));
+    let mut records = Vec::new();
+    walk(&root, &root, include_hidden, &ignored, &mut records);
     let mut by_size: BTreeMap<u64, Vec<String>> = BTreeMap::new();
     for record in records.into_iter().filter(|record| record.size >= min_size) {
         by_size
@@ -773,8 +790,7 @@ fn run_scan(args: &[String]) -> Result<(), String> {
     }
     let ignored = ignored_by_git(&root)?;
     let mut records = Vec::new();
-    walk(&root, &root, include_hidden, &mut records);
-    records.retain(|record| !is_ignored(&record.relative, &ignored));
+    walk(&root, &root, include_hidden, &ignored, &mut records);
     if let Some(kind) = kind_filter {
         records.retain(|record| record.kind.as_str() == kind);
     }
@@ -2183,8 +2199,7 @@ fn run_organize(args: &[String]) -> Result<(), String> {
 
     let ignored = ignored_by_git(&root)?;
     let mut records = Vec::new();
-    walk(&root, &root, false, &mut records);
-    records.retain(|record| !is_ignored(&record.relative, &ignored));
+    walk(&root, &root, false, &ignored, &mut records);
     let mut moves = Vec::<PlannedMove>::new();
     let mut skipped = 0usize;
     let mut destinations = HashSet::<PathBuf>::new();
