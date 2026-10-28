@@ -7148,13 +7148,15 @@ fn run_gitignore(args: &[String]) -> Result<(), String> {
     const GODOT_PATTERNS: &[&str] = &[".godot/", ".import/"];
 
     let mut apply = false;
+    let mut json = false;
     let mut path = None;
     for arg in args {
         match arg.as_str() {
             "--apply" => apply = true,
+            "--json" => json = true,
             "--help" | "-h" => {
                 println!(
-                    "Usage: mediaforge gitignore [PATH] [--apply]\n\nPreview engine-specific generated-file patterns for .gitignore. Existing files are only appended to when --apply is supplied."
+                    "Usage: mediaforge gitignore [PATH] [--apply] [--json]\n\nPreview engine-specific generated-file patterns for .gitignore. Existing files are only appended to when --apply is supplied. --json emits the result and proposed or applied patterns as one object."
                 );
                 return Ok(());
             }
@@ -7240,23 +7242,51 @@ fn run_gitignore(args: &[String]) -> Result<(), String> {
         .filter(|pattern| !existing_patterns.contains(pattern))
         .collect();
 
-    println!("Project engines: {}", engines.join(", "));
-    println!("Target: {}", gitignore.display());
+    let emit_json = |result: &str, added: &[&str]| {
+        println!(
+            "{{\"schema_version\":1,\"type\":\"gitignore\",\"root\":{},\"target\":{},\"engines\":[{}],\"result\":{},\"patterns_added\":[{}]}}",
+            json_string(&root.to_string_lossy()),
+            json_string(&gitignore.to_string_lossy()),
+            engines
+                .iter()
+                .map(|engine| json_string(engine))
+                .collect::<Vec<_>>()
+                .join(","),
+            json_string(result),
+            added
+                .iter()
+                .map(|pattern| json_string(pattern))
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+    };
+    if !json {
+        println!("Project engines: {}", engines.join(", "));
+        println!("Target: {}", gitignore.display());
+    }
     if missing.is_empty() {
-        println!("All recommended patterns are already present.");
+        if json {
+            emit_json("already_current", &[]);
+        } else {
+            println!("All recommended patterns are already present.");
+        }
         return Ok(());
     }
-    println!("{} new pattern(s):", missing.len());
-    for pattern in &missing {
-        println!("  {pattern}");
-    }
-    if unreal {
-        println!(
-            "Note: Unreal's Saved/ folder is not ignored because it can contain backups and logs."
-        );
-    }
     if !apply {
-        println!("Preview only. Re-run with --apply to append these patterns.");
+        if json {
+            emit_json("preview", &missing);
+        } else {
+            println!("{} new pattern(s):", missing.len());
+            for pattern in &missing {
+                println!("  {pattern}");
+            }
+            if unreal {
+                println!(
+                    "Note: Unreal's Saved/ folder is not ignored because it can contain backups and logs."
+                );
+            }
+            println!("Preview only. Re-run with --apply to append these patterns.");
+        }
         return Ok(());
     }
 
@@ -7287,7 +7317,11 @@ fn run_gitignore(args: &[String]) -> Result<(), String> {
         .filter(|pattern| !current_patterns.contains(pattern))
         .collect();
     if to_add.is_empty() {
-        println!("No changes needed; the patterns were added by another process.");
+        if json {
+            emit_json("already_current", &[]);
+        } else {
+            println!("No changes needed; the patterns were added by another process.");
+        }
         return Ok(());
     }
 
@@ -7334,11 +7368,23 @@ fn run_gitignore(args: &[String]) -> Result<(), String> {
         }
         EntryState::Other => unreachable!(),
     }
-    println!(
-        "Appended {} pattern(s) to {}.",
-        to_add.len(),
-        gitignore.display()
-    );
+    if json {
+        emit_json("applied", &to_add);
+    } else {
+        for pattern in &to_add {
+            println!("  {pattern}");
+        }
+        if unreal {
+            println!(
+                "Note: Unreal's Saved/ folder is not ignored because it can contain backups and logs."
+            );
+        }
+        println!(
+            "Appended {} pattern(s) to {}.",
+            to_add.len(),
+            gitignore.display()
+        );
+    }
     Ok(())
 }
 

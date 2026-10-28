@@ -171,9 +171,11 @@ The read-only inspector recognizes Unity, Unreal Engine, and Godot project marke
 ```sh
 mediaforge gitignore ./Game
 mediaforge gitignore ./Game --apply
+mediaforge gitignore ./Game --json
+mediaforge gitignore ./Game --apply --json
 ```
 
-`gitignore` detects Unity, Unreal, and Godot project markers and previews the corresponding generated-file patterns. It only appends patterns that are not already present, and only with `--apply`. Existing `.gitignore` files are preserved; symlinks and non-file targets are refused. Unreal's `Saved/` is deliberately left out because it can contain backups and logs.
+`gitignore` detects Unity, Unreal, and Godot project markers and previews the corresponding generated-file patterns. It only appends patterns that are not already present, and only with `--apply`. Add `--json` for a single object containing the detected engines, target path, result (`preview`, `applied`, or `already_current`), and proposed/applied patterns. Existing `.gitignore` files are preserved; symlinks and non-file targets are refused. Unreal's `Saved/` is deliberately left out because it can contain backups and logs.
 
 ## Organize files with preview and undo
 
