@@ -5356,8 +5356,10 @@ fn run_probe_dir(args: &[String]) -> Result<(), String> {
     let completed = std::sync::atomic::AtomicUsize::new(0);
     let stream_output = std::sync::Mutex::new(());
     let failures = std::sync::atomic::AtomicUsize::new(0);
-    let results =
-        std::sync::Mutex::new(Vec::<(usize, bool, String, Option<ProbeRetainedData>)>::new());
+    let retained_results = if stream_results { 0 } else { records.len() };
+    let results = std::sync::Mutex::new(
+        Vec::<(usize, bool, String, Option<ProbeRetainedData>)>::with_capacity(retained_results),
+    );
     let worker_count = jobs.min(records.len());
     std::thread::scope(|scope| {
         for _ in 0..worker_count {
