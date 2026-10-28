@@ -102,6 +102,7 @@ struct ScanTraversalFilters<'a> {
     max_size: Option<u64>,
     modified_since: Option<u64>,
     modified_until: Option<u64>,
+    include_modified: bool,
     extensions: Option<&'a HashSet<String>>,
     path_contains_lower: &'a [String],
     exclude_path_contains_lower: &'a [String],
@@ -406,7 +407,14 @@ fn walk_with_skip_dirs_mode_counted(
                 {
                     continue;
                 }
-                let modified = metadata.modified().ok();
+                let needs_modified = filters.modified_since.is_some()
+                    || filters.modified_until.is_some()
+                    || filters.include_modified;
+                let modified = if needs_modified {
+                    metadata.modified().ok()
+                } else {
+                    None
+                };
                 if filters.modified_since.is_some() || filters.modified_until.is_some() {
                     let Some(modified_seconds) = modified
                         .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
@@ -427,10 +435,14 @@ fn walk_with_skip_dirs_mode_counted(
                 records.push(FileRecord {
                     relative,
                     kind,
-                    modified,
+                    modified: if filters.include_modified {
+                        modified
+                    } else {
+                        None
+                    },
                     size,
                     extension,
-                    path,
+                    path: PathBuf::new(),
                 });
             }
         }
@@ -2234,6 +2246,7 @@ fn run_scan(args: &[String]) -> Result<(), String> {
         max_size,
         modified_since,
         modified_until,
+        include_modified: csv,
         extensions: extension_filter.as_ref(),
         path_contains_lower: &path_contains_lower,
         exclude_path_contains_lower: &exclude_path_contains_lower,
