@@ -5531,19 +5531,13 @@ fn run_probe_dir(args: &[String]) -> Result<(), String> {
                     let result = ffprobe_json(&source_path, false, summary, selector);
                     let (success, json, probe) = match result {
                         Ok(probe) if stream_results => {
-                            let mut json = probe;
-                            let start = json.len() - json.trim_start().len();
-                            let end = json.trim_end().len();
-                            json.truncate(end);
-                            if start > 0 {
-                                json.drain(..start);
-                            }
-                            let prefix = format!(
+                            let mut json = format!(
                                 "{{\"path\":{},\"ok\":true,\"probe\":",
                                 json_string(&record.relative)
                             );
-                            json.reserve(prefix.len() + 1);
-                            json.insert_str(0, &prefix);
+                            let probe = probe.trim();
+                            json.reserve(probe.len() + 1);
+                            json.push_str(probe);
                             json.push('}');
                             (true, json, None)
                         }
