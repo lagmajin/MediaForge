@@ -11303,10 +11303,11 @@ fn register_portable_archive_path(
     record_index: usize,
     relative: &Path,
     display_name: &str,
+    portable_prefix: &mut String,
 ) -> Result<(), String> {
     let mut components = relative.components().peekable();
     let mut actual_prefix_len = 0;
-    let mut portable_prefix = String::new();
+    portable_prefix.clear();
     while let Some(component) = components.next() {
         let std::path::Component::Normal(component) = component else {
             return Err(format!("unsafe archive path: {}", relative.display()));
@@ -11322,7 +11323,7 @@ fn register_portable_archive_path(
         actual_prefix_len += component.len();
         portable_prefix.push_str(&component.to_lowercase());
         let is_file = components.peek().is_none();
-        match paths.get(&portable_prefix) {
+        match paths.get(portable_prefix.as_str()) {
             Some((existing_index, existing_len, true)) if !is_file => {
                 return Err(format!(
                     "archive path uses a file as a directory on case-insensitive filesystems: {:?} and {display_name:?}",
@@ -11645,7 +11646,8 @@ fn run_pack(args: &[String]) -> Result<(), String> {
         &filters,
         &mut records,
     )?;
-    let mut portable_names = HashMap::<String, (usize, usize, bool)>::new();
+    let mut portable_names = HashMap::<String, (usize, usize, bool)>::with_capacity(records.len());
+    let mut portable_prefix = String::new();
     let mut total_bytes = 0_u64;
     for (record_index, record) in records.iter().enumerate() {
         let relative = record.path.as_path();
@@ -11672,6 +11674,7 @@ fn run_pack(args: &[String]) -> Result<(), String> {
             record_index,
             relative,
             &record.relative,
+            &mut portable_prefix,
         )?;
         total_bytes = total_bytes
             .checked_add(record.size)
