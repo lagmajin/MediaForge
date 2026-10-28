@@ -1119,6 +1119,189 @@ fn print_scan_csv_info(
     );
 }
 
+fn parse_scan_settings(contents: &str, path: &Path) -> Result<Vec<String>, String> {
+    let contents = contents.strip_prefix('\u{feff}').unwrap_or(contents);
+    let mut args = Vec::new();
+    for (index, raw_line) in contents.lines().enumerate() {
+        let line_number = index + 1;
+        let line = raw_line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let (key, value) = line.split_once('=').ok_or_else(|| {
+            format!(
+                "invalid scan settings at {}:{line_number}; expected key=value",
+                path.display()
+            )
+        })?;
+        let key = key.trim();
+        let value = value.trim();
+        let invalid = || {
+            format!(
+                "invalid scan settings at {}:{line_number}: {key} requires a value",
+                path.display()
+            )
+        };
+        match key {
+            "type"
+            | "min_size"
+            | "max_size"
+            | "modified_since"
+            | "modified_until"
+            | "modified_within"
+            | "path_contains"
+            | "exclude_path_contains"
+            | "extension"
+            | "largest" => {
+                if value.is_empty() {
+                    return Err(invalid());
+                }
+                let option = match key {
+                    "type" => "--type",
+                    "min_size" => "--min-size",
+                    "max_size" => "--max-size",
+                    "modified_since" => "--modified-since",
+                    "modified_until" => "--modified-until",
+                    "modified_within" => "--modified-within",
+                    "path_contains" => "--path-contains",
+                    "exclude_path_contains" => "--exclude-path-contains",
+                    "extension" => "--extension",
+                    "largest" => "--largest",
+                    _ => unreachable!(),
+                };
+                args.push(option.to_owned());
+                args.push(value.to_owned());
+            }
+            "include_hidden" | "strict" => match value.to_ascii_lowercase().as_str() {
+                "true" | "yes" | "1" => args.push(if key == "include_hidden" {
+                    "--include-hidden".to_owned()
+                } else {
+                    "--strict".to_owned()
+                }),
+                "false" | "no" | "0" => {}
+                _ => {
+                    return Err(format!(
+                        "invalid scan setting at {}:{line_number}: {key} must be true or false",
+                        path.display()
+                    ));
+                }
+            },
+            _ => {
+                return Err(format!(
+                    "unknown scan setting '{}' at {}:{line_number}",
+                    key,
+                    path.display()
+                ));
+            }
+        }
+    }
+    Ok(args)
+}
+
+fn scan_args_with_settings(args: &[String]) -> Result<Vec<String>, String> {
+    let mut settings_path = None;
+    let mut command_args = Vec::new();
+    let mut index = 0;
+    while index < args.len() {
+        let arg = &args[index];
+        if arg == "--settings" {
+            if settings_path.is_some() {
+                return Err("--settings may only be specified once".to_owned());
+            }
+            index += 1;
+            let value = args
+                .get(index)
+                .ok_or_else(|| "--settings requires a file path".to_owned())?;
+            settings_path = Some(PathBuf::from(value));
+        } else {
+            command_args.push(arg.clone());
+            if matches!(
+                arg.as_str(),
+                "--type"
+                    | "--min-size"
+                    | "--max-size"
+                    | "--modified-since"
+                    | "--modified-until"
+                    | "--modified-within"
+                    | "--path-contains"
+                    | "--exclude-path-contains"
+                    | "--extension"
+                    | "--largest"
+                    | "--sort"
+            ) {
+                index += 1;
+                if let Some(value) = args.get(index) {
+                    command_args.push(value.clone());
+                }
+            }
+        }
+        index += 1;
+    }
+    let Some(path) = settings_path else {
+        return Ok(command_args);
+    };
+    let contents = fs::read_to_string(&path)
+        .map_err(|error| format!("cannot read scan settings {}: {error}", path.display()))?;
+    let mut resolved = parse_scan_settings(&contents, &path)?;
+    resolved.extend(command_args);
+    Ok(resolved)
+}
+
+fn run_scan_config(args: &[String]) -> Result<(), String> {
+    let action = args
+        .first()
+        .ok_or_else(|| "scan-config requires the 'init' action".to_owned())?;
+    if action != "init" {
+        return Err(format!("unknown scan-config action '{action}'; use init"));
+    }
+    if args.iter().any(|arg| arg == "--help" || arg == "-h") {
+        println!(
+            "Usage: mediaforge scan-config init [FILE]\n\nCreate a reusable scan filter settings file without overwriting existing files. Defaults to .mediaforge-scan in the current directory."
+        );
+        return Ok(());
+    }
+    if args.len() > 2 {
+        return Err("scan-config init accepts one file path".to_owned());
+    }
+    let path = args
+        .get(1)
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(".mediaforge-scan"));
+    if path.file_name().is_none() {
+        return Err("settings path must name a file".to_owned());
+    }
+    let contents = "# MediaForge scan filters; remove # to enable a setting\n\
+# type=video\n\
+# min_size=500M\n\
+# max_size=2G\n\
+# modified_within=30d\n\
+# extension=mov,mxf\n\
+# extension=mp4\n\
+# path_contains=shot\n\
+# exclude_path_contains=proxy\n\
+# include_hidden=false\n\
+# strict=false\n\
+# largest=50\n";
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .map_err(|error| {
+            if error.kind() == io::ErrorKind::AlreadyExists {
+                format!(
+                    "settings file already exists; refusing to overwrite: {}",
+                    path.display()
+                )
+            } else {
+                format!("cannot create scan settings {}: {error}", path.display())
+            }
+        })?;
+    file.write_all(contents.as_bytes())
+        .map_err(|error| format!("could not write scan settings {}: {error}", path.display()))?;
+    println!("Created scan settings {}", path.display());
+    Ok(())
+}
+
 fn files_identical(left: &Path, right: &Path) -> io::Result<bool> {
     let mut left = BufReader::new(fs::File::open(left)?);
     let mut right = BufReader::new(fs::File::open(right)?);
@@ -1378,6 +1561,8 @@ fn run_dupes(args: &[String]) -> Result<(), String> {
 }
 
 fn run_scan(args: &[String]) -> Result<(), String> {
+    let resolved_args = scan_args_with_settings(args)?;
+    let args = resolved_args.as_slice();
     let mut json = false;
     let mut csv = false;
     let mut include_hidden = false;
@@ -1504,7 +1689,7 @@ fn run_scan(args: &[String]) -> Result<(), String> {
             }
             "--help" | "-h" => {
                 println!(
-                    "Usage: mediaforge scan [PATH] [--json|--csv] [--csv-info] [--include-hidden] [--strict] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--modified-since UNIX_SECONDS] [--modified-until UNIX_SECONDS] [--modified-within DURATION] [--path-contains TEXT ...] [--exclude-path-contains TEXT ...] [--extension EXTENSIONS ...] [--largest N] [--sort path|size|modified]\n\nSummarize media and game assets in a folder. --min-size and --max-size select an inclusive byte range; fractional size values are rounded up to whole bytes. --modified-since and --modified-until select an inclusive modification-time range in Unix seconds. --modified-within selects recent files using a duration such as 12h or 7d and cannot be combined with those absolute-time filters. --path-contains selects relative paths by a case-insensitive substring; repeat it to require every substring. --exclude-path-contains removes paths matching any repeated case-insensitive substring. --extension accepts comma-separated extensions; repeat it to combine more extensions. Permission and file-system errors are skipped by default; text/JSON report incomplete scans and CSV writes warnings to stderr. JSON uses schema_version 1 and includes incomplete, skipped_paths, up to 100 skipped_path_examples, skipped_paths_truncated, and the applied filters. Use --strict to fail on the first traversal error instead. --csv emits one row per matched file with path, type, extension, byte size, and modification time in Unix seconds; it always includes all matches. Add --csv-info to write a JSON scan-info record to stderr without changing CSV stdout. Use --sort path, --sort size, or --sort modified to control CSV row order; size order is largest first and modified order is newest first, with unavailable times last and deterministic path tie-breaking. --largest controls how many biggest files are shown (default: 10 in text, 20 in JSON). Defaults to the current directory.\n\nTypes: video, audio, image, model, texture, project, other\nExtensions: comma-separated, case-insensitive (for example exr,tif); use none to select files without an extension\nSizes: bytes, KiB/MiB/GiB, or K/M/G (for example 500M); fractional values round up to the next byte"
+                    "Usage: mediaforge scan [PATH] [--json|--csv] [--csv-info] [--include-hidden] [--strict] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--modified-since UNIX_SECONDS] [--modified-until UNIX_SECONDS] [--modified-within DURATION] [--path-contains TEXT ...] [--exclude-path-contains TEXT ...] [--extension EXTENSIONS ...] [--largest N] [--sort path|size|modified] [--settings FILE]\n\nSummarize media and game assets in a folder. --min-size and --max-size select an inclusive byte range; fractional size values are rounded up to whole bytes. --modified-since and --modified-until select an inclusive modification-time range in Unix seconds. --modified-within selects recent files using a duration such as 12h or 7d and cannot be combined with those absolute-time filters. --settings loads key=value scan filters; explicit command-line values are applied afterward. --path-contains selects relative paths by a case-insensitive substring; repeat it to require every substring. --exclude-path-contains removes paths matching any repeated case-insensitive substring. --extension accepts comma-separated extensions; repeat it to combine more extensions. Permission and file-system errors are skipped by default; text/JSON report incomplete scans and CSV writes warnings to stderr. JSON uses schema_version 1 and includes incomplete, skipped_paths, up to 100 skipped_path_examples, skipped_paths_truncated, and the applied filters. Use --strict to fail on the first traversal error instead. --csv emits one row per matched file with path, type, extension, byte size, and modification time in Unix seconds; it always includes all matches. Add --csv-info to write a JSON scan-info record to stderr without changing CSV stdout. Use --sort path, --sort size, or --sort modified to control CSV row order; size order is largest first and modified order is newest first, with unavailable times last and deterministic path tie-breaking. --largest controls how many biggest files are shown (default: 10 in text, 20 in JSON). Defaults to the current directory.\n\nTypes: video, audio, image, model, texture, project, other\nExtensions: comma-separated, case-insensitive (for example exr,tif); use none to select files without an extension\nSizes: bytes, KiB/MiB/GiB, or K/M/G (for example 500M); fractional values round up to the next byte"
                 );
                 return Ok(());
             }
@@ -2889,7 +3074,7 @@ fn fraction_ceil_scaled(fraction: &str, multiplier: u128) -> u128 {
 
 fn print_help() {
     println!(
-        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json|--csv] [--csv-info] [--include-hidden] [--strict] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--modified-since UNIX_SECONDS] [--modified-until UNIX_SECONDS] [--modified-within DURATION] [--path-contains TEXT ...] [--exclude-path-contains TEXT ...] [--extension EXTENSIONS ...] [--largest N] [--sort path|size|modified]\n  mediaforge dupes [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--top-groups N]\n  mediaforge probe <FILE> [--compact] [--summary]\n  mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--type video|audio] [--min-size SIZE] [--max-size SIZE] [--jobs N] [--summary] [--compare] [--csv]\n  mediaforge storyboard <VIDEO> --output <IMAGE> [--interval SECONDS] [--columns N] [--rows N] [--width PIXELS]\n  mediaforge scene-detect-dir <PATH> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--fps RATE] [--extension EXTENSIONS] [--include-hidden] [--jobs N]\n  mediaforge scene-detect <VIDEO> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--format jsonl|csv] [--fps RATE]\n  mediaforge proxy <VIDEO> --output <FILE.mp4> [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge proxy-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET] [--jobs N] [--skip-existing] [--json]\n  mediaforge proxy-config init [FILE] [--profile fast|balanced|quality] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge extract-audio <VIDEO> --output <FILE> [--format mp3|wav|flac] [--bitrate RATE] [--stream N]\n  mediaforge extract-audio-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--format mp3|wav|flac] [--bitrate RATE] [--stream N] [--jobs N] [--skip-existing] [--json]\n  mediaforge snapshot [PATH] (--output FILE [--overwrite] | --diff FILE [--update]) [--json|--csv] [--include-hidden] [--include-generated] [--hash] [--jobs N] [--fail-on-change]\n  mediaforge project [PATH] [--json]\n  mediaforge unity-meta [PROJECT_PATH] [--json] [--include-hidden]\n  mediaforge gitignore [PATH] [--apply]\n  mediaforge organize [PATH] [--by type|extension|size] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--apply]\n  mediaforge sequence [PATH] [--prefix NAME] [--start N] [--padding N] [--extension EXTENSIONS] [--include-hidden] [--natural] [--json] [--apply]\n  mediaforge undo [PATH] [--json]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--include-hidden] [--include-generated] [--dry-run] [--json] [--list]\n  mediaforge --version\n  mediaforge --help"
+        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan-config init [FILE]\n  mediaforge scan [PATH] [--json|--csv] [--csv-info] [--include-hidden] [--strict] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--modified-since UNIX_SECONDS] [--modified-until UNIX_SECONDS] [--modified-within DURATION] [--path-contains TEXT ...] [--exclude-path-contains TEXT ...] [--extension EXTENSIONS ...] [--largest N] [--sort path|size|modified] [--settings FILE]\n  mediaforge dupes [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--top-groups N]\n  mediaforge probe <FILE> [--compact] [--summary]\n  mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--type video|audio] [--min-size SIZE] [--max-size SIZE] [--jobs N] [--summary] [--compare] [--csv]\n  mediaforge storyboard <VIDEO> --output <IMAGE> [--interval SECONDS] [--columns N] [--rows N] [--width PIXELS]\n  mediaforge scene-detect-dir <PATH> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--fps RATE] [--extension EXTENSIONS] [--include-hidden] [--jobs N]\n  mediaforge scene-detect <VIDEO> [--threshold 0..1] [--min-gap SECONDS] [--segments] [--format jsonl|csv] [--fps RATE]\n  mediaforge proxy <VIDEO> --output <FILE.mp4> [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge proxy-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--profile fast|balanced|quality] [--settings FILE] [--max-width PIXELS] [--crf N] [--preset PRESET] [--jobs N] [--skip-existing] [--json]\n  mediaforge proxy-config init [FILE] [--profile fast|balanced|quality] [--max-width PIXELS] [--crf N] [--preset PRESET]\n  mediaforge extract-audio <VIDEO> --output <FILE> [--format mp3|wav|flac] [--bitrate RATE] [--stream N]\n  mediaforge extract-audio-dir <PATH> --output-dir <DIR> [--extension EXTENSIONS] [--include-hidden] [--format mp3|wav|flac] [--bitrate RATE] [--stream N] [--jobs N] [--skip-existing] [--json]\n  mediaforge snapshot [PATH] (--output FILE [--overwrite] | --diff FILE [--update]) [--json|--csv] [--include-hidden] [--include-generated] [--hash] [--jobs N] [--fail-on-change]\n  mediaforge project [PATH] [--json]\n  mediaforge unity-meta [PROJECT_PATH] [--json] [--include-hidden]\n  mediaforge gitignore [PATH] [--apply]\n  mediaforge organize [PATH] [--by type|extension|size] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--apply]\n  mediaforge sequence [PATH] [--prefix NAME] [--start N] [--padding N] [--extension EXTENSIONS] [--include-hidden] [--natural] [--json] [--apply]\n  mediaforge undo [PATH] [--json]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--include-hidden] [--include-generated] [--dry-run] [--json] [--list]\n  mediaforge --version\n  mediaforge --help"
     );
 }
 
@@ -8668,6 +8853,7 @@ fn run() -> Result<(), String> {
             Ok(())
         }
         Some("scan") => run_scan(&args[1..]),
+        Some("scan-config") => run_scan_config(&args[1..]),
         Some("snapshot") => run_snapshot(&args[1..]),
         Some("dupes") => run_dupes(&args[1..]),
         Some("probe") => run_probe(&args[1..]),
