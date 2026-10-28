@@ -11397,14 +11397,19 @@ fn validate_archive_component(component: &str) -> Result<(), String> {
         .split('.')
         .next()
         .unwrap_or(component)
-        .trim_end_matches([' ', '.'])
-        .to_ascii_uppercase();
-    let reserved = matches!(device_name.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        .trim_end_matches([' ', '.']);
+    let reserved = ["CON", "PRN", "AUX", "NUL"]
+        .iter()
+        .any(|reserved| device_name.eq_ignore_ascii_case(reserved))
         || ["COM", "LPT"].iter().any(|prefix| {
-            device_name.strip_prefix(prefix).is_some_and(|suffix| {
-                matches!(suffix, "¹" | "²" | "³")
-                    || (suffix.len() == 1 && matches!(suffix.as_bytes()[0], b'1'..=b'9'))
-            })
+            let has_prefix = device_name
+                .get(..prefix.len())
+                .is_some_and(|value| value.eq_ignore_ascii_case(prefix));
+            has_prefix
+                && device_name.get(prefix.len()..).is_some_and(|suffix| {
+                    matches!(suffix, "¹" | "²" | "³")
+                        || (suffix.len() == 1 && matches!(suffix.as_bytes()[0], b'1'..=b'9'))
+                })
         });
     if reserved {
         return Err(format!(
