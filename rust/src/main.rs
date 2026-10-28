@@ -4694,7 +4694,7 @@ fn collect_json_scalars(
     bytes: &[u8],
     index: &mut usize,
     prefix: &str,
-    fields: &mut BTreeMap<String, String>,
+    fields: &mut HashMap<String, String>,
     depth: usize,
 ) -> Result<(), String> {
     if depth > 64 {
@@ -4829,7 +4829,7 @@ fn summarize_probe_differences(
         let probe = probe
             .as_ref()
             .ok_or_else(|| "missing successful ffprobe result".to_owned())?;
-        let mut fields = BTreeMap::new();
+        let mut fields = HashMap::with_capacity(32);
         let mut cursor = 0;
         collect_json_scalars(probe.as_bytes(), &mut cursor, "", &mut fields, 0)?;
         for field in COMPARE_FIELDS {
@@ -4897,7 +4897,7 @@ fn summarize_probe_differences(
     Ok(())
 }
 
-fn probe_csv_value<'a>(fields: &'a BTreeMap<String, String>, name: &str) -> Cow<'a, str> {
+fn probe_csv_value<'a>(fields: &'a HashMap<String, String>, name: &str) -> Cow<'a, str> {
     let Some(value) = fields.get(name) else {
         return Cow::Borrowed("");
     };
@@ -4943,7 +4943,7 @@ fn print_probe_csv_row(
     error: &str,
     probe: Option<&str>,
 ) -> Result<(), String> {
-    let mut fields = BTreeMap::new();
+    let mut fields = HashMap::with_capacity(32);
     if let Some(probe) = probe {
         let mut cursor = 0;
         collect_json_scalars(probe.as_bytes(), &mut cursor, "", &mut fields, 0)?;
