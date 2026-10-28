@@ -488,6 +488,30 @@ fn glob_matches(pattern: &[GlobToken], value: &str) -> bool {
         }) && characters.next().is_none();
     }
     let value: Vec<char> = value.chars().collect();
+    glob_matches_chars(pattern, &value)
+}
+
+fn glob_matches_path_prefix(pattern: &[GlobToken], components: &[&str]) -> bool {
+    let mut value = Vec::new();
+    for (index, component) in components.iter().enumerate() {
+        if index > 0 {
+            value.push('/');
+        }
+        value.extend(component.chars());
+    }
+    glob_matches_chars(pattern, &value)
+}
+
+fn glob_matches_chars(pattern: &[GlobToken], value: &[char]) -> bool {
+    if pattern
+        .iter()
+        .all(|token| matches!(token, GlobToken::Literal(_)))
+    {
+        return pattern.len() == value.len()
+            && pattern.iter().zip(value).all(
+                |(token, character)| matches!(token, GlobToken::Literal(expected) if expected == character),
+            );
+    }
     let mut previous = vec![false; value.len() + 1];
     let mut current = vec![false; value.len() + 1];
     let mut directory_prefix = vec![false; value.len() + 1];
@@ -575,12 +599,11 @@ fn rule_matches_path(rule: &IgnoreRule, relative: &str, target_is_directory: boo
         });
     }
     for end in 1..=parts.len() {
-        let prefix = parts[..end].join("/");
         let is_directory = end < parts.len() || target_is_directory;
         if rule.directory_only && !is_directory {
             continue;
         }
-        if glob_matches(&rule.pattern, &prefix) {
+        if glob_matches_path_prefix(&rule.pattern, &parts[..end]) {
             return true;
         }
     }
