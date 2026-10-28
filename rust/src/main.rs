@@ -7883,13 +7883,12 @@ fn directory_size(root: &Path) -> Result<(u64, u64), String> {
             if file_type.is_symlink() {
                 continue;
             }
-            let path = entry.path();
             if file_type.is_dir() {
-                pending.push(path);
+                pending.push(entry.path());
             } else if file_type.is_file() {
                 let length = entry
                     .metadata()
-                    .map_err(|error| format!("cannot inspect {}: {error}", path.display()))?
+                    .map_err(|error| format!("cannot inspect {}: {error}", entry.path().display()))?
                     .len();
                 bytes = bytes.saturating_add(length);
                 files = files.saturating_add(1);
