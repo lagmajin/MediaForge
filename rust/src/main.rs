@@ -8741,12 +8741,10 @@ fn unity_meta_sidecar_exists(path: &Path) -> bool {
 
 fn unity_meta_sidecar_exists_in_directory(
     path: &Path,
-    sibling_files_lowercase: &HashSet<String>,
+    sibling_sidecars_lowercase: &HashSet<String>,
 ) -> bool {
-    let mut sidecar_name = path.file_name().unwrap_or_default().to_os_string();
-    sidecar_name.push(".meta");
-    let expected = sidecar_name.to_string_lossy().to_ascii_lowercase();
-    if sibling_files_lowercase.contains(&expected) {
+    let asset_name = path.file_name().unwrap_or_default().to_string_lossy();
+    if sibling_sidecars_lowercase.contains(&asset_name.to_ascii_lowercase()) {
         return true;
     }
     unity_meta_sidecar_exists(path)
@@ -8946,7 +8944,7 @@ fn run_unity_meta(args: &[String]) -> Result<(), String> {
             .collect::<Result<Vec<_>, _>>()?;
         // Each output list is sorted after traversal, so per-directory sorting is redundant.
         let mut sibling_types = HashMap::with_capacity(entries.len());
-        let mut sibling_files_lowercase = HashSet::with_capacity(entries.len());
+        let mut sibling_sidecars_lowercase = HashSet::with_capacity(entries.len() / 2);
         let mut entry_types = Vec::with_capacity(entries.len());
         for entry in &entries {
             let file_type = entry.file_type().map_err(|error| {
@@ -8959,8 +8957,11 @@ fn run_unity_meta(args: &[String]) -> Result<(), String> {
                 sibling_types.insert(entry.file_name(), (file_type.is_file(), file_type.is_dir()));
             }
             if file_type.is_file() {
-                sibling_files_lowercase
-                    .insert(entry.file_name().to_string_lossy().to_ascii_lowercase());
+                let file_name = entry.file_name();
+                let file_name = file_name.to_string_lossy();
+                if let Some(asset_name) = strip_ascii_case_insensitive_suffix(&file_name, ".meta") {
+                    sibling_sidecars_lowercase.insert(asset_name.to_ascii_lowercase());
+                }
             }
             entry_types.push(file_type);
         }
@@ -8978,7 +8979,8 @@ fn run_unity_meta(args: &[String]) -> Result<(), String> {
                     continue;
                 }
                 checked = checked.saturating_add(1);
-                if !unity_meta_sidecar_exists_in_directory(&entry_path, &sibling_files_lowercase) {
+                if !unity_meta_sidecar_exists_in_directory(&entry_path, &sibling_sidecars_lowercase)
+                {
                     missing_meta_count += 1;
                     if !summary {
                         missing_meta.push(relative_path_text(&root, &entry_path));
@@ -8998,7 +9000,8 @@ fn run_unity_meta(args: &[String]) -> Result<(), String> {
                     continue;
                 }
                 checked = checked.saturating_add(1);
-                if !unity_meta_sidecar_exists_in_directory(&entry_path, &sibling_files_lowercase) {
+                if !unity_meta_sidecar_exists_in_directory(&entry_path, &sibling_sidecars_lowercase)
+                {
                     missing_meta_count += 1;
                     if !summary {
                         missing_meta.push(relative);
@@ -9062,7 +9065,7 @@ fn run_unity_meta(args: &[String]) -> Result<(), String> {
                     checked = checked.saturating_add(1);
                     if !unity_meta_sidecar_exists_in_directory(
                         &entry_path,
-                        &sibling_files_lowercase,
+                        &sibling_sidecars_lowercase,
                     ) {
                         missing_meta_count += 1;
                         if !summary {
