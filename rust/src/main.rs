@@ -1982,8 +1982,8 @@ fn sample_signatures(
 }
 
 struct VerifiedDuplicateGroup {
-    representative: String,
-    files: Option<Vec<String>>,
+    representative: usize,
+    files: Option<Vec<usize>>,
     count: usize,
 }
 
@@ -2169,19 +2169,23 @@ fn run_dupes(args: &[String]) -> Result<(), String> {
         let signatures = sample_signatures(&root, &paths, size, jobs);
         for (index, signature) in signatures {
             let relative = paths[index]
-                .take()
-                .expect("each duplicate path is sampled exactly once");
+                .as_ref()
+                .expect("duplicate paths are present until their group is finalized");
             let signature = signature?;
-            let candidate = root.join(&relative);
+            let candidate = root.join(relative);
             let candidates = by_sample.entry(signature).or_default();
             let mut matched = false;
             for group in candidates.iter_mut() {
-                let representative = root.join(&group.representative);
+                let representative = root.join(
+                    paths[group.representative]
+                        .as_ref()
+                        .expect("representative path is present until its group is finalized"),
+                );
                 match files_identical(&representative, &candidate) {
                     Ok(true) => {
                         group.count += 1;
                         if let Some(files) = &mut group.files {
-                            files.push(relative.clone());
+                            files.push(index);
                         }
                         matched = true;
                         break;
@@ -2196,13 +2200,13 @@ fn run_dupes(args: &[String]) -> Result<(), String> {
                 }
             }
             if !matched {
-                let (representative, files) = if retain_group_paths {
-                    (relative.clone(), Some(vec![relative]))
+                let files = if retain_group_paths {
+                    Some(vec![index])
                 } else {
-                    (relative, None)
+                    None
                 };
                 candidates.push(VerifiedDuplicateGroup {
-                    representative,
+                    representative: index,
                     files,
                     count: 1,
                 });
@@ -2216,7 +2220,15 @@ fn run_dupes(args: &[String]) -> Result<(), String> {
             total_groups += 1;
             duplicate_files += group.count;
             reclaimable += u128::from(size) * group.count.saturating_sub(1) as u128;
-            if let Some(files) = group.files {
+            if let Some(file_indices) = group.files {
+                let files = file_indices
+                    .into_iter()
+                    .map(|index| {
+                        paths[index]
+                            .take()
+                            .expect("duplicate group owns each path at most once")
+                    })
+                    .collect();
                 let candidate = DuplicateOutputGroup { size, files };
                 if let Some(limit) = top_groups {
                     if top_group_heap.len() < limit {
