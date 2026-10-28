@@ -1744,19 +1744,6 @@ fn print_report(
     println!("\nSame-size candidate groups: {candidate_groups} (not content-verified)");
 }
 
-fn csv_field(value: &str) -> String {
-    let mut escaped = String::with_capacity(value.len() + 2);
-    escaped.push('"');
-    for character in value.chars() {
-        if character == '"' {
-            escaped.push('"');
-        }
-        escaped.push(character);
-    }
-    escaped.push('"');
-    escaped
-}
-
 fn write_csv_field(output: &mut impl Write, value: &str) -> io::Result<()> {
     let bytes = value.as_bytes();
     let mut start = 0;
@@ -5577,95 +5564,113 @@ fn run_scene_detect(args: &[String]) -> Result<(), String> {
             }
         }
     }
-    if let Some(duration) = duration {
-        let mut intervals = Vec::with_capacity(cuts.len() + 1);
-        let mut start = 0.0_f64;
-        for cut in &cuts {
-            if cut.seconds > start && cut.seconds < duration {
+    let stdout = io::stdout();
+    let mut output = io::BufWriter::with_capacity(64 * 1024, stdout.lock());
+    let output_result = (|| -> io::Result<()> {
+        if let Some(duration) = duration {
+            let mut intervals = Vec::with_capacity(cuts.len() + 1);
+            let mut start = 0.0_f64;
+            for cut in &cuts {
+                if cut.seconds > start && cut.seconds < duration {
+                    intervals.push(SceneSegment {
+                        index: intervals.len() + 1,
+                        start,
+                        end: cut.seconds,
+                    });
+                    start = cut.seconds;
+                }
+            }
+            if start < duration {
                 intervals.push(SceneSegment {
                     index: intervals.len() + 1,
                     start,
-                    end: cut.seconds,
+                    end: duration,
                 });
-                start = cut.seconds;
             }
-        }
-        if start < duration {
-            intervals.push(SceneSegment {
-                index: intervals.len() + 1,
-                start,
-                end: duration,
-            });
-        }
-        if output_format == "csv" {
-            println!(
-                "path,segment,start_timecode,start_seconds,start_frame,end_timecode,end_seconds,end_frame,duration_seconds,fps"
-            );
-            for interval in &intervals {
-                println!(
-                    "{},{},{},{:.6},{},{},{:.6},{},{:.6},{:.6}",
-                    csv_field(&input.to_string_lossy()),
-                    interval.index,
-                    csv_field(&scene_timecode(interval.start)),
-                    interval.start,
-                    (interval.start * fps).round() as u64,
-                    csv_field(&scene_timecode(interval.end)),
-                    interval.end,
-                    (interval.end * fps).round() as u64,
-                    interval.end - interval.start,
-                    fps
-                );
+            if output_format == "csv" {
+                output.write_all(b"path,segment,start_timecode,start_seconds,start_frame,end_timecode,end_seconds,end_frame,duration_seconds,fps\n")?;
+                for interval in &intervals {
+                    write_csv_field(&mut output, &input.to_string_lossy())?;
+                    write!(output, ",{},", interval.index)?;
+                    write_csv_field(&mut output, &scene_timecode(interval.start))?;
+                    write!(
+                        output,
+                        ",{:.6},{},",
+                        interval.start,
+                        (interval.start * fps).round() as u64
+                    )?;
+                    write_csv_field(&mut output, &scene_timecode(interval.end))?;
+                    writeln!(
+                        output,
+                        ",{:.6},{},{:.6},{:.6}",
+                        interval.end,
+                        (interval.end * fps).round() as u64,
+                        interval.end - interval.start,
+                        fps
+                    )?;
+                }
+            } else {
+                let source = json_string(&input.to_string_lossy());
+                for interval in &intervals {
+                    writeln!(
+                        output,
+                        "{{\"type\":\"segment\",\"path\":{source},\"segment\":{},\"start_timecode\":{},\"start_seconds\":{:.6},\"start_frame\":{},\"end_timecode\":{},\"end_seconds\":{:.6},\"end_frame\":{},\"duration_seconds\":{:.6},\"fps\":{fps:.6},\"nominal_fps\":{nominal_fps}}}",
+                        interval.index,
+                        json_string(&scene_timecode(interval.start)),
+                        interval.start,
+                        (interval.start * fps).round() as u64,
+                        json_string(&scene_timecode(interval.end)),
+                        interval.end,
+                        (interval.end * fps).round() as u64,
+                        interval.end - interval.start
+                    )?;
+                }
+                writeln!(
+                    output,
+                    "{{\"type\":\"summary\",\"path\":{source},\"segments\":{},\"scene_cuts\":{},\"duration_seconds\":{duration:.6},\"fps\":{fps:.6},\"nominal_fps\":{nominal_fps},\"threshold\":{threshold:.6},\"min_gap_seconds\":{min_gap:.6}}}",
+                    intervals.len(),
+                    cuts.len()
+                )?;
+            }
+        } else if output_format == "csv" {
+            output.write_all(b"path,timecode,time_seconds,frame,fps,score\n")?;
+            for cut in &cuts {
+                write_csv_field(&mut output, &input.to_string_lossy())?;
+                output.write_all(b",")?;
+                write_csv_field(&mut output, &scene_timecode(cut.seconds))?;
+                writeln!(
+                    output,
+                    ",{:.6},{},{:.6},{:.6}",
+                    cut.seconds,
+                    (cut.seconds * fps).round() as u64,
+                    fps,
+                    cut.score
+                )?;
             }
         } else {
             let source = json_string(&input.to_string_lossy());
-            for interval in &intervals {
-                println!(
-                    "{{\"type\":\"segment\",\"path\":{source},\"segment\":{},\"start_timecode\":{},\"start_seconds\":{:.6},\"start_frame\":{},\"end_timecode\":{},\"end_seconds\":{:.6},\"end_frame\":{},\"duration_seconds\":{:.6},\"fps\":{fps:.6},\"nominal_fps\":{nominal_fps}}}",
-                    interval.index,
-                    json_string(&scene_timecode(interval.start)),
-                    interval.start,
-                    (interval.start * fps).round() as u64,
-                    json_string(&scene_timecode(interval.end)),
-                    interval.end,
-                    (interval.end * fps).round() as u64,
-                    interval.end - interval.start
-                );
+            for cut in &cuts {
+                writeln!(
+                    output,
+                    "{{\"type\":\"scene\",\"path\":{source},\"timecode\":{},\"time_seconds\":{:.6},\"frame\":{},\"fps\":{fps:.6},\"nominal_fps\":{nominal_fps},\"score\":{:.6}}}",
+                    json_string(&scene_timecode(cut.seconds)),
+                    cut.seconds,
+                    (cut.seconds * fps).round() as u64,
+                    cut.score
+                )?;
             }
-            println!(
-                "{{\"type\":\"summary\",\"path\":{source},\"segments\":{},\"scene_cuts\":{},\"duration_seconds\":{duration:.6},\"fps\":{fps:.6},\"nominal_fps\":{nominal_fps},\"threshold\":{threshold:.6},\"min_gap_seconds\":{min_gap:.6}}}",
-                intervals.len(),
+            writeln!(
+                output,
+                "{{\"type\":\"summary\",\"path\":{source},\"cuts\":{},\"fps\":{fps:.6},\"nominal_fps\":{nominal_fps},\"threshold\":{threshold:.6},\"min_gap_seconds\":{min_gap:.6}}}",
                 cuts.len()
-            );
+            )?;
         }
-    } else if output_format == "csv" {
-        println!("path,timecode,time_seconds,frame,fps,score");
-        for cut in &cuts {
-            println!(
-                "{},{},{:.6},{},{:.6},{:.6}",
-                csv_field(&input.to_string_lossy()),
-                csv_field(&scene_timecode(cut.seconds)),
-                cut.seconds,
-                (cut.seconds * fps).round() as u64,
-                fps,
-                cut.score
-            );
-        }
-    } else {
-        let source = json_string(&input.to_string_lossy());
-        for cut in &cuts {
-            println!(
-                "{{\"type\":\"scene\",\"path\":{source},\"timecode\":{},\"time_seconds\":{:.6},\"frame\":{},\"fps\":{fps:.6},\"nominal_fps\":{nominal_fps},\"score\":{:.6}}}",
-                json_string(&scene_timecode(cut.seconds)),
-                cut.seconds,
-                (cut.seconds * fps).round() as u64,
-                cut.score
-            );
-        }
-        println!(
-            "{{\"type\":\"summary\",\"path\":{source},\"cuts\":{},\"fps\":{fps:.6},\"nominal_fps\":{nominal_fps},\"threshold\":{threshold:.6},\"min_gap_seconds\":{min_gap:.6}}}",
-            cuts.len()
-        );
-    }
+        Ok(())
+    })();
+    output_result.map_err(|error| format!("could not write scene detection output: {error}"))?;
+    output
+        .flush()
+        .map_err(|error| format!("could not write scene detection output: {error}"))?;
     Ok(())
 }
 
