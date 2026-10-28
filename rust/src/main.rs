@@ -1346,14 +1346,30 @@ fn print_scan_filter_preview(
 }
 
 fn compare_paths_case_insensitive(left: &str, right: &str) -> std::cmp::Ordering {
-    let case_insensitive = if left.is_ascii() && right.is_ascii() {
-        left.bytes()
-            .map(|byte| byte.to_ascii_lowercase())
-            .cmp(right.bytes().map(|byte| byte.to_ascii_lowercase()))
-    } else {
-        left.chars()
-            .flat_map(char::to_lowercase)
-            .cmp(right.chars().flat_map(char::to_lowercase))
+    let mut left_bytes = left.bytes();
+    let mut right_bytes = right.bytes();
+    let case_insensitive = loop {
+        match (left_bytes.next(), right_bytes.next()) {
+            (Some(left_byte), Some(right_byte))
+                if left_byte.is_ascii() && right_byte.is_ascii() =>
+            {
+                let ordering = left_byte
+                    .to_ascii_lowercase()
+                    .cmp(&right_byte.to_ascii_lowercase());
+                if ordering != std::cmp::Ordering::Equal {
+                    break ordering;
+                }
+            }
+            (None, None) => break std::cmp::Ordering::Equal,
+            (None, Some(_)) => break std::cmp::Ordering::Less,
+            (Some(_), None) => break std::cmp::Ordering::Greater,
+            _ => {
+                break left
+                    .chars()
+                    .flat_map(char::to_lowercase)
+                    .cmp(right.chars().flat_map(char::to_lowercase));
+            }
+        }
     };
     case_insensitive.then_with(|| left.cmp(right))
 }
