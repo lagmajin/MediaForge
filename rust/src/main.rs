@@ -6286,6 +6286,7 @@ fn run_scene_detect_dir(args: &[String]) -> Result<(), String> {
         extensions: extensions.as_ref(),
         omit_extension: true,
         omit_modified_time: true,
+        store_relative_path: true,
         ..StrictWalkFilters::default()
     };
     walk_strict_paths(
@@ -6311,8 +6312,9 @@ fn run_scene_detect_dir(args: &[String]) -> Result<(), String> {
                     let Some(record) = records.get(index) else {
                         break;
                     };
+                    let source_path = root.join(&record.path);
                     let result = detect_scene_cuts(
-                        &record.path,
+                        &source_path,
                         threshold,
                         min_gap,
                         fps,
@@ -6338,7 +6340,7 @@ fn run_scene_detect_dir(args: &[String]) -> Result<(), String> {
                                     false,
                                     format!(
                                         "{{\"type\":\"error\",\"path\":{},\"error\":{}}}\n",
-                                        json_string(&record.path.to_string_lossy()),
+                                        json_string(&source_path.to_string_lossy()),
                                         json_string(&format!(
                                             "could not format scene output: {error}"
                                         ))
@@ -6350,7 +6352,7 @@ fn run_scene_detect_dir(args: &[String]) -> Result<(), String> {
                             false,
                             format!(
                                 "{{\"type\":\"error\",\"path\":{},\"error\":{}}}\n",
-                                json_string(&record.path.to_string_lossy()),
+                                json_string(&source_path.to_string_lossy()),
                                 json_string(&format!("mediaforge: {error}"))
                             ),
                         ),
@@ -7124,6 +7126,7 @@ fn run_proxy_dir(args: &[String]) -> Result<(), String> {
         excluded_subtree: output_inside_root.then_some(output_root.as_path()),
         omit_extension: true,
         omit_modified_time: true,
+        store_relative_path: true,
         ..StrictWalkFilters::default()
     };
     walk_strict_paths(
@@ -7150,10 +7153,7 @@ fn run_proxy_dir(args: &[String]) -> Result<(), String> {
         .iter()
         .map(|record| {
             let plan = (|| -> Result<PathBuf, String> {
-                let relative = record
-                    .path
-                    .strip_prefix(&root)
-                    .map_err(|error| format!("cannot relativize input path: {error}"))?;
+                let relative = record.path.as_path();
                 let stem = relative
                     .file_stem()
                     .and_then(|value| value.to_str())
@@ -7218,7 +7218,7 @@ fn run_proxy_dir(args: &[String]) -> Result<(), String> {
                             })?;
                         }
                         run_proxy_with_options(
-                            record.path.clone(),
+                            root.join(&record.path),
                             output.clone(),
                             max_width,
                             crf,
@@ -7680,6 +7680,7 @@ fn run_extract_audio_dir(args: &[String]) -> Result<(), String> {
         excluded_subtree: output_inside_root.then_some(output_root.as_path()),
         omit_extension: true,
         omit_modified_time: true,
+        store_relative_path: true,
         ..StrictWalkFilters::default()
     };
     walk_strict_paths(
@@ -7706,10 +7707,7 @@ fn run_extract_audio_dir(args: &[String]) -> Result<(), String> {
         .iter()
         .map(|record| {
             let plan = (|| -> Result<PathBuf, String> {
-                let relative = record
-                    .path
-                    .strip_prefix(&root)
-                    .map_err(|error| format!("cannot relativize input path: {error}"))?;
+                let relative = record.path.as_path();
                 let stem = relative
                     .file_stem()
                     .and_then(|value| value.to_str())
@@ -7776,7 +7774,7 @@ fn run_extract_audio_dir(args: &[String]) -> Result<(), String> {
                             })?;
                         }
                         run_extract_audio_with_options(
-                            record.path.clone(),
+                            root.join(&record.path),
                             output.clone(),
                             &format,
                             &bitrate,
