@@ -10547,25 +10547,20 @@ fn pack_file(
             .map_err(|error| format!("could not write PAX header: {error}"))?;
     }
 
-    let (header_name, prefix) = if pax_path {
-        (format!("PaxFiles/{index}"), "".to_owned())
-    } else {
-        let (name, prefix) = split.expect("checked USTAR path split");
-        (
-            String::from_utf8_lossy(name).into_owned(),
-            String::from_utf8_lossy(prefix).into_owned(),
-        )
+    let fallback_name = pax_path.then(|| format!("PaxFiles/{index}"));
+    let (header_name, prefix) = match split {
+        Some((name, prefix)) => (name, prefix),
+        None => (
+            fallback_name
+                .as_deref()
+                .expect("PAX fallback name exists for long paths")
+                .as_bytes(),
+            &[][..],
+        ),
     };
     let header_size = if pax_size { 0 } else { record.size };
     let header_mtime = modified.min(TAR_OCTAL_MAX);
-    let header = tar_header(
-        header_name.as_bytes(),
-        prefix.as_bytes(),
-        mode,
-        header_size,
-        header_mtime,
-        b'0',
-    )?;
+    let header = tar_header(header_name, prefix, mode, header_size, header_mtime, b'0')?;
     writer
         .write_all(&header)
         .map_err(|error| format!("could not write tar header: {error}"))?;
