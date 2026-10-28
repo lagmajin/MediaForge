@@ -96,6 +96,17 @@ struct FileRecord {
     extension: String,
 }
 
+struct ScanTraversalFilters<'a> {
+    kind: Option<Kind>,
+    min_size: Option<u64>,
+    max_size: Option<u64>,
+    modified_since: Option<u64>,
+    modified_until: Option<u64>,
+    extensions: Option<&'a HashSet<String>>,
+    path_contains_lower: &'a [String],
+    exclude_path_contains_lower: &'a [String],
+}
+
 fn classify(path: &Path) -> Kind {
     let ext = path
         .extension()
@@ -264,8 +275,7 @@ fn walk_with_skip_dirs_mode_counted(
     include_hidden: bool,
     skip_dirs: &[&str],
     ignored: &[IgnoreRule],
-    path_contains_lower: &[String],
-    exclude_path_contains_lower: &[String],
+    filters: &ScanTraversalFilters<'_>,
     records: &mut Vec<FileRecord>,
     strict: bool,
     skipped_paths: &mut usize,
@@ -322,17 +332,18 @@ fn walk_with_skip_dirs_mode_counted(
                 .unwrap_or(&path)
                 .to_string_lossy()
                 .replace('\\', "/");
-            let relative_lower =
-                if path_contains_lower.is_empty() && exclude_path_contains_lower.is_empty() {
-                    None
-                } else {
-                    Some(relative.to_lowercase())
-                };
+            let relative_lower = if filters.path_contains_lower.is_empty()
+                && filters.exclude_path_contains_lower.is_empty()
+            {
+                None
+            } else {
+                Some(relative.to_lowercase())
+            };
             if file_type.is_dir() {
                 if directory_name_matches(&name, skip_dirs)
                     || (!include_hidden && is_hidden(&path))
                     || is_ignored_directory(&relative, &active_ignored)
-                    || exclude_path_contains_lower.iter().any(|needle| {
+                    || filters.exclude_path_contains_lower.iter().any(|needle| {
                         relative_lower
                             .as_ref()
                             .is_some_and(|value| value.contains(needle))
@@ -347,12 +358,12 @@ fn walk_with_skip_dirs_mode_counted(
                 };
                 pending.push((path, child_ignored));
             } else if file_type.is_file() && !is_ignored(&relative, &active_ignored) {
-                if exclude_path_contains_lower.iter().any(|needle| {
+                if filters.exclude_path_contains_lower.iter().any(|needle| {
                     relative_lower
                         .as_ref()
                         .is_some_and(|value| value.contains(needle))
-                }) || (!path_contains_lower.is_empty()
-                    && !path_contains_lower.iter().all(|needle| {
+                }) || (!filters.path_contains_lower.is_empty()
+                    && !filters.path_contains_lower.iter().all(|needle| {
                         relative_lower
                             .as_ref()
                             .is_some_and(|value| value.contains(needle))
@@ -361,6 +372,19 @@ fn walk_with_skip_dirs_mode_counted(
                     continue;
                 }
                 if !include_hidden && is_dot_hidden(&path) {
+                    continue;
+                }
+                let extension = path
+                    .extension()
+                    .and_then(|s| s.to_str())
+                    .map(|s| format!(".{}", s.to_ascii_lowercase()))
+                    .unwrap_or_else(|| "[no extension]".to_owned());
+                let kind = classify(&path);
+                if filters.kind.is_some_and(|filter| filter != kind)
+                    || filters
+                        .extensions
+                        .is_some_and(|values| !values.contains(&extension))
+                {
                     continue;
                 }
                 let metadata = match entry.metadata() {
@@ -376,16 +400,35 @@ fn walk_with_skip_dirs_mode_counted(
                 if !include_hidden && metadata_has_hidden_attribute(&metadata) {
                     continue;
                 }
-                let extension = path
-                    .extension()
-                    .and_then(|s| s.to_str())
-                    .map(|s| format!(".{}", s.to_ascii_lowercase()))
-                    .unwrap_or_else(|| "[no extension]".to_owned());
+                let size = metadata.len();
+                if filters.min_size.is_some_and(|minimum| size < minimum)
+                    || filters.max_size.is_some_and(|maximum| size > maximum)
+                {
+                    continue;
+                }
+                let modified = metadata.modified().ok();
+                if filters.modified_since.is_some() || filters.modified_until.is_some() {
+                    let Some(modified_seconds) = modified
+                        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+                        .map(|duration| duration.as_secs())
+                    else {
+                        continue;
+                    };
+                    if filters
+                        .modified_since
+                        .is_some_and(|since| modified_seconds < since)
+                        || filters
+                            .modified_until
+                            .is_some_and(|until| modified_seconds > until)
+                    {
+                        continue;
+                    }
+                }
                 records.push(FileRecord {
                     relative,
-                    kind: classify(&path),
-                    modified: metadata.modified().ok(),
-                    size: metadata.len(),
+                    kind,
+                    modified,
+                    size,
                     extension,
                     path,
                 });
@@ -2185,44 +2228,28 @@ fn run_scan(args: &[String]) -> Result<(), String> {
         .iter()
         .map(|value| value.to_lowercase())
         .collect::<Vec<_>>();
+    let traversal_filters = ScanTraversalFilters {
+        kind: kind_filter,
+        min_size,
+        max_size,
+        modified_since,
+        modified_until,
+        extensions: extension_filter.as_ref(),
+        path_contains_lower: &path_contains_lower,
+        exclude_path_contains_lower: &exclude_path_contains_lower,
+    };
     walk_with_skip_dirs_mode_counted(
         &root,
         &root,
         include_hidden,
         SKIP_DIRS,
         &ignored,
-        &path_contains_lower,
-        &exclude_path_contains_lower,
+        &traversal_filters,
         &mut records,
         strict,
         &mut skipped_paths,
         &mut skipped_examples,
     )?;
-    if let Some(kind) = kind_filter {
-        records.retain(|record| record.kind == kind);
-    }
-    if let Some(extensions) = &extension_filter {
-        records.retain(|record| extensions.contains(&record.extension));
-    }
-    if let Some(size) = min_size {
-        records.retain(|record| record.size >= size);
-    }
-    if let Some(size) = max_size {
-        records.retain(|record| record.size <= size);
-    }
-    if modified_since.is_some() || modified_until.is_some() {
-        records.retain(|record| {
-            let Some(modified) = record
-                .modified
-                .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
-                .map(|duration| duration.as_secs())
-            else {
-                return false;
-            };
-            modified_since.is_none_or(|since| modified >= since)
-                && modified_until.is_none_or(|until| modified <= until)
-        });
-    }
     if let Some(sort) = csv_sort {
         match sort {
             ScanCsvSort::Size => records.sort_by_cached_key(|record| {
