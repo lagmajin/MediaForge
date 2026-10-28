@@ -862,7 +862,10 @@ fn directory_size(root: &Path) -> io::Result<(u64, u64)> {
             }
             if file_type.is_dir() {
                 let name = entry.file_name();
-                if !SKIP_DIRS.contains(&name.to_string_lossy().as_ref()) {
+                let name = name.to_string_lossy();
+                if !SKIP_DIRS.contains(&name.as_ref())
+                    && !PROJECT_ARTIFACT_DIRS.contains(&name.as_ref())
+                {
                     pending.push(entry.path());
                 }
             } else if file_type.is_file() {
@@ -1245,7 +1248,6 @@ fn run_project(args: &[String]) -> Result<(), String> {
                     .replace('\\', "/");
                 if !SKIP_DIRS.contains(&lossy_name.as_ref())
                     && !PROJECT_ARTIFACT_DIRS.contains(&lossy_name.as_ref())
-                    && !is_hidden(&lossy_name)
                     && !is_ignored(&relative, &ignored)
                 {
                     pending.push(path);
