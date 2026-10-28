@@ -1368,31 +1368,46 @@ fn csv_field(value: &str) -> String {
     escaped
 }
 
+fn write_csv_field(output: &mut impl Write, value: &str) -> io::Result<()> {
+    let bytes = value.as_bytes();
+    let mut start = 0;
+    output.write_all(b"\"")?;
+    for (index, byte) in bytes.iter().enumerate() {
+        if *byte == b'"' {
+            output.write_all(&bytes[start..=index])?;
+            output.write_all(b"\"")?;
+            start = index + 1;
+        }
+    }
+    output.write_all(&bytes[start..])?;
+    output.write_all(b"\"")
+}
+
 fn print_csv(records: &[FileRecord]) -> Result<(), String> {
     let stdout = io::stdout();
-    let mut output = stdout.lock();
-    output
-        .write_all(b"path,type,extension,size_bytes,modified_unix_seconds\n")
-        .map_err(|error| format!("could not write CSV header: {error}"))?;
-    for record in records {
-        let modified = record
-            .modified
-            .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
-            .map(|duration| duration.as_secs().to_string())
-            .unwrap_or_default();
-        let row = format!(
-            "{},{},{},{},{}\n",
-            csv_field(&record.relative),
-            csv_field(record.kind.as_str()),
-            csv_field(&record.extension),
-            record.size,
-            modified
-        );
-        output
-            .write_all(row.as_bytes())
-            .map_err(|error| format!("could not write CSV row: {error}"))?;
-    }
-    Ok(())
+    let mut output = io::BufWriter::new(stdout.lock());
+    let result = (|| -> io::Result<()> {
+        output.write_all(b"path,type,extension,size_bytes,modified_unix_seconds\n")?;
+        for record in records {
+            write_csv_field(&mut output, &record.relative)?;
+            output.write_all(b",")?;
+            write_csv_field(&mut output, record.kind.as_str())?;
+            output.write_all(b",")?;
+            write_csv_field(&mut output, &record.extension)?;
+            write!(output, ",{}", record.size)?;
+            let modified = record
+                .modified
+                .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|duration| duration.as_secs());
+            if let Some(modified) = modified {
+                writeln!(output, ",{}", modified)?;
+            } else {
+                output.write_all(b",\n")?;
+            }
+        }
+        output.flush()
+    })();
+    result.map_err(|error| format!("could not write CSV output: {error}"))
 }
 
 fn print_scan_csv_info(
