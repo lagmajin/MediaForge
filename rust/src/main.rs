@@ -6587,7 +6587,10 @@ fn run_proxy_dir(args: &[String]) -> Result<(), String> {
     let next = std::sync::atomic::AtomicUsize::new(0);
     let completed = std::sync::atomic::AtomicUsize::new(0);
     let progress_output = std::sync::Mutex::new(());
-    let results = std::sync::Mutex::new(Vec::<(usize, Result<bool, String>)>::with_capacity(total));
+    let succeeded_count = std::sync::atomic::AtomicUsize::new(0);
+    let skipped_count = std::sync::atomic::AtomicUsize::new(0);
+    let failed_count = std::sync::atomic::AtomicUsize::new(0);
+    let results = std::sync::Mutex::new(Vec::<(usize, Result<bool, String>)>::new());
     std::thread::scope(|scope| {
         for _ in 0..jobs.min(total) {
             scope.spawn(|| {
@@ -6657,11 +6660,23 @@ fn run_proxy_dir(args: &[String]) -> Result<(), String> {
                             output.as_deref(),
                             &result,
                         );
+                        match &result {
+                            Ok(true) => {
+                                succeeded_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            }
+                            Ok(false) => {
+                                skipped_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            }
+                            Err(_) => {
+                                failed_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            }
+                        }
+                    } else {
+                        results
+                            .lock()
+                            .expect("proxy results lock poisoned")
+                            .push((index, result));
                     }
-                    results
-                        .lock()
-                        .expect("proxy results lock poisoned")
-                        .push((index, result));
                 }
             });
         }
@@ -6669,35 +6684,42 @@ fn run_proxy_dir(args: &[String]) -> Result<(), String> {
     let mut results = results
         .into_inner()
         .map_err(|_| "proxy results lock poisoned".to_owned())?;
-    results.sort_by_key(|(index, _)| *index);
-    let mut succeeded = 0_usize;
-    let mut skipped = 0_usize;
-    let mut failed = 0_usize;
-    for (index, result) in results {
-        let record = &records[index];
-        match result {
-            Ok(created) => {
-                if created {
-                    succeeded += 1;
-                } else {
-                    skipped += 1;
-                }
-                if !json && let Some(output) = &plans[index].0 {
+    let (succeeded, skipped, failed) = if json {
+        (
+            succeeded_count.load(std::sync::atomic::Ordering::Relaxed),
+            skipped_count.load(std::sync::atomic::Ordering::Relaxed),
+            failed_count.load(std::sync::atomic::Ordering::Relaxed),
+        )
+    } else {
+        results.sort_by_key(|(index, _)| *index);
+        let mut succeeded = 0_usize;
+        let mut skipped = 0_usize;
+        let mut failed = 0_usize;
+        for (index, result) in results.drain(..) {
+            let record = &records[index];
+            match result {
+                Ok(created) => {
                     if created {
-                        println!("Created proxy {}", output.display());
+                        succeeded += 1;
                     } else {
-                        println!("Skipped existing proxy {}", output.display());
+                        skipped += 1;
+                    }
+                    if let Some(output) = &plans[index].0 {
+                        if created {
+                            println!("Created proxy {}", output.display());
+                        } else {
+                            println!("Skipped existing proxy {}", output.display());
+                        }
                     }
                 }
-            }
-            Err(error) => {
-                failed += 1;
-                if !json {
+                Err(error) => {
+                    failed += 1;
                     eprintln!("mediaforge: {}: {error}", record.relative);
                 }
             }
         }
-    }
+        (succeeded, skipped, failed)
+    };
     if json {
         println!(
             "{{\"type\":\"summary\",\"succeeded\":{succeeded},\"skipped\":{skipped},\"failed\":{failed}}}"
@@ -7098,7 +7120,10 @@ fn run_extract_audio_dir(args: &[String]) -> Result<(), String> {
     let next = std::sync::atomic::AtomicUsize::new(0);
     let completed = std::sync::atomic::AtomicUsize::new(0);
     let progress_output = std::sync::Mutex::new(());
-    let results = std::sync::Mutex::new(Vec::<(usize, Result<bool, String>)>::with_capacity(total));
+    let succeeded_count = std::sync::atomic::AtomicUsize::new(0);
+    let skipped_count = std::sync::atomic::AtomicUsize::new(0);
+    let failed_count = std::sync::atomic::AtomicUsize::new(0);
+    let results = std::sync::Mutex::new(Vec::<(usize, Result<bool, String>)>::new());
     std::thread::scope(|scope| {
         for _ in 0..jobs.min(total) {
             scope.spawn(|| {
@@ -7170,11 +7195,23 @@ fn run_extract_audio_dir(args: &[String]) -> Result<(), String> {
                             output.as_deref(),
                             &result,
                         );
+                        match &result {
+                            Ok(true) => {
+                                succeeded_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            }
+                            Ok(false) => {
+                                skipped_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            }
+                            Err(_) => {
+                                failed_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            }
+                        }
+                    } else {
+                        results
+                            .lock()
+                            .expect("audio results lock poisoned")
+                            .push((index, result));
                     }
-                    results
-                        .lock()
-                        .expect("audio results lock poisoned")
-                        .push((index, result));
                 }
             });
         }
@@ -7182,35 +7219,42 @@ fn run_extract_audio_dir(args: &[String]) -> Result<(), String> {
     let mut results = results
         .into_inner()
         .map_err(|_| "audio results lock poisoned".to_owned())?;
-    results.sort_by_key(|(index, _)| *index);
-    let mut succeeded = 0_usize;
-    let mut skipped = 0_usize;
-    let mut failed = 0_usize;
-    for (index, result) in results {
-        let record = &records[index];
-        match result {
-            Ok(created) => {
-                if created {
-                    succeeded += 1;
-                } else {
-                    skipped += 1;
-                }
-                if !json && let Some(output) = &plans[index].0 {
+    let (succeeded, skipped, failed) = if json {
+        (
+            succeeded_count.load(std::sync::atomic::Ordering::Relaxed),
+            skipped_count.load(std::sync::atomic::Ordering::Relaxed),
+            failed_count.load(std::sync::atomic::Ordering::Relaxed),
+        )
+    } else {
+        results.sort_by_key(|(index, _)| *index);
+        let mut succeeded = 0_usize;
+        let mut skipped = 0_usize;
+        let mut failed = 0_usize;
+        for (index, result) in results.drain(..) {
+            let record = &records[index];
+            match result {
+                Ok(created) => {
                     if created {
-                        println!("Created audio {}", output.display());
+                        succeeded += 1;
                     } else {
-                        println!("Skipped existing audio {}", output.display());
+                        skipped += 1;
+                    }
+                    if let Some(output) = &plans[index].0 {
+                        if created {
+                            println!("Created audio {}", output.display());
+                        } else {
+                            println!("Skipped existing audio {}", output.display());
+                        }
                     }
                 }
-            }
-            Err(error) => {
-                failed += 1;
-                if !json {
+                Err(error) => {
+                    failed += 1;
                     eprintln!("mediaforge: {}: {error}", record.relative);
                 }
             }
         }
-    }
+        (succeeded, skipped, failed)
+    };
     if json {
         println!(
             "{{\"type\":\"summary\",\"succeeded\":{succeeded},\"skipped\":{skipped},\"failed\":{failed}}}"
