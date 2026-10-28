@@ -6644,21 +6644,30 @@ fn print_batch_result_json(
     output: Option<&Path>,
     result: &Result<bool, String>,
 ) {
-    let output = output
-        .map(|path| json_string(&path.to_string_lossy()))
-        .unwrap_or_else(|| "null".to_owned());
-    match result {
-        Ok(created) => println!(
-            "{{\"type\":\"result\",\"current\":{current},\"total\":{total},\"path\":{},\"output\":{output},\"ok\":true,\"skipped\":{}}}",
-            json_string(path),
-            !created
-        ),
-        Err(error) => println!(
-            "{{\"type\":\"result\",\"current\":{current},\"total\":{total},\"path\":{},\"output\":{output},\"ok\":false,\"error\":{}}}",
-            json_string(path),
-            json_string(error)
-        ),
-    }
+    let stdout = io::stdout();
+    let mut output_writer = stdout.lock();
+    let write_result = (|| -> io::Result<()> {
+        write!(
+            output_writer,
+            "{{\"type\":\"result\",\"current\":{current},\"total\":{total},\"path\":"
+        )?;
+        write_json_string(&mut output_writer, path)?;
+        output_writer.write_all(b",\"output\":")?;
+        if let Some(output) = output {
+            write_json_string(&mut output_writer, &output.to_string_lossy())?;
+        } else {
+            output_writer.write_all(b"null")?;
+        }
+        match result {
+            Ok(created) => writeln!(output_writer, ",\"ok\":true,\"skipped\":{}}}", !created),
+            Err(error) => {
+                output_writer.write_all(b",\"ok\":false,\"error\":")?;
+                write_json_string(&mut output_writer, error)?;
+                output_writer.write_all(b"}\n")
+            }
+        }
+    })();
+    write_result.expect("could not write batch result JSON");
 }
 
 fn run_proxy_dir(args: &[String]) -> Result<(), String> {
