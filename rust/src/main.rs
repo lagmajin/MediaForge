@@ -800,6 +800,7 @@ fn print_json(
         b.size
             .cmp(&a.size)
             .then_with(|| a.relative.to_lowercase().cmp(&b.relative.to_lowercase()))
+            .then_with(|| a.relative.cmp(&b.relative))
     });
     let mut groups: Vec<_> = by_size
         .into_iter()
@@ -937,6 +938,7 @@ fn print_report(
         b.size
             .cmp(&a.size)
             .then_with(|| a.relative.to_lowercase().cmp(&b.relative.to_lowercase()))
+            .then_with(|| a.relative.cmp(&b.relative))
     });
     let candidate_groups = by_size.values().filter(|count| **count > 1).count();
     println!("MediaForge scan: {}", root.display());
