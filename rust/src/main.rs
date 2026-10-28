@@ -1277,7 +1277,7 @@ fn fraction_ceil_scaled(fraction: &str, multiplier: u128) -> u128 {
 
 fn print_help() {
     println!(
-        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS] [--largest N]\n  mediaforge dupes [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--top-groups N]\n  mediaforge probe <FILE> [--compact]\n  mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--jobs N] [--summary]\n  mediaforge project [PATH] [--json]\n  mediaforge gitignore [PATH] [--apply]\n  mediaforge organize [PATH] [--by type|extension] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--apply]\n  mediaforge undo [PATH] [--json]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--include-hidden] [--include-generated] [--dry-run] [--json] [--list]\n  mediaforge --version\n  mediaforge --help"
+        "MediaForge {VERSION}\nFast, local-first CLI for game and video production assets.\n\nUsage:\n  mediaforge scan [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--extension EXTENSIONS] [--largest N]\n  mediaforge dupes [PATH] [--json] [--include-hidden] [--type TYPE] [--min-size SIZE] [--max-size SIZE] [--extension EXTENSIONS] [--top-groups N]\n  mediaforge probe <FILE> [--compact]\n  mediaforge probe-dir <PATH> [--extension EXTENSIONS] [--include-hidden] [--jobs N] [--summary]\n  mediaforge storyboard <VIDEO> --output <IMAGE> [--interval SECONDS] [--columns N] [--rows N] [--width PIXELS]\n  mediaforge project [PATH] [--json]\n  mediaforge gitignore [PATH] [--apply]\n  mediaforge organize [PATH] [--by type|extension] [--type TYPE] [--extension EXTENSIONS] [--min-size SIZE] [--include-hidden] [--include-generated] [--json] [--apply]\n  mediaforge undo [PATH] [--json]\n  mediaforge pack <PATH> --output <FILE.tar> [--type TYPES] [--extension EXTENSIONS] [--min-size SIZE] [--max-size SIZE] [--include-hidden] [--include-generated] [--dry-run] [--json] [--list]\n  mediaforge --version\n  mediaforge --help"
     );
 }
 
@@ -1483,6 +1483,199 @@ fn run_probe_dir(args: &[String]) -> Result<(), String> {
     if failures > 0 {
         return Err(format!("ffprobe failed for {failures} file(s)"));
     }
+    Ok(())
+}
+
+fn run_storyboard(args: &[String]) -> Result<(), String> {
+    let mut input = None;
+    let mut output = None;
+    let mut interval = 10_u64;
+    let mut columns = 5_u32;
+    let mut rows = 5_u32;
+    let mut width = 320_u32;
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--output" | "-o" => {
+                output = Some(PathBuf::from(
+                    iter.next()
+                        .ok_or_else(|| "--output requires a file path".to_owned())?,
+                ));
+            }
+            "--interval" => {
+                let value = iter
+                    .next()
+                    .ok_or_else(|| "--interval requires seconds".to_owned())?;
+                interval = value
+                    .parse::<u64>()
+                    .map_err(|_| format!("invalid interval '{value}'; use a positive integer"))?;
+            }
+            "--columns" => {
+                let value = iter
+                    .next()
+                    .ok_or_else(|| "--columns requires a positive integer".to_owned())?;
+                columns = value
+                    .parse::<u32>()
+                    .map_err(|_| format!("invalid column count '{value}'"))?;
+            }
+            "--rows" => {
+                let value = iter
+                    .next()
+                    .ok_or_else(|| "--rows requires a positive integer".to_owned())?;
+                rows = value
+                    .parse::<u32>()
+                    .map_err(|_| format!("invalid row count '{value}'"))?;
+            }
+            "--width" => {
+                let value = iter
+                    .next()
+                    .ok_or_else(|| "--width requires pixels".to_owned())?;
+                width = value
+                    .parse::<u32>()
+                    .map_err(|_| format!("invalid thumbnail width '{value}'"))?;
+            }
+            "--help" | "-h" => {
+                println!(
+                    "Usage: mediaforge storyboard <VIDEO> --output <IMAGE> [--interval SECONDS] [--columns N] [--rows N] [--width PIXELS]\n\nCreate a contact sheet with ffmpeg. Defaults: 10-second interval, 5 columns, 5 rows, 320-pixel thumbnails. Supports JPG, PNG, and WebP output; existing files are never overwritten."
+                );
+                return Ok(());
+            }
+            value if value.starts_with('-') => return Err(format!("unknown option: {value}")),
+            value => {
+                if input.is_some() {
+                    return Err("storyboard accepts one video file".into());
+                }
+                input = Some(PathBuf::from(value));
+            }
+        }
+    }
+    let input = input.ok_or_else(|| "storyboard requires a video file".to_owned())?;
+    let output = output.ok_or_else(|| "storyboard requires --output <IMAGE>".to_owned())?;
+    if interval == 0 {
+        return Err("--interval must be greater than zero".to_owned());
+    }
+    if columns == 0 || rows == 0 || width < 16 {
+        return Err(
+            "--columns and --rows must be positive, and --width must be at least 16".into(),
+        );
+    }
+    let cells = columns
+        .checked_mul(rows)
+        .ok_or_else(|| "storyboard grid is too large".to_owned())?;
+    if cells > 100 || width > 640 {
+        return Err("storyboard is limited to 100 frames and 640 pixels per thumbnail".into());
+    }
+    let input = fs::canonicalize(&input)
+        .map_err(|error| format!("cannot access video {}: {error}", input.display()))?;
+    if !fs::metadata(&input)
+        .map_err(|error| format!("cannot inspect video {}: {error}", input.display()))?
+        .is_file()
+    {
+        return Err(format!("expected a video file: {}", input.display()));
+    }
+    let output_name = output
+        .file_name()
+        .ok_or_else(|| "output must name an image file".to_owned())?;
+    let extension = output
+        .extension()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| "output must use a .jpg, .png, or .webp extension".to_owned())?
+        .to_ascii_lowercase();
+    if !matches!(extension.as_str(), "jpg" | "jpeg" | "png" | "webp") {
+        return Err("storyboard output must use a .jpg, .png, or .webp extension".to_owned());
+    }
+    let parent = output
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let parent = fs::canonicalize(parent).map_err(|error| {
+        format!(
+            "cannot access output directory {}: {error}",
+            parent.display()
+        )
+    })?;
+    let output = parent.join(output_name);
+    if output == input {
+        return Err("storyboard output must differ from the input video".to_owned());
+    }
+    if entry_state(&output)
+        .map_err(|error| format!("cannot inspect output {}: {error}", output.display()))?
+        != EntryState::Missing
+    {
+        return Err(format!(
+            "output already exists; refusing to overwrite: {}",
+            output.display()
+        ));
+    }
+
+    let stem = output
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("storyboard");
+    let temporary = parent.join(format!(
+        ".{stem}.mediaforge-{}-{}.tmp.{extension}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    ));
+    let tile_height = width * 9 / 16;
+    let filter = format!(
+        "fps=1/{interval},scale={width}:{tile_height}:force_original_aspect_ratio=decrease,pad={width}:{tile_height}:(ow-iw)/2:(oh-ih)/2,tile={columns}x{rows}"
+    );
+    let result = Command::new("ffmpeg")
+        .args(["-hide_banner", "-loglevel", "error", "-nostdin", "-n", "-i"])
+        .arg(&input)
+        .args(["-vf", &filter, "-frames:v", "1"])
+        .arg(&temporary)
+        .output()
+        .map_err(|error| {
+            if error.kind() == std::io::ErrorKind::NotFound {
+                "ffmpeg was not found on PATH. Install FFmpeg to create storyboards.".to_owned()
+            } else {
+                format!("could not start ffmpeg: {error}")
+            }
+        })?;
+    if !result.status.success() {
+        let detail = String::from_utf8_lossy(&result.stderr).trim().to_owned();
+        let _ = fs::remove_file(&temporary);
+        return Err(if detail.is_empty() {
+            format!("ffmpeg failed with {}", result.status)
+        } else {
+            format!("ffmpeg failed: {detail}")
+        });
+    }
+    let temporary_size = match fs::metadata(&temporary) {
+        Ok(metadata) => metadata.len(),
+        Err(error) => {
+            let _ = fs::remove_file(&temporary);
+            return Err(format!("could not inspect generated storyboard: {error}"));
+        }
+    };
+    if temporary_size == 0 {
+        let _ = fs::remove_file(&temporary);
+        return Err("ffmpeg produced an empty storyboard".to_owned());
+    }
+    move_file_no_replace(&temporary, &output).map_err(|error| {
+        let cleanup = fs::remove_file(&temporary);
+        match cleanup {
+            Ok(()) => format!("could not publish storyboard {}: {error}", output.display()),
+            Err(cleanup_error) if cleanup_error.kind() == io::ErrorKind::NotFound => {
+                format!("could not publish storyboard {}: {error}", output.display())
+            }
+            Err(cleanup_error) => format!(
+                "could not publish storyboard {}: {error}; temporary image remains at {}: {cleanup_error}",
+                output.display(),
+                temporary.display()
+            ),
+        }
+    })?;
+    println!(
+        "Created storyboard {} ({}; up to {cells} frames)",
+        output.display(),
+        human_size(temporary_size)
+    );
     Ok(())
 }
 
@@ -3907,6 +4100,7 @@ fn run() -> Result<(), String> {
         Some("dupes") => run_dupes(&args[1..]),
         Some("probe") => run_probe(&args[1..]),
         Some("probe-dir") => run_probe_dir(&args[1..]),
+        Some("storyboard") => run_storyboard(&args[1..]),
         Some("project") => run_project(&args[1..]),
         Some("gitignore") => run_gitignore(&args[1..]),
         Some("organize") => run_organize(&args[1..]),
