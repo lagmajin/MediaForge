@@ -10838,7 +10838,9 @@ fn run_sequence(args: &[String]) -> Result<(), String> {
                 (name, entry)
             })
             .collect::<Vec<_>>();
-        keyed.sort_unstable_by(|(left, _), (right, _)| natural_name_cmp(left, right));
+        keyed.sort_unstable_by(|(left, _), (right, _)| {
+            natural_name_cmp(left, right).then_with(|| left.cmp(right))
+        });
         entries.extend(keyed.into_iter().map(|(_, entry)| entry));
     } else {
         sort_entries(&mut entries);
